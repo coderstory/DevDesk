@@ -45,9 +45,10 @@ std::size_t WebBridge::subscriberCount() const {
 }
 
 void WebBridge::publish(const std::string& type, const std::string& payloadJson, bool control) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // seq 必须在锁内递增：两个发布线程并发时会拿到重号（前端按 seq 去重/显隐）。
     std::string event = "{\"seq\":" + std::to_string(++seq_) + ",\"ev\":\"" + type +
                         "\",\"d\":" + (payloadJson.empty() ? "null" : payloadJson) + "}";
-    std::lock_guard<std::mutex> lock(mutex_);
     for (auto& sub : subscribers_) {
         std::lock_guard<std::mutex> subLock(sub->mutex);
         if (sub->dead) continue;

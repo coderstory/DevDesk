@@ -300,12 +300,16 @@ GridLayout TerminalPage::compose(
 
     // ---- TAB 几何规划（内容自适应 clamp[120,200]；溢出走横滚偏移）
     // bug248：标题字符串缓存——titleNumber 会话内稳定，仅会话数变化时重建
-    if (static_cast<int>(tabTitles_.size()) != sessionCount) {
+    if (static_cast<int>(tabTitles_.size()) != sessionCount ||
+        lastTitleRevision_ != controller.titleRevision()) {
+        lastTitleRevision_ = controller.titleRevision();
         tabTitles_.resize(static_cast<size_t>(sessionCount));
         for (int i = 0; i < sessionCount; i++) {
             const Session* s = controller.at(i);
             tabTitles_[static_cast<size_t>(i)] =
-                "终端 " + std::to_string(s ? s->titleNumber : i + 1);
+                (s != nullptr && !s->title.empty())
+                    ? s->title
+                    : ("终端 " + std::to_string(s ? s->titleNumber : i + 1));
         }
     }
     std::vector<float> tabW(static_cast<size_t>(sessionCount), 0.0f);

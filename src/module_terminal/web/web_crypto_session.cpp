@@ -3,8 +3,19 @@
 #include "platform/web_crypto.h"
 
 #include <utility>
+#include <openssl/crypto.h>
 
 namespace module::terminal::web {
+
+CryptoSession::~CryptoSession() {
+    // 会话密钥即用即清：普通清空可能被编译器优化省略，走 OpenSSL 显式擦除。
+    auto wipe = [](std::vector<std::uint8_t>& v) {
+        if (!v.empty()) OPENSSL_cleanse(v.data(), v.size());
+    };
+    wipe(privateKey);
+    wipe(c2sKey_);
+    wipe(s2cKey_);
+}
 
 namespace {
 
@@ -157,6 +168,15 @@ void CryptoSessionTable::clear() {
 std::size_t CryptoSessionTable::size() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return sessions_.size();
+}
+
+std::size_t CryptoSessionTable::authenticatedCount() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::size_t n = 0;
+    for (const auto& kv : sessions_) {
+        if (!kv.second->ticketId.empty()) ++n;
+    }
+    return n;
 }
 
 std::size_t CryptoSessionTable::prune(std::int64_t nowSec) {

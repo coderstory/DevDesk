@@ -124,7 +124,9 @@ private:
 
 // ---------- 限流（技术卡 §4 末条；P1 新裁决：按客户端地址计数） ----------
 
-inline constexpr int kHandshakeLimit = 32;    // 次/60s
+inline constexpr int kHandshakeClientLimit = 12;  // 单客户端 12 次/60s
+inline constexpr int kHandshakeGlobalLimit = 32;  // 全站 32 次/60s
+inline constexpr int kHandshakeLimit = kHandshakeClientLimit;  // 兼容旧引用（单客户端口径）
 inline constexpr int kLoginFailureLimit = 5;  // 次/60s
 inline constexpr int kRateWindowSec = 60;
 

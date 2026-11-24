@@ -49,6 +49,13 @@ void TerminalModule::ensureBackend() {
 void TerminalModule::startWebService() {
     if (!webService_)
         webService_ = std::make_unique<::module::terminal::web::WebTerminalService>();
+    // P1-F：服务 settings_ 的唯一初始来源 = 当前会话设置（否则网页配置页回显默认值）。
+    webService_->seedSettings(
+        settings_.fontFamily, settings_.fontSize,
+        settings_.colorMode == TerminalColorMode::Independent ? "independent" : "followApp",
+        settings_.colorPalette == TerminalColorPalette::Dark ? "dark" : "light", settings_.shell,
+        settings_.startupDir);
+    if (settings_.webPort >= 1024) webService_->setConfiguredPort(settings_.webPort);  // P2-8
     webService_->setSessionContext(&controller_, &bridge_);
     webService_->setSettingsPersist(
         [this](const core::TerminalSettingsPatch& patch) {
@@ -56,6 +63,8 @@ void TerminalModule::startWebService() {
         });
     webService_->setActiveSessionCount(controller_.count());
     ::core::ServiceLocator::set<::core::IWebTerminalService>(webService_.get());
+    // P1-3：桌面启动无任何会话 → 标记「桌面端已重启」，网页重连读空态文案。
+    if (controller_.count() == 0) webService_->markDesktopRestart();
     if (webTickerHandle_ == 0) {
         webTickerHandle_ = ::core::ticker::subscribe(
             {.name = "terminal.web.tick",
@@ -110,7 +119,11 @@ core::Result<void> TerminalModule::persistWebSettings(
     }
     if (patch.shell) next.shell = *patch.shell;
     if (patch.startupDir) next.startupDir = *patch.startupDir;
-    if (patch.webPort && webService_) webService_->setConfiguredPort(*patch.webPort);
+    if (patch.webPort) {
+        next.webPort = *patch.webPort;
+        settings_.webPort = *patch.webPort;
+        if (webService_) webService_->setConfiguredPort(*patch.webPort);
+    }
     return writeSettings(next);
 }
 

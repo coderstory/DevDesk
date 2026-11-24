@@ -35,6 +35,8 @@ struct TerminalSettings {
     TerminalColorMode colorMode = TerminalColorMode::FollowApp;
     TerminalColorPalette colorPalette = TerminalColorPalette::Light;
     std::string shell = "";       // "" = 平台默认（win=pwsh 链 / mac=zsh 链）
+    // 网页服务监听端口（P2-8 持久化）：0 = 未设置（默认 7878）；1024-65535 有效。
+    int webPort = 0;
     // 新会话启动目录（PRD P-14）；"" = 用户主目录。保存前须过 workDirUsableForSpawn，
     // spawn 时非空不可用 → 启动失败（不静默回退）。
     std::string startupDir = "";

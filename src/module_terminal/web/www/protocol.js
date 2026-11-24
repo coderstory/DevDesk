@@ -385,6 +385,17 @@
     shell: DEFAULT_SHELL, startupDir: ''
   };
   var BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
+  var TICKET_KEY = 'devdesk.web.ticket';
+  function readStoredTicket() {
+    try { return global.localStorage ? global.localStorage.getItem(TICKET_KEY) : null; }
+    catch (e) { return null; }
+  }
+  function storeTicket(t) {
+    try {
+      if (t) global.localStorage.setItem(TICKET_KEY, t);
+      else global.localStorage.removeItem(TICKET_KEY);
+    } catch (e) { /* 隐私模式不可写：退化为每次输码 */ }
+  }
 
   function RealClient(opts) {
     opts = opts || {};
@@ -398,11 +409,13 @@
     this.scrollback = [];
     this.settings = Object.assign({}, DEFAULT_SETTINGS);
     this.pending = [];
-    this.pendingLimit = 256;
+    this.pendingBytes = 0;
+    this.pendingLimitBytes = 4096;   // P1-6：补发队列按字节数（4 KB），非条数
+    this._emptyReason = null;
     this._frameCbs = []; this._stateCbs = []; this._settingsCbs = [];
     this._c2s = null; this._s2c = null;
     this._c2sCounter = 0; this._s2cHigh = 0;
-    this._hid = null; this._ticket = null; this._bindToken = '';
+    this._hid = null; this._ticket = readStoredTicket(); this._bindToken = '';
     this._sseAbort = null; this._seq = null;
     this._attempts = 0; this._reconnectTimer = null;
     this._watchdog = null; this._sendChain = Promise.resolve();
@@ -417,7 +430,8 @@
     var s = {
       status: this.status, view: this.view, bound: this.bound,
       tabs: this.tabs.slice(), activeId: this.activeId,
-      pending: this.pending.length, settings: Object.assign({}, this.settings)
+      pending: this.pending.length, settings: Object.assign({}, this.settings),
+      emptyReason: this._emptyReason
     };
     if (extra) Object.assign(s, extra);
     this._stateCbs.forEach(function (cb) { cb(s); });
@@ -576,6 +590,28 @@
       (global.location && /\/bind\/?$/.test(global.location.pathname)) ||
       /(?:^|[?&#])bind=1(?:&|$)/.test((global.location && (global.location.search + global.location.hash)) || '');
     if (bindPage) return this._beginBind();
+    // P0-2：本地有票据则直接恢复终端（7 天刷新免登录）；票据失效再回登录页。
+    if (this._ticket) {
+      return this._req(API.env, { m: 'state' }).then(function (d) {
+        self.status = 'connected';
+        self.view = 'terminal';
+        if (d && d.settings) {
+          self.settings = Object.assign({}, self.settings, normalizeSettings(d.settings));
+          self._emitSettings();
+        }
+        self._applyTabs(d);
+        if (d && d.emptyReason) self._emptyReason = d.emptyReason;
+        self._emitState();
+        return self._openStream().then(function () { self._emitState(); });
+      }).catch(function () {
+        self._ticket = null;
+        storeTicket(null);
+        self.status = 'connected';
+        self.view = 'login';
+        self._emitState();
+        self._loadStatus().then(function () { self._emitState(); });
+      });
+    }
     this.status = 'connected';
     this.view = 'login';
     this._emitState();
@@ -605,6 +641,7 @@
     return this._req(API.bindConfirm, { m: 'bind.confirm', b: { code: code } }).then(function (d) {
       if (!d || !d.t) throw { code: 'bad_response' };
       self._ticket = d.t;
+      storeTicket(d.t);
       self.bound = true;
       if (global.history && global.history.replaceState && global.location) {
         try { global.history.replaceState(null, '', global.location.pathname + global.location.search); } catch (ignored) {}
@@ -621,6 +658,7 @@
     return this._req(API.login, { m: 'auth.login', b: { code: code } }).then(function (d) {
       if (!d || !d.t) throw { code: 'bad_response' };
       self._ticket = d.t;
+      storeTicket(d.t);
       return self._enterTerminal();
     }).catch(function (err) {
       self._emitState({ authError: err });
@@ -768,17 +806,26 @@
       }
       return;
     }
-    if (p.ev === 'revoke') { this.view = 'revoked'; this._emitState(); this._closeStream(); return; }
+    if (p.ev === 'revoke') {
+      storeTicket(null);
+      this._ticket = null;
+      this.view = 'revoked';
+      this._emitState();
+      this._closeStream();
+      return;
+    }
     if (p.ev === 'exit') { this._emitState({ exit: d || {} }); return; }
     if (p.ev === 'desktop_restart') {
       this.tabs = [];
       this.activeId = null;
-      this._emitState({ emptyReason: 'restart' });
+      this._emptyReason = 'restart';
+      this._emitState();
       return;
     }
     if (p.ev === 'session') {
       this._applyTabs(d || {});
-      this._emitState(d && d.reason === 'desktop_restart' ? { emptyReason: 'restart' } : {});
+      if (this.tabs.length > 0) this._emptyReason = null;
+      this._emitState();
       return;
     }
     if (p.ev === 'full' || p.ev === 'rows' || p.ev === 'frame' || p.ev === 'grid') {
@@ -873,6 +920,7 @@
       if (self.view === 'terminal') self._requestResync();
     }).catch(function (err) {
       if (err && (err.code === 'bad_ticket' || err.code === 'too_many_requests')) {
+        if (err.code === 'bad_ticket') { self._ticket = null; storeTicket(null); }
         self.view = 'login';
         self.status = 'connected';
         self._emitState({ authError: err });
@@ -920,12 +968,21 @@
   RealClient.prototype.sendInput = function (text) {
     if (text == null || text === '') return true;
     if (this.status === 'connected' && this.view === 'terminal' && this._sseAbort) return this._sendInputNow(text);
-    if (this.pending.length >= this.pendingLimit) {
-      this._emitState({ queueFull: true });
+    // P1-6：按 UTF-8 字节数计容量，超 4 KB 丢最旧并在 UI 提示「部分输入未送达」。
+    var size = C.utf8(text).length;
+    var dropped = false;
+    while (this.pending.length > 0 && this.pendingBytes + size > this.pendingLimitBytes) {
+      this.pendingBytes -= C.utf8(this.pending[0]).length;
+      this.pending.shift();
+      dropped = true;
+    }
+    if (size > this.pendingLimitBytes) {
+      this._emitState({ queueDropped: true });
       return false;
     }
     this.pending.push(text);
-    this._emitState();
+    this.pendingBytes += size;
+    this._emitState(dropped ? { queueDropped: true } : {});
     return true;
   };
   RealClient.prototype.paste = function (text) { return this.sendInput(bracketedPaste(text)); };
@@ -933,6 +990,7 @@
   RealClient.prototype._flushPending = function () {
     if (!this.pending.length) return;
     var q = this.pending.splice(0);
+    this.pendingBytes = 0;
     for (var i = 0; i < q.length; i++) this._sendInputNow(q[i]);
     this._emitState();
   };
@@ -973,6 +1031,12 @@
       if (err && err.code !== 'unknown_message' && err.code !== 'bad') self._emitState({ opError: err });
     });
   };
+  RealClient.prototype.restartTab = function (id) {
+    var self = this;
+    return this._req(API.env, { m: 'restart', b: { id: id } })
+      .then(function (d) { self._applyTabs(d || {}); self._emitState(); })
+      .catch(function (err) { self._emitState({ opError: err }); });
+  };
   RealClient.prototype.renameTab = function (id, title) {
     var self = this;
     var oldTitle = null;
@@ -998,7 +1062,9 @@
     if (patch.fontFamily !== undefined) wire.fontFamily = patch.fontFamily;
     if (patch.font !== undefined) wire.fontFamily = patch.font;
     if (patch.fontSize !== undefined) wire.fontSize = patch.fontSize;
-    if (patch.colorMode !== undefined) wire.colorMode = patch.colorMode;
+    if (patch.colorMode !== undefined) {
+      wire.colorMode = patch.colorMode === 'follow' ? 'followApp' : patch.colorMode;
+    }
     if (patch.palette !== undefined) wire.palette = patch.palette;
     if (patch.shell !== undefined) wire.shell = patch.shell;
     if (patch.startupDir !== undefined) wire.startupDir = patch.startupDir;
@@ -1018,6 +1084,7 @@
     return this._req(API.logout, { m: 'auth.logout', b: { t: this._ticket || '' } })
       .catch(function () {}).then(function () {
         self._ticket = null;
+        storeTicket(null);
         self.view = 'login';
         self.status = 'connected';
         self._closeStream();
@@ -1030,6 +1097,8 @@
   function normalizeSettings(d) {
     var out = Object.assign({}, d);
     if (out.font === undefined && out.fontFamily !== undefined) out.font = out.fontFamily;
+    // 服务端契约是 followApp；前端 UI 用 follow。两处互转，避免回显失配。
+    if (out.colorMode === 'followApp') out.colorMode = 'follow';
     return out;
   }
 

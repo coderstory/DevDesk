@@ -43,6 +43,9 @@ struct StreamTicket {
 // 会话密钥材料；s2c 计数器在 seal 时递增，c2s 重放窗口在 open 时校验。
 class CryptoSession {
 public:
+    CryptoSession() = default;
+    ~CryptoSession();  // 私钥/方向密钥显式擦除（OPENSSL_cleanse）
+
     std::string hid;
     std::vector<std::uint8_t> serverPublic;
     std::vector<std::uint8_t> salt;
@@ -77,6 +80,8 @@ public:
     void erase(const std::string& hid);
     void clear();
     std::size_t size() const;
+    // 已登录（持票据）会话数：在线人话口径，握手未登录的会话不计。
+    std::size_t authenticatedCount() const;
     // 清理 24h 空闲会话，返回清理条数
     std::size_t prune(std::int64_t nowSec);
 

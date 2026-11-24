@@ -13,6 +13,11 @@
 #include "core/logging.h"
 
 #include "web_routes.h"
+#include "qr/qr_encode.h"
+
+#include "core/paths.h"
+
+#include <openssl/crypto.h>
 
 #include <algorithm>
 #include <chrono>
@@ -79,6 +84,23 @@ bool canEnterDirectory(const std::string& dir) {
     return !ec;
 }
 
+// 按 UTF-8 字符数截断（tab 改名上限 32 字符，不切半字符）。
+std::string clampUtf8Chars(const std::string& in, std::size_t maxChars) {
+    std::size_t chars = 0;
+    std::size_t i = 0;
+    while (i < in.size() && chars < maxChars) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        std::size_t len = 1;
+        if ((c >> 5) == 0x6) len = 2;
+        else if ((c >> 4) == 0xE) len = 3;
+        else if ((c >> 3) == 0x1E) len = 4;
+        if (i + len > in.size()) break;  // 截断点落在多字节中间：丢弃残片
+        i += len;
+        ++chars;
+    }
+    return in.substr(0, i);
+}
+
 } // namespace
 
 std::string WebTerminalService::settingsErrorReasonForTest(const std::string& dir) {
@@ -92,6 +114,8 @@ std::string WebTerminalService::settingsErrorReasonForTest(const std::string& di
 WebTerminalService::WebTerminalService()
     : devConfig_(readDevEntryConfig()),
       gridEncoder_(std::make_unique<::terminal::web::WebGridEncoder>()) {
+    // 票据落地：重启后浏览器凭本地票据免登录（P0-2 持久化）。损坏文件解析为空表。
+    tickets_ = TicketStore::loadFromFile(core::paths::appDataDir() / "web_tickets.dat");
     cookieKey_ = wc::randomBytes(32);
     if (devConfig_.autostart) {
         if (devConfig_.port > 0) port_ = devConfig_.port;
@@ -100,7 +124,15 @@ WebTerminalService::WebTerminalService()
     }
 }
 
-WebTerminalService::~WebTerminalService() { (void)stop(); }
+WebTerminalService::~WebTerminalService() {
+    (void)stop();
+    std::lock_guard<std::mutex> lock(mutex_);
+    // 会话密钥/TOTP 密钥即用即清：析构时 memset 不够可靠，走 OpenSSL 显式擦除。
+    if (!cookieKey_.empty()) OPENSSL_cleanse(cookieKey_.data(), cookieKey_.size());
+    if (!bindToken_.secret.empty())
+        OPENSSL_cleanse(bindToken_.secret.data(), bindToken_.secret.size());
+    if (!totpSecret_.empty()) OPENSSL_cleanse(totpSecret_.data(), totpSecret_.size());
+}
 
 core::Result<void> WebTerminalService::start() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -167,6 +199,10 @@ core::Result<void> WebTerminalService::revokeBinding() {
             hasBindToken_ = true;
         }
         totpSecret_.clear();
+        bound_ = false;
+        boundAt_ = 0;
+        lastLogin_ = 0;
+        persistTicketsLocked();
     }
     bridge_.publish("revoke", "{}", /*control=*/true);
     return core::Result<void>::ok();
@@ -222,10 +258,22 @@ core::WebAccessSnapshot WebTerminalService::snapshotLocked() const {
     snap.bindState = bindState_;
     snap.bindTime = bound_ ? boundAt_ : 0;
     snap.lastLogin = lastLogin_;
-    snap.onlineCount = static_cast<int>(sessions_.size());
+    // 在线数只算已登录会话（握手未登录的不占人数口径）。
+    snap.onlineCount = static_cast<int>(sessions_.authenticatedCount());
     if (hasBindToken_) {
         const auto remaining = bindToken_.expireAt - nowSec();
         snap.tokenRemainingSec = remaining > 0 ? static_cast<int>(remaining) : 0;
+        // P0-1：绑定二维码来自真实令牌 URL（http://<ip>:<port>/#b=<token>）；
+        // 令牌刷新/过期/绑定后本函数按当前状态重算，无需额外同步点。
+        if (!bound_ && bindToken_.state != BindTokenState::Terminal &&
+            snap.tokenRemainingSec > 0) {
+            const std::string url = bindUrlLocked();
+            QrMatrix matrix;
+            if (!url.empty() && encode(url, QrEcLevel::L, matrix)) {
+                snap.qrSize = matrix.size;
+                snap.qrMatrix = std::move(matrix.modules);
+            }
+        }
     }
     snap.error = error_;
     return snap;
@@ -297,7 +345,9 @@ void WebTerminalService::handleHandshakeGet(const platform::http::RequestCtx& ct
                                             platform::http::ResponseWriter& rw) {
     const auto address = clientAddressFor(ctx);
     const auto now = nowSec();
-    const bool allowed = handshakeLimiter_.tryAcquire(address, now);
+    // 两层限流（技术卡 §4）：全站 32/分 + 单客户端 12/分，任一超限即拒。
+    bool allowed = globalHandshakeLimiter_.tryAcquire("__global__", now);
+    if (!handshakeLimiter_.tryAcquire(address, now)) allowed = false;
     int retryAfter = 60;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -319,6 +369,8 @@ void WebTerminalService::handleHandshakeGet(const platform::http::RequestCtx& ct
         replyJson(rw, 429, stringifyOr(JsonValue(out), "{\"e\":\"too_many_requests\"}"));
         return;
     }
+    // P0-B：握手前清理 24h 空闲会话，避免 64 上限被死会话占死后永久 409。
+    sessions_.prune(now);
     auto started = sessions_.beginHandshake(now);
     if (!started.isOk()) {
         rw.setHeader("Retry-After", "60");
@@ -472,7 +524,7 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
     if (message == "state") {
         if (!requireTicket()) return makeInnerError(401, "bad_ticket");
         JsonObject out;
-        out.set("online", JsonValue(static_cast<int>(sessions_.size())));
+        out.set("online", JsonValue(static_cast<int>(sessions_.authenticatedCount())));
         std::lock_guard<std::mutex> lock(mutex_);
         out.set("port", JsonValue(port_));
         JsonObject st;
@@ -500,10 +552,10 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         //   b.bp    可选，bool=ture 表示 bracketed paste（未自带 200~/201~ 包裹时服务端补）
         // HTTP 状态：无激活会话 = 200 + 密文内 409；命令队列满 = HTTP 503 + 密文内 503。
         if (!requireTicket()) return makeInnerError(401, "bad_ticket");
+        // 跨线程契约（P0-A）：HTTP 线程绝不触碰 SessionController；只看 UI tick
+        // 同步的 activeSessions_（最多滞后一帧，可接受）。
         bool active = false;
-        if (controller_ != nullptr) {
-            active = controller_ != nullptr && controller_->active() != nullptr;
-        } else {
+        {
             std::lock_guard<std::mutex> lock(mutex_);
             active = activeSessions_ > 0;
         }
@@ -556,7 +608,10 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         command.set("index", JsonValue(index));
         if (message == "rename") {
             const auto titleValue = body.get("title");
-            command.set("title", JsonValue(titleValue.isString() ? titleValue.asString() : std::string()));
+            command.set("title", JsonValue(clampUtf8Chars(
+                                         titleValue.isString() ? titleValue.asString()
+                                                               : std::string(),
+                                         32)));
         }
         int appliedRows = 0;
         int appliedCols = 0;
@@ -604,21 +659,33 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
     }
     if (message == "settings.set") {
         if (!requireTicket()) return makeInnerError(401, "bad_ticket");
-        core::TerminalSettingsPatch patch;
-        if (body.has("fontFamily")) patch.fontFamily = body.get("fontFamily").asString();
-        if (body.has("fontSize")) patch.fontSize = static_cast<int>(body.get("fontSize").asInt());
-        if (body.has("colorMode")) patch.colorMode = body.get("colorMode").asString();
-        if (body.has("palette")) patch.palette = body.get("palette").asString();
-        if (body.has("shell")) patch.shell = body.get("shell").asString();
-        if (body.has("startupDir")) patch.startupDir = body.get("startupDir").asString();
-        auto written = writeSettings(patch);
-        if (!written.isOk()) {
-            JsonObject err;
-            err.set("s", JsonValue(400));
-            err.set("e", JsonValue("settings_failed"));
-            err.set("reason", JsonValue(written.errorMessage()));
-            err.set("field", JsonValue("startupDir"));
-            return stringifyOr(JsonValue(err), "{\"s\":400,\"e\":\"settings_failed\"}");
+        // 跨线程契约（P0-A）：目录校验是纯函数，可在 HTTP 线程做（给出同步错误回包）；
+        // 真正的 settings_ 写入 + 持久化 + 新会话参数只经命令队列在 UI tick 执行。
+        if (body.has("startupDir")) {
+            const auto dirValue = body.get("startupDir");
+            if (dirValue.isString() && !dirValue.asString().empty()) {
+                const std::string reason = settingsErrorReasonForTest(dirValue.asString());
+                if (!reason.empty()) {
+                    JsonObject err;
+                    err.set("s", JsonValue(400));
+                    err.set("e", JsonValue("settings_failed"));
+                    err.set("reason", JsonValue(reason));
+                    err.set("field", JsonValue("startupDir"));
+                    return stringifyOr(JsonValue(err), "{\"s\":400,\"e\":\"settings_failed\"}");
+                }
+            }
+        }
+        JsonObject cmd;
+        cmd.set("op", JsonValue("settings.set"));
+        if (body.has("fontFamily")) cmd.set("fontFamily", JsonValue(body.get("fontFamily").asString()));
+        if (body.has("fontSize")) cmd.set("fontSize", JsonValue(body.get("fontSize").asInt()));
+        if (body.has("colorMode")) cmd.set("colorMode", JsonValue(body.get("colorMode").asString()));
+        if (body.has("palette")) cmd.set("palette", JsonValue(body.get("palette").asString()));
+        if (body.has("shell")) cmd.set("shell", JsonValue(body.get("shell").asString()));
+        if (body.has("startupDir")) cmd.set("startupDir", JsonValue(body.get("startupDir").asString()));
+        if (!enqueueCommand(stringifyOr(JsonValue(cmd), "{}"))) {
+            httpStatus = 503;
+            return makeInnerError(503, "queue_full");
         }
         return makeInner(200, JsonValue(nullptr));
     }
@@ -666,6 +733,7 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         }
         lastLogin_ = now;
         session->ticketId = issued.value().ticket.idHex;
+        persistTicketsLocked();
         JsonObject out;
         out.set("t", JsonValue(issued.value().token));
         return makeInner(200, JsonValue(out));
@@ -678,6 +746,7 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         auto ticket = tickets_.validate(tokenValue.asString(), cookieKey_, now);
         if (!ticket.isOk()) return makeInnerError(401, "bad_ticket");
         tickets_.revoke(ticket.value().idHex);
+        persistTicketsLocked();
         return makeInner(200, JsonValue(nullptr));
     }
     if (message == "bind.claim") {
@@ -723,11 +792,13 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         if (!issued.isOk()) return makeInnerError(409, "too_many_tickets");
         lastLogin_ = now;
         session->ticketId = issued.value().ticket.idHex;
+        persistTicketsLocked();
         JsonObject out;
         out.set("t", JsonValue(issued.value().token));
         return makeInner(200, JsonValue(out));
     }
     if (message == "bind.revoke") {  // 桌面/网页撤销验证器绑定
+        std::lock_guard<std::mutex> lock(mutex_);
         tickets_.revokeAll();
         auto token = makeBindToken(now);
         if (token.isOk()) {
@@ -735,6 +806,10 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
             hasBindToken_ = true;
         }
         totpSecret_.clear();
+        bound_ = false;
+        boundAt_ = 0;
+        lastLogin_ = 0;
+        persistTicketsLocked();
         return makeInner(200, JsonValue(nullptr));
     }
     return makeInnerError(400, "unknown_message");
@@ -806,17 +881,14 @@ std::string WebTerminalService::statusJsonForTest() const {
     JsonObject obj;
     obj.set("running", JsonValue(snap.running));
     obj.set("port", JsonValue(snap.port));
-    obj.set("online", JsonValue(snap.onlineCount));
     obj.set("bindState", JsonValue(static_cast<int>(snap.bindState)));
     {
         std::lock_guard<std::mutex> lock(mutex_);
         obj.set("bound", JsonValue(bound_));
-        // 设备名无注册来源：绑定后回固定展示名，未绑定回空串（前端按空串隐藏）
-        obj.set("deviceName", JsonValue(bound_ ? std::string("DevDesk 桌面端") : std::string()));
-        obj.set("bindTime", JsonValue(boundAt_));
-        obj.set("lastLogin", JsonValue(lastLogin_));
+        // /api/status 未鉴权：只回登录态布尔与令牌倒计时，不暴露在线数/绑定时间/设备名。
         const auto remaining = hasBindToken_ ? bindToken_.expireAt - nowSec() : 0;
         obj.set("tokenRemainingSec", JsonValue(remaining > 0 ? static_cast<int>(remaining) : 0));
+        if (desktopRestarted_) obj.set("emptyReason", JsonValue("restart"));
     }
     return stringifyOr(JsonValue(obj), "{}");
 }
@@ -882,6 +954,15 @@ void WebTerminalService::setSessionContext(::terminal::SessionController* contro
 void WebTerminalService::tick() {
     if (sessionBridge_ == nullptr || controller_ == nullptr) return;
     sessionBridge_->pollStates();
+    sessions_.prune(nowSec());
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (desktopRestarted_ && controller_->count() > 0) desktopRestarted_ = false;
+        if (nowSec() - lastHostRefresh_ > 30) {
+            lastHostRefresh_ = nowSec();
+            refreshAllowedHostsLocked();
+        }
+    }
     applyPendingCommands();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -950,7 +1031,22 @@ void WebTerminalService::applyPendingCommands() {
             sessionBridge_->restartTab(index);
         } else if (op == "rename") {
             const auto titleValue = obj.get("title");
-            if (index >= 0 && titleValue.isString()) tabTitles_[index] = titleValue.asString();
+            if (index >= 0 && titleValue.isString()) {
+                tabTitles_[index] = clampUtf8Chars(titleValue.asString(), 32);
+                // 同步到桌面会话（P1-4）：桌面 tab 与网页显示同一名字。
+                if (sessionBridge_ != nullptr) {
+                    sessionBridge_->renameTab(index, titleValue.asString());
+                }
+            }
+        } else if (op == "settings.set") {
+            core::TerminalSettingsPatch patch;
+            if (obj.has("fontFamily")) patch.fontFamily = obj.get("fontFamily").asString();
+            if (obj.has("fontSize")) patch.fontSize = static_cast<int>(obj.get("fontSize").asInt());
+            if (obj.has("colorMode")) patch.colorMode = obj.get("colorMode").asString();
+            if (obj.has("palette")) patch.palette = obj.get("palette").asString();
+            if (obj.has("shell")) patch.shell = obj.get("shell").asString();
+            if (obj.has("startupDir")) patch.startupDir = obj.get("startupDir").asString();
+            (void)writeSettings(patch);  // UI 线程：持久化 + 广播
         }
     }
     std::string snapshot;
@@ -1091,6 +1187,59 @@ void WebTerminalService::setConfiguredPort(int port) {
     if (port < 1024 || port > 65535) return;
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_) port_ = port;  // 运行中禁改：UI 端口行只读，重启后生效
+}
+
+void WebTerminalService::seedSettings(const std::string& fontFamily, int fontSize,
+                                      const std::string& colorMode, const std::string& palette,
+                                      const std::string& shell, const std::string& startupDir) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings_.fontFamily = fontFamily;
+    settings_.fontSize = fontSize;
+    settings_.colorMode = colorMode;
+    settings_.palette = palette;
+    settings_.shell = shell;
+    settings_.startupDir = startupDir;
+    settingsSeeded_ = true;
+}
+
+void WebTerminalService::markDesktopRestart() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        desktopRestarted_ = true;
+    }
+    if (sessionBridge_ != nullptr) sessionBridge_->markDesktopRestart();
+}
+
+std::string WebTerminalService::bindUrlLocked() const {
+    if (!hasBindToken_) return {};
+    std::string host;
+    for (const auto& addr : platform::localIpv4Addresses()) {
+        if (!platform::isLoopbackAddress(addr)) {
+            host = addr;
+            break;
+        }
+    }
+    if (host.empty()) {
+        const auto addrs = platform::localIpv4Addresses();
+        if (!addrs.empty()) host = addrs.front();
+    }
+    const int port = (running_ && server_) ? server_->actualPort() : port_;
+    if (host.empty() || port <= 0) return {};
+    return "http://" + host + ":" + std::to_string(port) + "/#b=" + bindToken_.token;
+}
+
+void WebTerminalService::persistTicketsLocked() const {
+    const auto path = core::paths::appDataDir() / "web_tickets.dat";
+    if (!tickets_.saveToFile(path)) {
+        LOG_ERROR("网页终端: 票据写入失败 " + core::paths::toUtf8(path));
+    }
+}
+
+void WebTerminalService::refreshAllowedHostsLocked() {
+    if (!server_) return;
+    std::vector<std::string> hosts = {"127.0.0.1", "localhost", "[::1]", "::1"};
+    for (const auto& addr : platform::localIpv4Addresses()) hosts.push_back(addr);
+    server_->setAllowedHosts(hosts);
 }
 
 std::size_t WebTerminalService::pendingCommandCountForTest() const {    std::lock_guard<std::mutex> lock(mutex_);

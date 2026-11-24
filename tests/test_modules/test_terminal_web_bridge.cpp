@@ -181,6 +181,8 @@ REGISTER_TEST(webBridgeSizeRestore,
     DOCTEST_CHECK_EQ(f.controller.active()->rows, 200);
 
     f.bridge->removeSubscriber();
+    // P0-A 契约：HTTP 线程的 releaser 只置位，尺寸恢复在 UI tick 的 pollStates 执行。
+    f.bridge->pollStates();
     DOCTEST_CHECK_EQ(f.controller.active()->rows, 160);  // 恢复桌面 160×50，非网页 200
     DOCTEST_CHECK_EQ(f.controller.active()->cols, 50);
     return true;

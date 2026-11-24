@@ -87,6 +87,12 @@ public:
     void setActiveSessionCount(int count);
     // 设置页端口编辑（need#490 W6）：仅未运行时改写配置端口（运行中 UI 只读）。
     void setConfiguredPort(int port);
+    // 桌面设置播种：服务 settings_ 的唯一初始来源（否则网页配置页回显默认值、shell 丢失）。
+    void seedSettings(const std::string& fontFamily, int fontSize, const std::string& colorMode,
+                      const std::string& palette, const std::string& shell,
+                      const std::string& startupDir);
+    // 桌面启动/会话全灭：标记并广播「桌面端已重启」，前端据此显示空态文案。
+    void markDesktopRestart();
 
     // ---- 测试缝 ----
     CryptoSessionTable& sessionsForTest() { return sessions_; }
@@ -133,6 +139,9 @@ private:
     std::string settingsJsonLocked() const;
     void broadcastSettingsLocked();
     std::string takeTabSnapshot() const;
+    std::string bindUrlLocked() const;
+    void persistTicketsLocked() const;
+    void refreshAllowedHostsLocked();
 
     mutable std::mutex mutex_;
     std::unique_ptr<platform::http::Server> server_;
@@ -169,6 +178,10 @@ private:
     std::string tabSnapshotJson_ = "{\"tabs\":[],\"activeId\":null}";
     std::map<int, std::string> tabTitles_;
     int lastRetryAfter_ = 0;
+    SlidingWindowLimiter globalHandshakeLimiter_{kHandshakeGlobalLimit, kRateWindowSec};
+    bool desktopRestarted_ = false;
+    bool settingsSeeded_ = false;
+    std::int64_t lastHostRefresh_ = 0;
     std::map<std::string, std::deque<std::int64_t>> handshakeHits_;
     std::map<std::string, std::deque<std::int64_t>> loginFailures_;
     bool bound_ = false;

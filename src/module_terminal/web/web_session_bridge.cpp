@@ -47,7 +47,7 @@ std::vector<WebTab> WebSessionBridge::tabs() const {
         WebTab t;
         t.index = i;
         // 标题：OSC 0/2 标题由 W3 服务补充；此层先给稳定可辨识的「终端 N」。
-        t.title = "终端 " + std::to_string(s->titleNumber);
+        t.title = s->title.empty() ? ("终端 " + std::to_string(s->titleNumber)) : s->title;
         t.active = i == active;
         t.state = stateName_(s->state);
         t.exitCode = s->exitCode;
@@ -85,6 +85,12 @@ bool WebSessionBridge::activateTab(int index) {
     return true;
 }
 
+bool WebSessionBridge::renameTab(int index, const std::string& title) {
+    if (index < 0 || index >= controller_.count()) return false;
+    controller_.setSessionTitle(index, title);
+    return true;
+}
+
 bool WebSessionBridge::restartTab(int index) {
     if (index < 0 || index >= controller_.count()) return false;
     controller_.restartSession(index);
@@ -98,6 +104,14 @@ bool WebSessionBridge::restartTab(int index) {
 }
 
 void WebSessionBridge::pollStates() {
+    // P0-A：stream releaser 在 HTTP 线程只置位，尺寸恢复在 UI 线程执行。
+    if (pendingDesktopRestore_) {
+        pendingDesktopRestore_ = false;
+        if (webSizeApplied_ && desktopSizeValid_) {
+            controller_.resizeActive(desktopRows_, desktopCols_);
+            webSizeApplied_ = false;
+        }
+    }
     std::map<int, SessionState> seen;
     for (int i = 0; i < controller_.count(); i++) {
         const Session* s = controller_.at(i);
@@ -177,9 +191,8 @@ void WebSessionBridge::addSubscriber() { subscribers_++; }
 void WebSessionBridge::removeSubscriber() {
     if (subscribers_ > 0) subscribers_--;
     if (subscribers_ != 0) return;
-    if (!webSizeApplied_ || !desktopSizeValid_) return;
-    controller_.resizeActive(desktopRows_, desktopCols_);
-    webSizeApplied_ = false;
+    // 不在 HTTP 线程直接 resizeActive：置位由 UI tick 的 pollStates 执行（P0-A）。
+    if (webSizeApplied_ && desktopSizeValid_) pendingDesktopRestore_ = true;
 }
 
 core::Result<void> WebSessionBridge::writeSettings(const TerminalSettings& nextRaw) {

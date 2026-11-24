@@ -64,6 +64,7 @@ struct Session {
     int scrollOffset = 0;      // scrollback 回滚偏移（每会话记忆，0=贴底）
     float scrollRemainder = 0.0f;
     int titleNumber = 0;       // 「终端 N」，进程内递增不复用
+    std::string title;         // 网页改名后的展示名；空 = 用「终端 N」
 };
 
 class SessionController {
@@ -93,6 +94,10 @@ public:
     // 关最后一个 → activeIndex=-1（空态）。
     void closeSession(int index);
     void setActive(int index);
+    // 网页 tab 改名（P1-4）：写入会话展示名，桌面 tab 与网页显示同一名字。
+    void setSessionTitle(int index, const std::string& title);
+    // 标题代数：终端页缓存据此判断是否需要重建（改名不改变会话数）。
+    int titleRevision() const { return titleRevision_; }
     int activeIndex() const { return activeIndex_; }
     int count() const { return static_cast<int>(sessions_.size()); }
     bool empty() const { return sessions_.empty(); }
@@ -151,6 +156,7 @@ private:
     std::vector<Session> sessions_;
     int activeIndex_ = -1;
     int nextTitleNumber_ = 1;
+    int titleRevision_ = 0;  // 改名代数（终端页标题缓存失效信号）
     // 新会话参数（need250 面板写、spawnInto_ 消费）
     std::string newSessionShell_;
     std::string newSessionWorkDir_;

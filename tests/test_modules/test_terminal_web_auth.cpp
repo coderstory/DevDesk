@@ -7,6 +7,8 @@
 #include "module_terminal/web/web_auth.h"
 
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -214,6 +216,18 @@ REGISTER_TEST(webAuthTicketPersistence,
     auto still = reloaded.validate(issued.value().token, key, 30000 + 60);
     DOCTEST_CHECK(still.isOk());
 
+    // 篡改盘上文件（改票据 id）→ 重启后该票据校验必须失败（表内不存在 = revoked）
+    std::string text;
+    {
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss; ss << in.rdbuf(); text = ss.str();
+    }
+    DOCTEST_REQUIRE(text.size() >= 32);
+    text.replace(0, 32, std::string(32, '0'));
+    { std::ofstream out(path, std::ios::binary | std::ios::trunc); out << text; }
+    TicketStore tampered = TicketStore::loadFromFile(path);
+    DOCTEST_CHECK(tampered.validate(issued.value().token, key, 30000 + 60).isFail());
+
     // 撤销清表后落盘，重启读到空表
     reloaded.revokeAll();
     DOCTEST_REQUIRE(reloaded.saveToFile(path));
@@ -224,15 +238,22 @@ REGISTER_TEST(webAuthTicketPersistence,
 REGISTER_TEST(webAuthHandshakeRateLimit,
               "web auth: 握手 32 次/60s 滑动窗口按客户端地址计数（need#490 §4）", {
     using namespace module::terminal::web;
-    SlidingWindowLimiter limiter(kHandshakeLimit, kRateWindowSec);
-    for (int i = 0; i < kHandshakeLimit; ++i) {
+    SlidingWindowLimiter limiter(kHandshakeClientLimit, kRateWindowSec);
+    for (int i = 0; i < kHandshakeClientLimit; ++i) {
         DOCTEST_CHECK(limiter.tryAcquire("192.168.1.10", 50000));
     }
-    DOCTEST_CHECK_FALSE(limiter.tryAcquire("192.168.1.10", 50000));  // 第 33 次拒绝
-    // A 打满不影响 B
+    DOCTEST_CHECK_FALSE(limiter.tryAcquire("192.168.1.10", 50000));  // 单客户端第 13 次拒绝
+    // A 打满不影响 B（全局层另测）
     DOCTEST_CHECK(limiter.tryAcquire("192.168.1.11", 50000));
     // 窗口滑过（61s 后）恢复
     DOCTEST_CHECK(limiter.tryAcquire("192.168.1.10", 50000 + kRateWindowSec + 1));
+
+    // 全局层 32/分：跨地址累计，第 33 次拒绝
+    SlidingWindowLimiter global(kHandshakeGlobalLimit, kRateWindowSec);
+    for (int i = 0; i < kHandshakeGlobalLimit; ++i) {
+        DOCTEST_CHECK(global.tryAcquire("__global__", 51000));
+    }
+    DOCTEST_CHECK_FALSE(global.tryAcquire("__global__", 51000));
     return true;
 });
 

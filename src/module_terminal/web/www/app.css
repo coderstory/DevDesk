@@ -284,3 +284,5 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: 
 }
 .selftest.pass { background: #157E4E; }
 .selftest.fail { background: #B91C1C; }
+
+.exit-actions { display: flex; gap: 12px; margin-top: 16px; }

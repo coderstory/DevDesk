@@ -93,7 +93,8 @@ private:
     int pendingCols_ = 0;
     std::chrono::steady_clock::time_point pendingSince_{}; // bug248：resize 去抖计时
     bool pendingTimer_ = false;
-    std::vector<std::string> tabTitles_; // bug248：TAB 标题缓存（count 变化才重建）
+    std::vector<std::string> tabTitles_; // bug248：TAB 标题缓存（count 或改名代数变化才重建）
+    int lastTitleRevision_ = -1;         // need#490：改名失效信号
     bool fullscreen_ = false;
     bool fullscreenInit_ = false;
     bool settingsOpen_ = false;      // need250 设置面板开合

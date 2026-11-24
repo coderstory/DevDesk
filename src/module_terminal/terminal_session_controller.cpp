@@ -214,6 +214,13 @@ void SessionController::setActive(int index) {
     activeIndex_ = index;
 }
 
+void SessionController::setSessionTitle(int index, const std::string& title) {
+    Session* s = at(index);
+    if (s == nullptr || s->title == title) return;
+    s->title = title;
+    ++titleRevision_;
+}
+
 void SessionController::restartSession(int index) {
     if (index < 0 || index >= static_cast<int>(sessions_.size())) return;
     Session& s = sessions_[index];

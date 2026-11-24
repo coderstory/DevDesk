@@ -271,7 +271,15 @@ bool TicketStore::saveToFile(const std::filesystem::path& path) const {
     if (!file) return false;
     const std::string text = serialize();
     file.write(text.data(), static_cast<std::streamsize>(text.size()));
-    return static_cast<bool>(file);
+    if (!file) return false;
+    file.close();
+    // 票据文件不含密钥，仍按 0600 收紧：同机其他用户不可直读（跨平台 best-effort）。
+    std::error_code ec;
+    std::filesystem::permissions(path,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace, ec);
+    return true;
 }
 
 TicketStore TicketStore::loadFromFile(const std::filesystem::path& path) {

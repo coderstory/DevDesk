@@ -481,11 +481,12 @@ void drawWebAccessCard(const CardDrawArgs& args) {
         const float d1 = roundFs(l.diagY);
         const float lh = roundFs(18.0f);
         textLine(ui, id + ".diag.port", kPadX, d1, innerW,
-                 s.running ? "监听端口：127.0.0.1:" + std::to_string(s.port)
-                           : std::string("监听端口：未监听"),
+                 s.running ? "监听地址：0.0.0.0:" + std::to_string(s.port) +
+                                 "（局域网可见）"
+                           : std::string("监听地址：未监听"),
                  12.0f, lh, t.colors.textSecondary);
         textLine(ui, id + ".diag.online", kPadX, d1 + lh, innerW,
-                 "在线连接数：" + std::to_string(s.onlineCount), 12.0f, lh,
+                 "在线设备：" + std::to_string(s.onlineCount), 12.0f, lh,
                  t.colors.textSecondary);
         textLine(ui, id + ".diag.last", kPadX, d1 + lh * 2.0f, innerW,
                  "最近登录：" + formatUnixTime(s.lastLogin), 12.0f, lh,

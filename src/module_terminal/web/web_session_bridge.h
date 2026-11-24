@@ -73,6 +73,8 @@ public:
     bool closeTab(int index);
     bool activateTab(int index);
     bool restartTab(int index);
+    // 网页改名（P1-4）：同步写入会话展示名，桌面 tab 经 titleRevision 重建。空 = 回落「终端 N」。
+    bool renameTab(int index, const std::string& title);
 
     // 每帧调用：采样 Exited/Failed 变化，只发一次事件（W3 ticker 内调）。
     void pollStates();
@@ -108,6 +110,7 @@ private:
     int desktopRows_ = 0;
     int desktopCols_ = 0;
     bool webSizeApplied_ = false;
+    bool pendingDesktopRestore_ = false;  // 订阅清零：恢复桌面尺寸延到 UI tick（P0-A）
     int subscribers_ = 0;
 
     // 退出/失败态变化采样：titleNumber 稳定（关闭会移 index，不用 index 当键）。

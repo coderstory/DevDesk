@@ -203,7 +203,7 @@ REGISTER_TEST(web_bridge_write_failure_ends, "web: 写失败立即结束流并�
 REGISTER_TEST(web_rate_limit_per_client, "web: 握手限流按客户端地址，A 打满不影响 B", {
     WebTerminalService service;
     const auto now = testNow();
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < kHandshakeClientLimit; ++i) {
         DOCTEST_CHECK(service.handshakeRateAllowedForTest("10.0.0.1", now));
     }
     DOCTEST_CHECK_FALSE(service.handshakeRateAllowedForTest("10.0.0.1", now));
@@ -243,9 +243,11 @@ REGISTER_TEST(web_status_plaintext_fields, "web: /api/status 回绑定态/设备
     const auto obj = parsed.value().asObject();
     DOCTEST_CHECK(obj.get("bound").isBool());
     DOCTEST_CHECK_FALSE(obj.get("bound").asBool());
-    DOCTEST_CHECK_EQ(obj.get("deviceName").asString(), std::string());
-    DOCTEST_CHECK_EQ(obj.get("bindTime").asInt(), 0);
-    DOCTEST_CHECK_EQ(obj.get("lastLogin").asInt(), 0);
+    // P2：未鉴权 /api/status 不再暴露在线数/绑定时间/设备名
+    DOCTEST_CHECK_FALSE(obj.has("deviceName"));
+    DOCTEST_CHECK_FALSE(obj.has("bindTime"));
+    DOCTEST_CHECK_FALSE(obj.has("lastLogin"));
+    DOCTEST_CHECK_FALSE(obj.has("online"));
     DOCTEST_CHECK_FALSE(obj.has("hid"));
     DOCTEST_CHECK_FALSE(obj.has("token"));
     return true;
@@ -272,7 +274,7 @@ REGISTER_TEST(web_settings_error_tristate, "web: 启动目录三态 not_exist/no
 REGISTER_TEST(web_handshake_retry_after, "web: 握手限流暴露剩余秒（不再固定 60）", {
     WebTerminalService service;
     const auto now = testNow();
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < kHandshakeClientLimit; ++i) {
         DOCTEST_CHECK(service.handshakeRateAllowedForTest("10.9.9.9", now));
     }
     DOCTEST_CHECK_FALSE(service.handshakeRateAllowedForTest("10.9.9.9", now));
@@ -378,3 +380,45 @@ REGISTER_TEST(web_terminal_service_tick_drains_commands,
     DOCTEST_CHECK_EQ(handled.size(), std::size_t{1});
     return true;
 })
+
+
+REGISTER_TEST(web_qr_matrix_from_token,
+              "web: 绑定二维码由令牌 URL 生成（P0-1：快照 qrSize/qrMatrix 非空）", {
+    setEnv("DEVDESK_WEB_PORT", "28787");
+    WebTerminalService service;
+    clearEnv("DEVDESK_WEB_PORT");
+    auto started = service.start();
+    DOCTEST_REQUIRE(started.isOk());
+    auto snap = service.snapshot();
+    DOCTEST_CHECK(snap.running);
+    DOCTEST_CHECK(snap.tokenRemainingSec > 0);
+    DOCTEST_CHECK(snap.qrSize >= 21);
+    DOCTEST_CHECK_EQ(snap.qrMatrix.size(),
+                     static_cast<std::size_t>(snap.qrSize) *
+                         static_cast<std::size_t>(snap.qrSize));
+    int dark = 0;
+    for (auto m : snap.qrMatrix) dark += m ? 1 : 0;
+    DOCTEST_CHECK(dark > 0);
+    // 令牌刷新 → 矩阵随之更新（同一主机/端口，只有 token 变了）
+    const auto before = snap.qrMatrix;
+    DOCTEST_REQUIRE(service.refreshToken().isOk());
+    auto after = service.snapshot();
+    DOCTEST_CHECK(after.qrSize >= 21);
+    DOCTEST_CHECK(after.qrMatrix != before);
+    (void)service.stop();
+    return true;
+});
+
+REGISTER_TEST(web_session_prune_reopens_capacity,
+              "web: 64 空闲会话清理后新握手成功（P0-B prune 生效）", {
+    WebTerminalService service;
+    auto& table = service.sessionsForTest();
+    const std::int64_t t = testNow();
+    for (int i = 0; i < 64; ++i) {
+        DOCTEST_REQUIRE(table.beginHandshake(t).isOk());
+    }
+    DOCTEST_CHECK_FALSE(table.beginHandshake(t).isOk());  // 满 64 → 拒绝
+    table.prune(t + kSessionIdleSec + 1);                 // 全部超 24h 空闲
+    DOCTEST_CHECK(table.beginHandshake(t + kSessionIdleSec + 2).isOk());
+    return true;
+});

@@ -202,9 +202,20 @@
     if (exitCard) {
       exitCard.hidden = !s.exit;
       if (s.exit) {
-        exitTitle.textContent = '终端已退出' +
-          (s.exit.exitCode !== undefined && s.exit.exitCode !== null ? '（退出码 ' + s.exit.exitCode + '）' : '');
+        exitTabId = (s.exit.tabIndex !== undefined && s.exit.tabIndex !== null)
+          ? String(s.exit.tabIndex) : null;
+        if (s.exit.reason) {
+          exitTitle.textContent = '终端启动失败：' + s.exit.reason;
+        } else {
+          exitTitle.textContent = '终端已退出' +
+            (s.exit.exitCode !== undefined && s.exit.exitCode !== null ? '（退出码 ' + s.exit.exitCode + '）' : '');
+        }
       }
+    }
+    if (view === 'terminal' && s.tabs.length === 0) {
+      // P1-3：桌面重启后的空态文案；普通空态仍是「暂无终端」。
+      emptyTitle.textContent = s.emptyReason === 'restart'
+        ? '桌面端已重启，会话已全部结束' : '暂无终端';
     }
     updatePending(s);
     updateConn(s);
@@ -255,7 +266,7 @@
   function handleAsyncErrors(s) {
     if (s.opError && s.opError.code === 'limit_session') showLimit('session');
     if (s.sendError) showToast('发送失败，请重试');
-    if (s.queueFull) showToast('待发送队列已满，请稍后再输入');
+    if (s.queueDropped) showToast('部分输入未送达');
     if (s.error && (s.error.http === 429 || s.error.code === 'too_many_requests')) showLimit('hs', s.error.retryAfter);
     if (s.error && s.error.code === 'too_many_sessions') showLimit('session');
     if (s.error && (s.error.http === 503 || s.error.code === 'too_many_streams')) showLimit('sse');
@@ -474,7 +485,7 @@
     var input = document.createElement('input');
     input.className = 'tab-rename';
     input.value = old;
-    input.maxLength = 24;
+    input.maxLength = 32;  // P1-4：PRD 上限 32 字符
     tabEl.replaceChild(input, label);
     input.focus();
     input.select();
@@ -503,7 +514,15 @@
 
   $('btn-new').addEventListener('click', reuseNewTab);
   btnNewEmpty.addEventListener('click', reuseNewTab);
-  $('btn-exit-new').addEventListener('click', reuseNewTab);
+  var exitTabId = null;
+  $('btn-exit-restart').addEventListener('click', function () {
+    if (exitTabId !== null && client.restartTab) client.restartTab(exitTabId);
+    exitCard.hidden = true;
+  });
+  $('btn-exit-close').addEventListener('click', function () {
+    if (exitTabId !== null) client.closeTab(exitTabId);
+    exitCard.hidden = true;
+  });
   function reuseNewTab() {
     Promise.resolve(client.newTab()).catch(function (err) {
       if (err && (err.code === 'limit_session' || err.http === 409)) showLimit('session');
@@ -668,9 +687,10 @@
   var cfgSizeSpin = $('cfg-size-spin'), cfgMode = $('cfg-mode'), cfgPalette = $('cfg-palette');
   var cfgShell = $('cfg-shell'), cfgDir = $('cfg-dir'), cfgDirClear = $('cfg-dir-clear');
   var cfgDirErr = $('cfg-dir-err'), cfgBanner = $('cfg-banner');
+  // value 必须是服务端内部值（'' = 平台默认），label 仅展示；发展示名会让 shell 被丢弃。
   var shellOptions = /Win/i.test(navigator.platform || '')
-    ? ['默认（PowerShell）', 'cmd.exe', 'Git Bash']
-    : ['默认（zsh）', '/bin/bash', '/bin/sh'];
+    ? [{ l: '默认（PowerShell）', v: '' }, { l: 'cmd.exe', v: 'powershell' }]
+    : [{ l: '默认（zsh）', v: '' }, { l: '/bin/bash', v: '/bin/bash' }, { l: '/bin/sh', v: '/bin/sh' }];
   var dirMsgs = {
     not_exist: '目录不存在，已保留原值',
     not_dir: '不是目录，已保留原值',
@@ -690,8 +710,8 @@
     cfgShell.innerHTML = '';
     for (var j = 0; j < shellOptions.length; j++) {
       var o = document.createElement('option');
-      o.textContent = shellOptions[j]; o.value = shellOptions[j];
-      if (shellOptions[j] === s.shell) o.selected = true;
+      o.textContent = shellOptions[j].l; o.value = shellOptions[j].v;
+      if (shellOptions[j].v === (s.shell || '')) o.selected = true;
       cfgShell.appendChild(o);
     }
     cfgDir.value = s.startupDir || '';

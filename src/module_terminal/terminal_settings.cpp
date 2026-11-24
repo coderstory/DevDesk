@@ -21,6 +21,9 @@ constexpr const char* kKeyColorPalette = "colorPalette";
 constexpr const char* kKeyShell = "shell";
 // PRD P-14：新键 startupDir；旧 workDir 键不读（C-4 已砍时的历史残留不复活）。
 constexpr const char* kKeyStartupDir = "startupDir";
+constexpr const char* kKeyWebPort = "webPort";
+constexpr int kWebPortMin = 1024;
+constexpr int kWebPortMax = 65535;
 
 constexpr const char* kColorModeFollow = "followApp";
 constexpr const char* kColorModeIndependent = "independent";
@@ -64,6 +67,9 @@ TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings) {
     out.fontSize = clampedFontSize(settings.fontSize);
     out.colorMode = settings.colorMode;
     out.colorPalette = settings.colorPalette;
+    out.webPort = (settings.webPort >= kWebPortMin && settings.webPort <= kWebPortMax)
+                      ? settings.webPort
+                      : 0;
     return out;
 }
 
@@ -95,6 +101,8 @@ TerminalSettings loadTerminalSettings(core::data::SqliteDb* db) {
         s.shell = *v;
     if (auto v = platform::json::getIfString(obj, kKeyStartupDir))
         s.startupDir = *v;
+    if (auto v = platform::json::getIfInt(obj, kKeyWebPort))
+        s.webPort = static_cast<int>(*v);
     // C-4（need380）：workDir/scrollback/cursorStyle/cursorBlink 旧键不再读取
     //（行为固定默认；旧 JSON 里残留键在下次 save 整体重写时消失 = 一次性归一）。
     return sanitizedTerminalSettings(s);
@@ -120,6 +128,7 @@ core::Result<void> saveTerminalSettings(core::data::SqliteDb* db,
                                                                                : kPaletteLight));
     obj.set(kKeyShell, platform::json::makeString(s.shell));
     obj.set(kKeyStartupDir, platform::json::makeString(s.startupDir));
+    if (s.webPort > 0) obj.set(kKeyWebPort, platform::json::makeInt(s.webPort));
     auto text = platform::json::stringify(platform::json::JsonValue(obj), /*pretty=*/false);
     if (text.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::Internal,
