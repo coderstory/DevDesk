@@ -1065,6 +1065,15 @@ if ! bash scripts/check-module-isolation.sh; then
   exit 1
 fi
 
+# 3b-1b. 系统机密存储 + 硬编码密钥串守卫（纯静态检查，--no-test 也跑）。老板令 2026-11-24：
+# 应用机密禁止存进 Keychain / DPAPI / Credential Manager / libsecret；源码 / demo 禁止密钥串。
+# 与 check-no-keychain 同款秒级 grep，但判据更宽（系统 API 符号 + secret= 字面量）。
+echo "── 机密存储禁令守卫 ──"
+if ! bash scripts/check-no-secret-storage.sh; then
+  echo "❌ 机密存储禁令守卫失败（上方为 文件:行:命中行；机密一律走 core::secrets_store）"
+  exit 1
+fi
+
 # 3b-2. Windows 交叉编译守卫（纯静态检查，--no-test 也跑）。受编集合 = **从 CMakeLists 的
 # WIN32 分支解析出来的、Windows CI 真正会编的源文件**（src + tests，共享文件全在内）。只编
 # `*_win.cpp` 是错的：CI 编整棵树，共享文件它也编 —— 共享 cpp 缺 `#include
@@ -1119,9 +1128,10 @@ fi
 # 本段**故意放在所有真守卫之后**：代码真的有问题时先报代码问题，别让自检噪音盖住它。
 echo "── 守卫自检（验证上面各守卫自己没坏，非你的代码问题）──"
 SELF_TEST_FAIL=0
-# 自检计数随开关动态：链内 5 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
-_GUARD_SELF_COUNT=5
+# 自检计数随开关动态：链内 6 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
+_GUARD_SELF_COUNT=6
 for _guard in check-module-isolation \
+               check-no-secret-storage \
                check-probe-skip-gate \
                check-std-includes \
                check-no-glass \
@@ -1134,8 +1144,8 @@ done
 # check-eui-neo-version 的自检与其真守卫（0b 段）同门：默认跳过（几十个 TU 的编译探测
 # 太贵），DEVDESK_EUI_API_CHECK=1 时才自检它。
 if [ "${DEVDESK_EUI_API_CHECK:-0}" = "1" ]; then
-  # 链内 5 道 + check-eui-neo-version = 实际跑 6 道（此前写 4，与实际道数不符）
-  _GUARD_SELF_COUNT=6
+  # 链内 6 道 + check-eui-neo-version = 实际跑 7 道
+  _GUARD_SELF_COUNT=7
   if ! bash scripts/check-eui-neo-version.sh --eui-dir "$EUI_DIR" --self-test; then
     echo "❌ 守卫自检失败：scripts/check-eui-neo-version.sh --self-test —— 同样是守卫自己坏了" >&2
     SELF_TEST_FAIL=1

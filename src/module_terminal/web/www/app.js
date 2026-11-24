@@ -849,8 +849,10 @@
         if (q.get('bad')) setLoginErr('验证码错误，请重试');
       }
       if (demoView === 'bind') {
-        bindOpen.href = 'otpauth://totp/DevDesk?secret=JBSWY3DPEHPK3PXP&issuer=DevDesk';
-        bindOpen.classList.remove('disabled');
+        // demo 只演示布局：不造可用的验证器链接（真实 otpauth 由桌面端 claim 下发，见 applyBindState）
+        bindOpen.href = '#demo';
+        bindOpen.classList.add('disabled');
+        platformHint.textContent = 'demo 不提供验证器链接';
         if (q.get('invalid')) {
           bindBanner.hidden = false;
           bindBanner.textContent = '尝试次数过多，绑定已失效，请在桌面端刷新二维码';

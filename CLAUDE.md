@@ -232,6 +232,8 @@ main → 13 个 Router 页面（枚举见「项目概况」）
 - **禁批量清理"在飞"的 worktree**：清理前 `ListAgents` 判活，在飞的绝不碰。判定式必须含"**有提交**"：`tip != base && git merge-base --is-ancestor <branch> HEAD`（base = 创建时**集成分支（`dev`）** tip，从 reflog `branch: Created from` 读）——只用 `--is-ancestor` 时，在飞 agent 的分支 tip 尚等于基线提交也为真，误判"已合并"。逐条确认；`git worktree remove` 文件被占用时会**半删**（`.git` 没了、目录还在）。误删后：`git worktree repair`；`.git` 已丢则重建同路径同名分支干净 worktree，`SendMessage` 唤醒原 agent 凭报告重做。
 - **跨仓库改动必须"产补丁 + 非隔离线应用"**：`isolation: "worktree"` 的 agent **无法对其它仓库执行 git 操作**（隔离守卫拒 `cd <别的仓库> && git …` 与 `git -C …`）。正确形态：隔离 agent 产 patch + 验证（文件副本模拟依赖真跑构建）→ **非隔离 agent** `git apply` 进目标仓库、编译、原子 commit；非隔离 prompt 写死"只许改 `<目标仓库>`"，也**别让非隔离 agent 碰 DevDesk**。主会话**不要**替 agent 落文件（含 `git apply`）。
 - **`git merge` 不与派单同一条消息并行跑**：git 锁竞争导致隔离校验失败（实测留下孤儿 worktree）。
+- **系统机密存储永久禁用**：应用机密（API key / TOTP 密钥 / 令牌 / 密码）禁止存进 macOS Keychain、Windows DPAPI / Credential Manager、Linux libsecret / Secret Service。一律走 `core::secrets_store`（`app_secrets` 表，系统层不托管）；`scripts/check-no-secret-storage.sh` 在门禁里拦新增引用，存量只读迁移豁免仅限 `src/platform/credential_protection*` 与对应测试。
+- **密钥串永久禁入代码与文档**：源码 / 文档 / demo / 测试夹具不得出现真实或占位密钥串（`secret=` 后跟 base32/hex、已知演示 TOTP 密钥、私钥 PEM）。验证器密钥只经 otpauth 链接一次性交给验证器（密文内流转），不落 UI 文本、不写 demo、不进日志。同一守卫拦截。
 
 ## Agent skills
 
