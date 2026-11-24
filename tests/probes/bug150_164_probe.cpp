@@ -183,6 +183,19 @@ int main(int argc, char* argv[]) {
     }
     composeFrame();
     composeFrame();
+    // need501 F9：C 款新节点防误删断言（.ind 顶指示条/.seam 下缘并入/.div 分隔线；
+    // .div 仅 i>0 存在，tab.1 存在时才断言）
+    FR indFr{}, seamFr{};
+    if (!frameOf("md.note.tab.0.ind", indFr) ||
+        !frameOf("md.note.tab.0.seam", seamFr)) {
+        std::cerr << "  need501 C 节点缺失（tab.0 .ind/.seam）\n";
+        passed = false;
+    }
+    FR oneFr{}, divFr{};
+    if (frameOf("md.note.tab.1", oneFr) && !frameOf("md.note.tab.1.div", divFr)) {
+        std::cerr << "  need501 C 节点缺失（tab.1 .div）\n";
+        passed = false;
+    }
     FR closeStack{}, closeIcon{};
     const bool have = frameOf("md.note.tab.0.close", closeStack) &&
                       frameOf("md.note.tab.0.close.icon", closeIcon);

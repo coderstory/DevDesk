@@ -1411,7 +1411,7 @@ public:
                     .size(contentW, tabH + kTabContentGap + cardsH)
                     .gap(kTabContentGap)
                     .content([&] {
-                        // tab 栏：S2.2 页面级大 Tab——内容宽（文字实宽+水平内边距 16×2）、
+                        // tab 栏：need501 B 页面级大 Tab（2026-11-24 翻案）——内容宽（文字实宽+水平内边距 16×2）、
                         // 枚间 4px、左对齐；等宽铺满会使单枚内边距远超 16 口径。文字实宽
                         // 与 wtab 渲染同参（kWtabFontSize/默认字重 400）。4 Tab 顺序 +
                         // 标签不动（kSettingTabLabels）；hit area id =

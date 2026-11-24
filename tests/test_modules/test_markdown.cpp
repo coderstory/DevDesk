@@ -74,6 +74,48 @@ REGISTER_TEST(module_pagid_to_string, "markdown: pageIdToString", {
     return true;
 })
 
+// need501 F2 防回归（审计 F2/F3）：CJK 标签截断不在 UTF-8 多字节序列中间断字。
+// 事故回退场景：逐字节 pop_back 版本把中文笔记名从序列中间截断，tab 显示花块；
+// 旧版估宽基准 12 与渲染 scaled(13) 失配，130% 档截断阈值失效压关闭钮。
+REGISTER_TEST(md_note_tab_truncate_utf8_boundary,
+              "markdown: note tab label truncation keeps UTF-8 sequences whole", {
+    using module::markdown::truncateNoteLabel;
+    const float fontPx = 13.0f;  // helper 纯算术估宽，不依赖 scaled 档
+    // 预算内：原名原样返回
+    DOCTEST_CHECK(truncateNoteLabel("短名", 500.0f, fontPx) == "短名");
+    // 超预算：确有截断 + 以 …（U+2026, E2 80 A6）收尾 + 全串 UTF-8 序列完整
+    const std::string out =
+        truncateNoteLabel("中文笔记标题很长很长需要截断处理", 60.0f, fontPx);
+    DOCTEST_REQUIRE(out.size() >= 3);
+    DOCTEST_CHECK(out.size() < 48);  // 原名 16 字 ×3B=48B，<48 即发生截断
+    const bool endsEllipsis =
+        static_cast<unsigned char>(out[out.size() - 1]) == 0xA6 &&
+        static_cast<unsigned char>(out[out.size() - 2]) == 0x80 &&
+        static_cast<unsigned char>(out[out.size() - 3]) == 0xE2;
+    DOCTEST_CHECK(endsEllipsis);
+    std::size_t i = 0;
+    bool valid = true;
+    while (i < out.size()) {
+        const unsigned char c = static_cast<unsigned char>(out[i]);
+        std::size_t len = 1;
+        if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        else if (c >= 0x80) { valid = false; break; }  // 孤儿续字节
+        if (i + len > out.size()) { valid = false; break; }  // 序列被截
+        for (std::size_t j = 1; j < len; ++j) {
+            if ((static_cast<unsigned char>(out[i + j]) & 0xC0) != 0x80) {
+                valid = false;
+                break;
+            }
+        }
+        if (!valid) break;
+        i += len;
+    }
+    DOCTEST_CHECK(valid);
+    return true;
+})
+
 // 行分类扫描器
 
 using module::markdown::scanHeadings;

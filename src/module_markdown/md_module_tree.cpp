@@ -6,7 +6,10 @@
 #include "markdown_module_internal.h"
 
 #include <algorithm>
+#include <iterator>  // std::distance（closeTab 激活右移；check-std-includes）
 #include <utility>  // std::move / std::pair（check-std-includes：不靠传递包含）
+
+#include <components/tooltip.h>
 
 namespace module::markdown {
 
@@ -122,15 +125,14 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                 fs::path p(path);
                 std::string name = p.filename().replace_extension("").string();
                 if (name.empty()) name = path;
-                // 估宽后钳位 + 超长省略号截断（need501 §3.4 label 截断）
-                const float nameW = estimateTextWidth(name, 12.0f);
+                // 估宽后钳位 + 超长省略号截断（need501 §3.4 label 截断）。
+                // F3：估宽与渲染同基准 scaled(13)（曾 12 vs 13 失配，130% 档
+                // 截断阈值失效压关闭钮——bug150 同坑）。
+                const float nameFont = core::theme::scaled(13.0f);
+                const float nameW = estimateTextWidth(name, nameFont);
                 const float tabW = std::min(kTabMaxW, std::max(kTabMinW, nameW + 42.0f));
-                std::string label = name;
-                while (!label.empty() &&
-                       estimateTextWidth(label, 12.0f) > tabW - 42.0f) {
-                    label.pop_back();
-                }
-                if (label != name) label += "…";
+                const std::string label =
+                    truncateNoteLabel(name, tabW - 42.0f, nameFont);
                 ui.stack("md.note.tab." + std::to_string(i))
                     .size(tabW, kNoteTabBarH)
                     .content([&] {
@@ -185,6 +187,21 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                                           : t.colors.textSecondary)
                             .fontWeight(active ? 600 : 400)
                             .build();
+                        // 截断时挂 tooltip（need501 §3.4：省略号 + tooltip）
+                        if (label != name) {
+                            const std::string nameId =
+                                "md.note.tab." + std::to_string(i) + ".name";
+                            components::tooltip(ui, nameId + ".tip")
+                                .theme(componentTheme)
+                                .source(nameId)
+                                .value(name)
+                                .anchor(x + tabW * 0.5f, y + kNoteTabBarH * 0.5f)
+                                .bounds(w, kNoteTabBarH)
+                                .minWidth(120.0f)
+                                .maxWidth(std::max(160.0f, w * 0.6f))
+                                .zIndex(40)
+                                .build();
+                        }
                         // 关闭钮：热区 24×24 > 视觉区 16×16（need501 §3.4），
                         // 点击只关 tab 不切换激活（need501 §3.5 独立 hit）
                         ui.stack("md.note.tab." + std::to_string(i) + ".close")
@@ -198,11 +215,12 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                                     .radius(t.sizes.radiusSmall)
                                     .onClick([this, path] { closeTab(path); })
                                     .build();
-                                // bug150：盒/行高固定 24 与外层 stack、hover rect
-                                // 严格重合（修前用 scaled(24)，非 100% 字号档行盒
-                                // 溢出 stack → 图标 ink 中心漂移 12·(s-1) px，
-                                // 130% 档实测偏 3.6px）；字号仍随档缩放，EUI 按
-                                // ink 盒居中，任意档视觉居中。
+                                // bug150：热区 stack 24×24 与 hover rect 严格
+                                // 重合；图标视觉盒 16×16 以整数偏移 (4,4) 内缩
+                                // 居中（盒/行高不用 scaled()，非 100% 字号档
+                                // 行盒溢出 stack → ink 中心漂移 12·(s-1) px，
+                                // 130% 档实测偏 3.6px）；字号仍随档缩放，EUI
+                                // 按 ink 盒居中，任意档视觉居中。
                                 ui.text("md.note.tab." + std::to_string(i) + ".close.icon")
                                     .position(4.0f, 4.0f)
                                     .size(kCloseVisual, kCloseVisual)

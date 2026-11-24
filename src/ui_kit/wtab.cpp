@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -60,6 +61,13 @@ std::unordered_set<std::string>& pressedTabs() {
     return pressed;
 }
 
+// P2 F7：键加窗口实例限定——多窗（app::openWindow）同页渲染时静态缓存
+// 按 Ui 实例隔离，防同 id 互踩 t0/pressed（onPress/onRelease 捕获 &ui 为
+// 引用安全：调用期在 ui 生存期内）。
+std::string windowKey(const eui::Ui& ui) {
+    return std::to_string(reinterpret_cast<std::uintptr_t>(&ui));
+}
+
 // 文本宽度估算：release chipWidth / schedule textWidth 同式（CJK 0.43 /
 // ASCII 0.56 × 字号 + 1.6 字号基宽；略偏大只多留白、不裁字）。
 float wtabTextWidth(const std::string& text, float fontSize) {
@@ -77,6 +85,8 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           const core::theme::Tokens& t,
           const std::function<void()>& onClick, float fontSize) {
     // need501 §4：弹窗级（fontSize=小档）hover 底圆角 6，页面级 8。
+    // F10-2：浮点等值判档前提=调用方传字面常量（kWtabFontSize/kWtabSmallFontSize），
+    // 传计算值会静默失判——改显式 level 参数需动公开签名，此处钉死前提。
     const bool dialogLevel = (fontSize == kWtabSmallFontSize);
     const float hoverRadius = dialogLevel ? kHoverRadiusDialog : kHoverRadiusPage;
     const bool pressed = pressedTabs().count(id) > 0;
@@ -108,8 +118,9 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
                 const float restAbsX = x + (w - indW) * 0.5f;
                 const auto now = std::chrono::steady_clock::now();
                 auto& cache = slideCache();
-                if (cache.size() > 64) cache.clear();
-                const std::string group = id.substr(0, id.find_last_of('.'));
+                if (cache.size() >= 64) cache.clear();
+                const std::string group =
+                    windowKey(ui) + '|' + id.substr(0, id.find_last_of('.'));
                 IndTarget& slot = cache[group];
                 if (slot.activeId != id) {
                     if (slot.activeId.empty()) {
@@ -142,13 +153,15 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
             if (onClick) {
                 hit.onClick(onClick);
             }
-            hit.onPress([&id](const eui::PointerEvent&, const eui::Rect&) {
+            // 按值捕获 id：回调存入常驻 element，事件分发期 wtab 已返回，
+            // 按引用捕获 = 悬垂 UB（审计 F1，仓内范式 app_sidebar.cpp:762）。
+            hit.onPress([id, &ui](const eui::PointerEvent&, const eui::Rect&) {
                 auto& pressed = pressedTabs();
-                if (pressed.size() > 64) pressed.clear();
-                pressed.insert(id);
+                if (pressed.size() >= 64) pressed.clear();
+                pressed.insert(windowKey(ui) + '|' + id);
             });
-            hit.onRelease([&id](const eui::PointerEvent&, const eui::Rect&) {
-                pressedTabs().erase(id);
+            hit.onRelease([id, &ui](const eui::PointerEvent&, const eui::Rect&) {
+                pressedTabs().erase(windowKey(ui) + '|' + id);
             });
             hit.build();
 
