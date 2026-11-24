@@ -458,9 +458,11 @@ int main(int argc, char* argv[]) {
     expectNode("schedule.list.tab.0.text", &passed);
     expectNode("schedule.list.tab.1.text", &passed);
     expectNode("schedule.list.tabcount", &passed);
-    // 块面 TAB（wtab 契约：选中建 .bg，未选中不建）
+    // need501 B TAB（契约：.bg 常驻透明；.ind 仅激活 tab 存在）
     expectNode("schedule.list.tab.0.bg", &passed);
-    expectNoNode("schedule.list.tab.1.bg", &passed);
+    expectNode("schedule.list.tab.1.bg", &passed);
+    expectNode("schedule.list.tab.0.ind", &passed);
+    expectNoNode("schedule.list.tab.1.ind", &passed);
     // 系统卡：锁图标 + 来源块 + 零操作控件
     expectNode("schedule.list.sys.0", &passed);
     expectNode("schedule.list.sys.0.lock", &passed);
@@ -497,7 +499,8 @@ int main(int argc, char* argv[]) {
         passed = false;
     }
     expectNode("schedule.list.tab.1.bg", &passed);
-    expectNoNode("schedule.list.tab.0.bg", &passed);
+    expectNode("schedule.list.tab.1.ind", &passed);
+    expectNoNode("schedule.list.tab.0.ind", &passed);
     expectNode("schedule.list.user.0.bg", &passed);
     expectNode("schedule.list.user.1.bg", &passed);
     expectNoNode("schedule.list.user.0.edit", &passed);

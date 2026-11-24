@@ -2,7 +2,7 @@
 //
 // 视觉契约：页面 padding 32（上 0）、卡面白、主色走 theme token、正文 14、
 // 页标题 24、按钮 40、圆角 8/12、chip 22/11/pill。
-// Tab 必须用 ui_kit::wtab（块面式）；components::tabs 是下划线式，全局已淘汰。
+// Tab 用 ui_kit::wtab；2026-11-24 need#501 用户翻案定稿 B 底部下划线式，旧 S2.2 块面式废除。
 #include "release_config_ui.h"
 
 #include "release_checkbox.h"

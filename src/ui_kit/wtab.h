@@ -1,10 +1,13 @@
 // src/ui_kit/wtab.h
-// presentation 能力层：块面式 Tab helper（S2.2）。
+// presentation 能力层：Tab helper（need#501 2026-11-24 定稿 B「精修下划线」）。
 // 本层被 module_* 与 app 层链接，core / platform 不得反向依赖；被各页面共用。
 //
-// S2.2 块面 Tab：选中 = primarySoftBg 底 + primary 文字 + 8px 圆角；
-// 未选中 = 透明底 + textSecondary 文字。淘汰下划线式。
-// 色值走 core::theme::Tokens 主槽位（theme.cpp 已迁 mint），禁裸 hex。
+// B 精修下划线：无静止底；选中 = 底部圆角指示条（高 2.5 / 宽=文字宽 /
+// radius 999 / primaryText 槽，跨 tab OutCubic 160ms 滑移）+ textPrimary 文字；
+// 未选 = 透明底 + textSecondary；hover = primarySoftBg 槽底；按压 = scale 0.97。
+// 旧 S2.2 块面式（primary 14% 底 + radius 8）已废除——2026-11-24 用户显式翻案
+// 解除 S2.2 下划线淘汰线（need#501 F1 定稿 §2.1）。
+// 色值走 core::theme::Tokens 主槽位，禁裸 hex。
 #pragma once
 
 #include <core/theme.h>
@@ -32,18 +35,13 @@ constexpr float kWtabSmallFontSize = 11.2f;    // 弹窗级小 Tab 字号（2026
 constexpr float kWtabHeight = 40.0f;
 constexpr float kWtabSmallHeight = 36.0f;
 
-// 选中态底色比例：以 primary 按 14% 叠在页面底上（≈#D9F5E4 on #F5FAF7）。
-// 原用不透明 primarySoftBg #E8F8EE，与页面底 #F5FAF7 的 RGB 差 < 13，
-// 肉眼看不出「选中」——settings 页的 tab 因此退化成第三种样式（纯文字）。
-// 走 primary 派生而非新增 token：4 档强调色主题自动跟随，不引入新令牌。
-constexpr float kWtabSelectedBgOpacity = 0.14f;
-
-// 渲染单 Tab（块面式）：stack(id) 内含 rect.bg（active 时 primarySoftBg + radius 8）
-// + rect.hit（透明 hit area 挂 onClick）+ text（文字）。
-// 非 active 时不创建 bg rect，无下划线。
+// 渲染单 Tab（need501 B）：stack(id) 内含 rect.bg（常驻：透明 + hoverColor
+// 承载 hover 底）+ rect.ind（仅激活 tab：底部指示条）+ rect.hit（透明 hit
+// 挂 onClick/按压）+ text（文字）。
 // 几何：(x, y) 左上角，(w, h) 尺寸；调用方决定宽高。
-// fontSize：默认 kWtabFontSize（页面级）；弹窗级小 Tab 传 kWtabSmallFontSize。
-// 节点 id = `<id>.bg`（active 时底色 rect，非 active 时不存在）
+// fontSize：默认 kWtabFontSize（页面级）；弹窗级小 Tab 传 kWtabSmallFontSize
+// （hover 底圆角 6，页面级 8）。
+// 节点 id = `<id>.bg`（常驻 hover 载体）/ `<id>.ind`（仅激活存在）
 // / `<id>.hit`（透明 hit rect）/ `<id>.text`（文字），单测按此定位。
 void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           bool active, float x, float y, float w, float h,

@@ -644,7 +644,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                 .color(t.colors.textPrimary)
                 .build();
 
-            // S3.4 块面式 Tab（wtab 替代原下划线式 components::tabs）
+            // need#501（2026-11-24 翻案）：wtab=底部下划线式，替代原下划线 components::tabs 的旧改判
             const float tabY = y0 + 40.0f;
             const float tabH = ui_kit::kWtabHeight;
             const char* tabLabels[] = {"基础信息", "模型配置", "环境变量"};
