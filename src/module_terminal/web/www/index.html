@@ -7,8 +7,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <title>DevDesk 网页终端</title>
+<!-- CSP 唯一策略源是 web_routes.cpp 的响应头（bug#499：响应头+meta 双策略取交集，
+     曾拦掉下方骨架条样式）；不放 meta CSP：加了交集会重新拦掉内联样式并让
+     frame-ancestors 失效——bug#499。
+     favicon 用 data: 空链抑制 /favicon.ico 404（img-src data: 允许），不加静态资源。 -->
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -81,9 +85,10 @@
         <pre id="text-layer" aria-hidden="true"></pre>
       </div>
       <div class="skeleton" id="skeleton">
-        <i style="width:62%"></i><i style="width:84%"></i><i style="width:46%"></i><i style="width:70%"></i>
-        <i style="width:38%"></i><i style="width:88%"></i><i style="width:54%"></i><i style="width:76%"></i>
-        <i style="width:40%"></i><i style="width:66%"></i><i style="width:82%"></i><i style="width:50%"></i>
+        <!-- 条宽在 app.css .skeleton i:nth-child（CSP style-src 'self' 禁内联 style 属性，不得写回） -->
+        <i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i>
       </div>
       <div class="empty" id="empty" hidden>
         <div class="empty-title" id="empty-title">暂无终端</div>

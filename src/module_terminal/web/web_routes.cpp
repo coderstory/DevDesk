@@ -18,8 +18,12 @@ void applySecurityHeaders(platform::http::ResponseWriter& rw, bool api) {
     if (api) {
         rw.setHeader("Cache-Control", "no-store");
     }
+    // CSP 唯一策略源（bug#499）：index.html 不放 meta CSP，浏览器对头+meta 取交集会漂移。
+    // base-uri/form-action/frame-ancestors 无 default-src 兜底（CSP 规范），必须显式；
+    // connect-src/font-src 由 default-src 'self' 兜底，不重复。
     rw.setHeader("Content-Security-Policy",
-                 "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:");
+                 "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
 }
 
 // If-None-Match 与构建期 ETag 比对（容忍 W/ 弱标记与多值列表）

@@ -90,6 +90,19 @@ button { font-family: var(--sans); }
 
 .skeleton { position: absolute; inset: 0; padding: 8px; display: flex; flex-direction: column; gap: 10px; background: var(--term-bg); }
 .skeleton i { display: block; height: 8px; border-radius: 4px; background: rgba(250,249,245,0.12); animation: pulse 1.2s ease-in-out infinite; }
+/* 骨架条宽度按序固定（bug#499：原为内联 style，CSP style-src 'self' 下被拦，移入样式表；顺序与视觉稿一致） */
+.skeleton i:nth-child(1)  { width: 62%; }
+.skeleton i:nth-child(2)  { width: 84%; }
+.skeleton i:nth-child(3)  { width: 46%; }
+.skeleton i:nth-child(4)  { width: 70%; }
+.skeleton i:nth-child(5)  { width: 38%; }
+.skeleton i:nth-child(6)  { width: 88%; }
+.skeleton i:nth-child(7)  { width: 54%; }
+.skeleton i:nth-child(8)  { width: 76%; }
+.skeleton i:nth-child(9)  { width: 40%; }
+.skeleton i:nth-child(10) { width: 66%; }
+.skeleton i:nth-child(11) { width: 82%; }
+.skeleton i:nth-child(12) { width: 50%; }
 .empty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 16px; background: var(--term-bg); color: var(--term-fg); z-index: 2;
