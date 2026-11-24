@@ -16,6 +16,7 @@
 
 ## 登记簿
 
+- 2026-11-24 | 审计 | need#490 网页终端威胁模型与验证方案 — 资产 12 项、攻击者 10 类、可执行验证 V1–V11（抓包/回环拒绝/票据撤销/令牌复用/限流/Host-Origin）；结论：防被动嗅探，不防主动 MITM、本机同用户进程、有权限扩展；残余风险 12 条，V1–V11 本次未运行 | docs/security/2026-11-24-need490-threat-model.md
 - 2026-11-24 | 审计 | need#490 实现层审计复审（池 `2026-11-24-need490-impl-audit`，基线 dev 0e40903d + 修复 0fd8ce92） — P0 已修 2 / 部分 2（`cookieKey_` 每进程随机、`bound_`/TOTP 不持久化 → 「重启免登录」仍不成立）；P1 已修 5 / 部分 3 / 未修 2（关服务仍持锁调 `server_->stop()` 可死锁）| docs/superpowers/plans/2026-11-24-need490-impl-audit2.md
 - 2026-11-24 | 测试 | need#490 QA 全量门禁（HEAD 0fd8ce92） — doctest 2618/2610 过 0 失败；probe 68/69（唯一红 `notepad_probe` = bug#495 既有）；模块隔离与 keychain 守卫绿，std-include 守卫红（`web_auth.cpp:277` 缺 `<system_error>`）| docs/superpowers/plans/2026-11-24-need490-qa.md
 - 2026-11-24 | 调研 | need#490 F-01～F-28 功能核验（dev 0e40903d 只读走读） — 可验 6 / 已实现未验 17 / 未实现或与 PRD 不符 5（F-04 F-06 F-13 F-17 F-27），未跑构建与真机 | docs/superpowers/plans/2026-11-24-need490-feature-verify.md
