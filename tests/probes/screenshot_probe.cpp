@@ -8,7 +8,9 @@
 //      **用 libpng 独立解码**读回 → 尺寸 + 逐像素精确相等。证写出来的是合法 PNG、
 //      像素没串，且编码路径不依赖 GL 上下文。
 //   ② flipRowsToTopDown：2x3 逐行不同色 → 翻轴后行序反转（不翻 = 上下颠倒图）。
-//   ③ 失败必须显式：往不存在的目录写 PNG / rgba=nullptr / width=0 → 一律 false。
+//   ③ 失败必须显式：父组件是普通文件的路径 / rgba=nullptr / width=0 → 一律 false；
+//      不存在的目录则自建父目录并返回 true（evidence/ 是 gitignore 运行产物，
+//      新 clone / 清理后目录不存在，写 PNG 必须自建）。
 //   ④ 零开销：未传 --screenshot 时 captureIfRequested 返 true 且**一个文件都没写**
 //      （哨兵路径必须不存在）——既有 probe 行为不变的保证。
 //   ⑤ 真窗口抓图（live）：铺满底色 A + 上半屏色块 B → capturePng → 魔数 \x89PNG
@@ -210,14 +212,22 @@ int main(int argc, char* argv[]) {
               "抓出来的图会上下颠倒");
     }
 
-    // ③ 失败必须显式
+    // ③ 失败必须显式（目录缺失不算失败——writeRgbaToPng 自建父目录）
     {
-        const std::string bad =
-            tmp.file("no_such_dir/deeper/x.png").string();
         std::vector<unsigned char> one(4u, 200u);
-        const bool ok =
-            probe::writeRgbaToPng(bad, one.data(), 1, 1);
-        check(!ok, "③ 往不存在的目录写 PNG 却返回 true（静默假成功）");
+        // 不存在的目录 → 自建并返回 true（evidence/ 自建能力哨兵）
+        const std::string made =
+            tmp.file("auto_mkdir/deeper/x.png").string();
+        check(probe::writeRgbaToPng(made, one.data(), 1, 1),
+              "③ 往不存在的目录写 PNG 应自建父目录并返回 true");
+        // 真失败哨兵：父组件是普通文件（ENOTDIR），建目录必失败 → false
+        {
+            std::ofstream blocker(tmp.file("plain.txt"));
+            blocker << "x";
+        }
+        check(!probe::writeRgbaToPng(
+                  tmp.file("plain.txt/child/x.png").string(), one.data(), 1, 1),
+              "③ 父组件是普通文件时写 PNG 却返回 true（静默假成功）");
         std::vector<unsigned char> nullish;
         check(!probe::writeRgbaToPng(tmp.file("bad.png").string(), nullptr, 4, 4),
               "③ rgba=nullptr 却返回 true");

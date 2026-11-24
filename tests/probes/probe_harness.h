@@ -32,6 +32,8 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
+#include <system_error>
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -442,6 +444,19 @@ inline bool writeRgbaToPng(const std::string& path,
                   << (rgba == nullptr ? "null" : "ok") << ", " << width << "x"
                   << height << ")\n";
         return false;
+    }
+    // 父目录不存在先建（evidence/ 属 gitignore 运行产物，ctest cwd 是 build/tests/
+    // 时相对路径 evidence/** 必然缺失）。必须用 error_code 重载：throwing 版遇到
+    // 父组件是普通文件（ENOTDIR）会抛异常炸探针，而不是让调用方拿到 false。
+    const std::filesystem::path parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) {
+        std::error_code mkdirEc;
+        std::filesystem::create_directories(parent, mkdirEc);
+        if (mkdirEc) {
+            std::cerr << "probe::writeRgbaToPng: 建父目录失败 '"
+                      << parent.string() << "': " << mkdirEc.message() << "\n";
+            return false;
+        }
     }
     png_image image{};  // libpng 要求先整体清零再填字段（version 必设）
     image.version = PNG_IMAGE_VERSION;
