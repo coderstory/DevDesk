@@ -2,7 +2,11 @@
 # DevDesk 一体化脚本：杀旧进程 → 增量构建 → 测试 → 启动 app
 # 输出固定结构（阶段标题 + ✅/❌ 结果行）：构建正常只打尾部、失败才打错误摘要；测试只打
 # [FAIL] 行 + Total/Passed/Failed 统计。
-# 用法：./scripts/build-test-run.sh [--clean] [--release] [--dev] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串]
+# 用法：./scripts/build-test-run.sh [--clean] [--release] [--dev] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串] [--parallel-tests]
+#   --parallel-tests  doctest 段并行分片（need505）：N 片进程并发（N=DEVDESK_TEST_SHARDS，
+#                     默认 6），--shard=i/N 哈希分桶，每片独立进程=独立数据根；输出仍汇总
+#                     一行 Total，失败打「片 N：用例名」。默认关——CI 与现有调用方零变化；
+#                     片内顺序+fail-fast 语义不变，probe 段/守卫链不受影响
 #   --dev        开发内循环形态（成本纪律 2026-11-01）：增量构建 + ①无 --filter 时连 doctest
 #                一起跳（纯构建验证）；②有 --filter 只跑命中的定向用例；③守卫链/probe/全量
 #                全部不跑、不启动 app。**收口 / QA / 发版必须不带 --dev 完整跑一次**，一道不少。
@@ -168,7 +172,7 @@ fi
 # 构建类型：默认 Debug；--release 或 DEVDESK_BUILD_TYPE 切别的类型。只认 Debug / Release
 # 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
-CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""; DEV_MODE=0
+CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""; DEV_MODE=0; PARALLEL_TESTS=0
 # 取值 flag 用「内层 shift 吃值 + 循环尾 shift 吃 flag 名」——不能在 for arg in "$@" 里
 # shift：for 的迭代列表在循环入口展开一次，shift 只动位置参数不动列表，每轮只前进一个，
 # 带值 flag 会错位一格吃进前一个 flag（曾把 --verify-app-str 的值解析成 --install）。
@@ -177,6 +181,7 @@ while [ $# -gt 0 ]; do
     --clean)    CLEAN=1 ;;
     --release)  BUILD_TYPE="Release" ;;
     --dev)      DEV_MODE=1 ;;
+    --parallel-tests) PARALLEL_TESTS=1 ;;
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
@@ -559,6 +564,46 @@ if [ "$RUN_TEST" = "1" ]; then
   # （test_main.cpp 对 0 命中显式打 [ERROR] 并退出 2 防假绿）。曾用 `|| true` 吞退出码 +
   # grep "Failed: 0" 判绿：0 命中时二进制已报错退出，这里仍打「✅ 测试全绿」——门禁
   # 红变绿是最危险的形态。现在：退出码非 0 一律红；grep 只作数字/文案提取，不参与红绿判定。
+  if [ "$PARALLEL_TESTS" = "1" ]; then
+    # need505 并行分片：N 进程并发跑 --shard=i/N，汇总一行 Total。红绿判定仍只认退出
+    # 码——任何片 rc 非 0 一律红（含 0 命中/崩溃/坏参数），片内 fail-fast 语义不变。
+    SHARD_N="${DEVDESK_TEST_SHARDS:-6}"
+    SHARD_DIR="$BUILD_DIR_ABS/testtmp/shard-run"
+    rm -rf "$SHARD_DIR"
+    mkdir -p "$SHARD_DIR"
+    echo "并行模式：$SHARD_N 片（--shard=i/N 哈希分桶，每片独立进程/数据根；片内顺序+fail-fast 不变）"
+    for i in $(seq 0 $((SHARD_N - 1))); do
+      ( "$TEST_BIN" --shard=$i/$SHARD_N $FILTER >"$SHARD_DIR/s$i.log" 2>&1 \
+        && echo 0 >"$SHARD_DIR/s$i.rc" || echo $? >"$SHARD_DIR/s$i.rc" ) &
+    done
+    wait
+    T=0; P=0; F=0; K=0; SHARD_FAILS=""
+    for i in $(seq 0 $((SHARD_N - 1))); do
+      rc=$(cat "$SHARD_DIR/s$i.rc" 2>/dev/null || echo 99)
+      log="$SHARD_DIR/s$i.log"
+      st=$(grep -E "^Total:" "$log" 2>/dev/null | grep -oE "[0-9]+" | head -1) || true
+      sp=$(grep -E "^Passed:" "$log" 2>/dev/null | grep -oE "[0-9]+" | head -1) || true
+      sf=$(grep -E "^Failed:" "$log" 2>/dev/null | grep -oE "[0-9]+" | head -1) || true
+      sk=$(grep -E "^Skipped:" "$log" 2>/dev/null | grep -oE "[0-9]+" | head -1) || true
+      T=$((T + ${st:-0})); P=$((P + ${sp:-0})); F=$((F + ${sf:-0})); K=$((K + ${sk:-0}))
+      if [ "$rc" -ne 0 ]; then
+        TEST_RC=1
+        shard_fail_lines=$(grep -E "\[FAIL\]" "$log" 2>/dev/null | head -20) || true
+        if [ -n "$shard_fail_lines" ]; then
+          while IFS= read -r line; do SHARD_FAILS+="片 $i：$line"$'\n'; done <<<"$shard_fail_lines"
+        else
+          SHARD_FAILS+="片 $i：退出码 $rc，无 [FAIL] 行（0 命中/崩溃/参数错；看 $log）"$'\n'
+        fi
+      fi
+    done
+    if [ -n "$SHARD_FAILS" ]; then printf '%s' "$SHARD_FAILS"; fi
+    echo "Total: $T Passed: $P Failed: $F Skipped: $K（$SHARD_N 片并行）"
+    if [ "$TEST_RC" -ne 0 ]; then
+      echo "❌ 测试有失败（并行 $SHARD_N 片；上方「片 N：用例名」定位；片完整输出: $SHARD_DIR/sN.log）"
+      exit 1
+    fi
+    echo "✅ 测试全绿（并行 $SHARD_N 片）"
+  else
   TEST_RC=0
   TEST_OUT=$("$TEST_BIN" $FILTER 2>&1) || TEST_RC=$?
   # 全绿时 grep 无命中 → 管道码 1，pipefail 下必须 || true 兜住（以下 grep 均仅显示用）
@@ -576,6 +621,7 @@ if [ "$RUN_TEST" = "1" ]; then
     exit 1
   fi
   echo "✅ 测试全绿"
+  fi
 fi
 
 # 3a. UI probe（无头渲染几何 / 结构断言；与 doctest 是两条独立门禁）。
