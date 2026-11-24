@@ -257,25 +257,6 @@ std::string buildMacCommandBody(const LaunchSpec& spec) {
     return body;
 }
 
-void sweepStaleRunSettingsFiles(const std::filesystem::path& dir) {
-    // 镜像 terminal_launch_macos.cpp 的 sweepStaleScripts：删 24h 前修改的 run-*.json（含原子写残留的
-    // .devdesk-tmp，名字也是 run- 前缀）。best-effort，单条失败忽略；目录不存在 → 构造失败 → 无操作。
-    const auto now = std::filesystem::file_time_type::clock::now();
-    std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-        if (ec) return;
-        // 只碰本功能创建的文件（run- 前缀）
-        const std::string name = entry.path().filename().string();
-        if (name.rfind("run-", 0) != 0) continue;
-        std::error_code inner;
-        const auto mt = std::filesystem::last_write_time(entry.path(), inner);
-        if (inner) continue;
-        if (now - mt > std::chrono::hours(24)) {
-            std::filesystem::remove(entry.path(), inner);
-        }
-    }
-}
-
 std::string stableToken(const std::string& text) {
     uint32_t h = 2166136261u;                      // FNV-1a 32
     for (const char c : text) {

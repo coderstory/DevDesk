@@ -226,51 +226,6 @@ REGISTER_TEST(terminal_launch_bodies_with_settings_args,
     return true;
 })
 
-REGISTER_TEST(terminal_launch_sweep_run_settings_24h,
-              "terminal_launch: sweepStaleRunSettingsFiles 只删 24h 前的 run-* 文件", {
-    SKIP_IF_WRITE_BLOCKED();  // 安全策略限制跨树目录创建
-
-    const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() /
-        ("devdesk_test_run_settings_sweep_" +
-         std::to_string(static_cast<long long>(std::time(nullptr))));
-    std::error_code ec;
-    std::filesystem::remove_all(dir, ec);
-    std::filesystem::create_directories(dir, ec);
-    if (ec) {
-        DOCTEST_SKIP("创建临时目录失败（安全策略限制）");
-    }
-    DOCTEST_REQUIRE(std::filesystem::is_directory(dir));
-
-    const auto touch = [&](const std::string& name, std::chrono::hours age) {
-        const std::filesystem::path f = dir / name;
-        {
-            std::ofstream out(f, std::ios::binary | std::ios::trunc);
-            out << "{}";
-        }
-        // 写过去的 mtime 只能靠 file_time_type（MinGW 下映射到 SetFileTime），
-        // 直接设置系统时间会污染整台机器。
-        std::filesystem::last_write_time(
-            f, std::filesystem::file_time_type::clock::now() - age, ec);
-        return f;
-    };
-    const auto oldFile = touch("run-3-1730000000.json", std::chrono::hours(25));
-    const auto oldTmp = touch("run-3-1730000000.json.devdesk-tmp", std::chrono::hours(25));
-    const auto freshFile = touch("run-9-1730000001.json", std::chrono::hours(1));
-    const auto foreign = touch("user-file.json", std::chrono::hours(25));
-
-    platform::terminal::sweepStaleRunSettingsFiles(dir);
-
-    DOCTEST_CHECK(!std::filesystem::exists(oldFile, ec));
-    // 原子写的 .devdesk-tmp 残留也带 run- 前缀，同属 24h 清扫对象
-    DOCTEST_CHECK(!std::filesystem::exists(oldTmp, ec));
-    DOCTEST_CHECK(std::filesystem::exists(freshFile, ec));   // 24h 内保留
-    DOCTEST_CHECK(std::filesystem::exists(foreign, ec));     // 非 run- 前缀不碰
-
-    std::filesystem::remove_all(dir, ec);
-    return true;
-})
-
 REGISTER_TEST(terminal_launch_windows_arg_quoting,
               "terminal_launch: 参数引号（空格加引号/尾随反斜杠翻倍/内嵌引号/中文免引号）", {
     using platform::terminal::quoteWindowsArg;

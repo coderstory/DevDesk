@@ -4,9 +4,16 @@
 // 与真机同一条装配链：侧边栏 + Router 当前页）。
 //
 // 数据底座 = MdHeadlessEnv 临时目录（300 篇笔记 + 已迁移临时库注册 appDatabase），
-// Todo 种子 60 任务，覆盖量级敏感模块。markdown 轮询周期经测试缝压到 1ms，使
-// 「外部新增文件 → pollChanged 命中 → rescan」的同步链落在可测帧内（真机默认
-// 5s 墙钟触发，同一段代码路径）。
+// Todo 种子 60 任务，覆盖量级敏感模块。
+//
+// BUG401_POLL_MS 缺省 1ms 是测试缝，只把「外部新增文件 → pollChanged 命中 → rescan」
+// 压进可测帧；bug402/403 起比对/rescan 已移入后台线程，1ms 仅表示「后台巡检多久一轮」，
+// 不代表真机帧内负担——当「真机默认」解读会让巡检线程持续 CPU/DB 争用污染读数
+// （同配置 home 进页差 3-4 倍）。真机后台巡检周期 = 5000ms，可用 BUG401_POLL_MS=5000
+// 覆盖看稳态帧。
+//
+// 运行前提：exe 依赖 MinGW 运行时 DLL，PATH 必须含 /d/software/msys64/mingw64/bin；
+// 否则缺 DLL 静默退出（exit 127、日志为空，易误判「探针无输出」）。
 //
 // 输出口径：每页 enter=onPageEnter 同步耗时（如 Home getStats 直读库）、f1..f8 =
 // 连续 compose 帧墙钟（含 event pump + runtime.compose，不含 render），steady=
