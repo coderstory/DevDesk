@@ -12,6 +12,8 @@
 #include "core/theme.h"
 #include "home_service.h"
 #include "toast_notice_bridge.h"  // need270：点已关停模块卡片时投递应用级提示
+#include "home_anim_bridge.h"     // need506：档位/减动效态查询
+#include <ui_kit/home_anim.h>     // need506：三档绘制
 #include <ui_kit/card.h>
 #include <ui_kit/jelly.h>  // need301③ 统计卡果冻时间线（手写缝）
 
@@ -24,6 +26,8 @@
 #include <components/theme.h>
 
 #include <algorithm>
+#include <chrono>
+#include <optional>
 #include <cmath>
 #include <unordered_set>
 #include <functional>
@@ -736,6 +740,46 @@ public:
                     })
                     .build();
                 }  // if (actCount > 0)
+
+                // need506 定稿：点阵波纹铺底（内容之下）+ 打字机垫板（居中）。
+                // 档位/减动效经 home_anim 缝；相位壁钟；入场 500ms ease-out 包络。
+                {
+                    const bool animOn = ::home_anim::enabled();
+                    const float leftoverH = extraH - statsGrowTotalH;
+                    if (!animOn || leftoverH < 220.0f) {
+                        animFadeStart_.reset();  // 隐藏即重置包络（复显重新入场）
+                    } else {
+                        const auto nowD = std::chrono::steady_clock::now().time_since_epoch();
+                        const double nowS = std::chrono::duration<double>(nowD).count();
+                        if (!animFadeStart_.has_value()) animFadeStart_ = nowS;
+                        const float layerOpacity = std::clamp(
+                            static_cast<float>((nowS - *animFadeStart_) / 0.5), 0.0f, 1.0f);
+                        const bool reduced = ::home_anim::reducedMotion();
+                        const float phaseS = static_cast<float>(::home_anim::phaseSeconds());
+                        // 打字机数据：最近打开前 4 条（截断 26 字），空 → 占位语直显
+                        animTyper_.items.clear();
+                        const size_t take = std::min<size_t>(stats_.recentNotes.size(), 4);
+                        for (size_t i = 0; i < take; ++i) {
+                            animTyper_.items.push_back(
+                                ui_kit::home_anim::truncateTitle(
+                                    stats_.recentNotes[i].title));
+                        }
+                        if (!reduced) animTyper_.tick(::home_anim::phaseSeconds());
+                        const std::string subtitle =
+                            "今日新增笔记 " + std::to_string(stats_.todayNotes) + " 篇";
+                        ui.stack("home.anim.layer")
+                            .size(contentW, leftoverH)
+                            .content([&] {
+                                ui_kit::home_anim::drawDotGrid(
+                                    ui, 0.0f, 0.0f, contentW, leftoverH, phaseS,
+                                    layerOpacity, t);
+                                ui_kit::home_anim::drawTyper(
+                                    ui, contentW * 0.5f, leftoverH * 0.5f, contentW,
+                                    animTyper_, phaseS, subtitle, reduced, t);
+                            })
+                            .build();
+                    }
+                }
             })   // home.root 的 content
             .build();  // home.root
     })  // home.scroll 的 content（收尾多这一层）
@@ -767,6 +811,9 @@ private:
         router->navigateTo(page, payload);
     }
 
+    // need506：入场 500ms 包络时间戳 + 打字机状态 + 副语（今日数据）
+    std::optional<double> animFadeStart_;
+    ui_kit::home_anim::Typer animTyper_;
     std::unique_ptr<HomeService> service_;
     DashboardStats stats_;
     bool statsLoaded_ = false;

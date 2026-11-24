@@ -11,17 +11,19 @@
 namespace platform::reduced_motion {
 
 bool systemReducedMotion() {
-    // NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion
-    // （AppKit BOOL 属性）。GLFW/Cocoa 后端首次 objc 查询前 AppKit 已随 GLFW
-    // 加载，类可查；SDL2 后端 / objc runtime 未就绪时 objc_getClass 返回 nil
-    // → false（不减动效）。
-    const id cls = objc_getClass("NSWorkspace");
+    // objc_getClass 返回 objc_class*，C++ 下不隐式转 id → 显式 reinterpret_cast。
+    // objc_msgSend 是变参声明，C++ 严格原型下直接调编译不过（clangd 报无匹配
+    // 重载）→ 取地址后按目标签名强转（社区标准手法）。
+    const id cls = reinterpret_cast<id>(objc_getClass("NSWorkspace"));
     if (cls == nil) return false;
-    const id ws = objc_msgSend(cls, sel_getUid("sharedWorkspace"));
+    using MsgSendObj = id (*)(id, SEL);
+    const id ws = reinterpret_cast<MsgSendObj>(&objc_msgSend)(
+        cls, sel_getUid("sharedWorkspace"));
     if (ws == nil) return false;
-    const BOOL reduced =
-        objc_msgSend(ws, sel_getUid("accessibilityDisplayShouldReduceMotion"));
-    return reduced == YES;
+    using MsgSendBool = signed char (*)(id, SEL);  // BOOL = signed char（arm64 同）
+    const signed char reduced = reinterpret_cast<MsgSendBool>(&objc_msgSend)(
+        ws, sel_getUid("accessibilityDisplayShouldReduceMotion"));
+    return reduced != 0;
 }
 
 }  // namespace platform::reduced_motion

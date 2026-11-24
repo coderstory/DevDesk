@@ -407,7 +407,11 @@ void drawEditorFontCard(const CardDrawArgs& args) {
             toggleRow(".fluid", "动态背景", "主窗口背景液态流质动画；关闭恢复静态",
                       row2Y, in.cfg.fluidBackgroundEnabled,
                       [f = a.applyFluidBackgroundEnabled](bool v) { f(v); });
-        })
+
+            // 行 3：留白动画开关（need506 定稿：组合动效，默认开）
+            toggleRow(".homeanim", "留白动画", "点阵波纹 + 打字机组合动效；关闭恢复静态",
+                      row2Y + rowH + roundFs(6.0f), in.cfg.homeAnimEnabled,
+                      [f = a.applyHomeAnimEnabled](bool v) { f(v); });        })
         .build();
 }
 
