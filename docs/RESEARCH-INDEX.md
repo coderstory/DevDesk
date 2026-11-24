@@ -16,6 +16,20 @@
 
 ## 登记簿
 
+- 2026-11-24 | 审计 | need#490 实现层审计复审（池 `2026-11-24-need490-impl-audit`，基线 dev 0e40903d + 修复 0fd8ce92） — P0 已修 2 / 部分 2（`cookieKey_` 每进程随机、`bound_`/TOTP 不持久化 → 「重启免登录」仍不成立）；P1 已修 5 / 部分 3 / 未修 2（关服务仍持锁调 `server_->stop()` 可死锁）| docs/superpowers/plans/2026-11-24-need490-impl-audit2.md
+- 2026-11-24 | 测试 | need#490 QA 全量门禁（HEAD 0fd8ce92） — doctest 2618/2610 过 0 失败；probe 68/69（唯一红 `notepad_probe` = bug#495 既有）；模块隔离与 keychain 守卫绿，std-include 守卫红（`web_auth.cpp:277` 缺 `<system_error>`）| docs/superpowers/plans/2026-11-24-need490-qa.md
+- 2026-11-24 | 调研 | need#490 F-01～F-28 功能核验（dev 0e40903d 只读走读） — 可验 6 / 已实现未验 17 / 未实现或与 PRD 不符 5（F-04 F-06 F-13 F-17 F-27），未跑构建与真机 | docs/superpowers/plans/2026-11-24-need490-feature-verify.md
+- 2026-11-24 | 测试 | need#490 真机 UAT 手册（基线 dev 0fd8ce92） — 手机与电脑同 WiFi 打开桌面终端的分步验收脚本，每步给预期与「不对时先看什么」；面向产品/验收人，未执行 | docs/testing/2026-11-24-need490-uat-manual.md
+- 2026-11-23 | 设计 | need#490 网页终端移动端 UI（绑定页/登录页/终端主界面/配置页 + 桌面「网页访问」专区，含 39 屏 demo） — 含实现期八项口径同步（设置页第 5 tab、退出卡双按钮、4 KB 断线补发队列、tab 名 32 字符上限等）| docs/design/2026-11-23-web-terminal-mobile-ui.md（demo：docs/design/2026-11-23-web-terminal-mobile-ui-demo.html）
+- 2026-11-23 | 决策 | ADR 0010 网页终端应用层每会话加密 — HTTP 层仍明文、内容走 ChaCha20-Poly1305 每会话密钥；v1「浏览器 WebCrypto」经 Playwright 三引擎实测在非安全上下文不可用被推翻，改浏览器纯 JS 自实现 | docs/adr/0010-web-terminal-transport-encryption.md
+- 2026-11-23 | 决策 | ADR 0009 网页终端暴露面与鉴权 — 默认关闭、开启后监听 0.0.0.0:7878、扫码绑定 + TOTP 六位码、回环免验、单设备绑定；第 3 条传输决策已被 ADR 0010 取代 | docs/adr/0009-web-terminal-lan-exposure.md
+- 2026-11-23 | 审计 | need#490 第四轮闭环复审 — 需再改但技术设计可进实现：仅剩文档同步 1 条 P1（ADR 0010 影响段 S 编号仍写 S-24～S-27）+ 5 条 P2（AEAD 开销 29B 记错、角标上限覆盖缺等）| docs/superpowers/plans/2026-11-23-need490-audit4.md
+- 2026-11-23 | 审计 | need#490 第三轮复审 — 需再改：P0 2/2 关闭，余 P1×4（3 条阻断实现：会话/票据上限两侧不一致、UI 仍写「停留不自动刷新」、S 编号未对齐 S-31）| docs/superpowers/plans/2026-11-23-need490-audit3.md
+- 2026-11-23 | 审计 | need#490 第二轮复审 — 需再改、P0 未闭前不进实现：2 条 P0（二维码令牌进查询串、票据无随机 ID/无吊销表）+ 残余 P1 10 条；QR 容量、限流、nonce/重放窗等已核无问题 | docs/superpowers/plans/2026-11-23-need490-audit2.md
+- 2026-11-23 | 计划 | need#490 网页终端实现切片计划 W1–W7 — 覆盖 F-01～F-26 + 老板裁决 F-27/F-28 + 功能干跑 P1 十一条；bug#491 已闭，bug#493 Windows CI 红仅阻塞 W7 双平台门禁 | docs/superpowers/plans/2026-11-23-need490-implementation-plan.md
+- 2026-11-23 | 调查 | need#490 W1–W7 环境干跑（只读推演本机/CI 落地） — 阻塞 4（bug#491 未提交、worktree 子模块全空、git 代理指死端口、Windows CI 红）+ 摩擦 10 + 缺失 5；W1–W4 构建单测链可用，难点集中 W5/W7 前端与 E2E | docs/superpowers/plans/2026-11-23-need490-env-dryrun.md
+- 2026-11-23 | 调查 | need#490 网页终端功能走查（feature dry-run，只读） — F-01～F-26 全有 PRD 条款但服务端 0 行；最大落地缺口在手机软键盘（无 Esc/Ctrl/Tab，主用途「手机跑 claude code」不可达，P0），断线韧性/重启空态/握手限流可利用面各存 P1 | docs/superpowers/plans/2026-11-23-need490-feature-dryrun.md
+
 - 2026-11-10 | 审计 | 只读 MD 查看器 QA 收口 @ wt/mdv-int 6c30ea90 — 半成品：全量回归 1523 单测 Failed 0 + 探针 17/18 绿（agent_e2e 环境前置）；真机主路径可用但新缺陷 BUG-1（P1：中文路径 .md 打开失败，ASCII 对照正常）；假绿抽查 3 条变异全红过；mac 全域+真双击+真注册表链未验 | docs/research/2026-11-10-md-viewer-qa-report.md
 - 2026-11-10 | 调查 | F-07 前置验证 POC：Win10 静默写 .md 关联生效性 — 部分生效：HKCU 注册表写入可持久化/回读/幂等，但 ShellExecute 双击实测两次均弹 OpenWith 选择器、notepad 零次拉起，生效默认未变；接管需用户显式选择 | docs/research/2026-11-10-f07-win-userchoice-poc.md
 - 2026-11-10 | 调研 | 只读 MD 查看器·平台文件关联 + EUI-NEO 多窗口承载 — Win 单实例已有但第二实例路径丢失是最大缺口；macOS AppleEvent 链路已全通；EUI-NEO openWindow/scrollview 能力确认可用零上游缺口；Info.plist 缺有效 UTI 声明需补 UTImportedTypeDeclarations | docs/research/2026-11-10-md-viewer-file-assoc-multiwindow.md
