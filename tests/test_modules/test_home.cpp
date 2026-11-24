@@ -629,8 +629,9 @@ REGISTER_TEST(home_last_rate,
     }
     return true;
 })
-// C-2（need380）后 H18 契约改写：图表卡已砍，余高全归统计行。双档（600/960）
-// 只锁「统计行吸收余高、内容填满页高、卡内两行不重叠」的关系断言（不再写死卡高）。
+// C-2（need380）+ 限高（need#7）后 H18 契约：图表卡已砍，余高归统计行但单卡
+// 封顶 120（96 基准 + 24）。双档（600/960）锁「卡钳在上限、卡内两行不重叠、
+// 页底留白」——600 档余高 199.5、960 档余高 559.5 均超上限，两档都钳在 120。
 REGISTER_TEST(home_stat_chart_dual_tier,
               "home_module: H18 统计卡纵向弹性双档（页高 600 / 960；图表卡已砍）", {
     core::proxy_stats::resetForTest();
@@ -661,27 +662,26 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
-        // 图表卡已砍：600 档余高全归统计行（stat 高 > 基准 96）
+        // 图表卡已砍；限高后卡钳在上限 120（±1 容浮点）
         DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
-        DOCTEST_CHECK_MESSAGE(stat->frame.height > 96.0f,
-            "600 档统计卡应吸收余高（>96），实际 " + std::to_string(stat->frame.height));
+        DOCTEST_CHECK_MESSAGE(stat->frame.height > 119.0f && stat->frame.height < 121.0f,
+            "600 档统计卡应钳在上限 120，实际 " + std::to_string(stat->frame.height));
         // 卡内两行随卡高派生：仍在卡内、label 与 number 不重叠
         const float cardTop = stat->frame.y;
         const float cardBottom = cardTop + stat->frame.height;
         DOCTEST_CHECK(number->frame.y >= label->frame.y + label->frame.height);
         DOCTEST_CHECK(number->frame.y >= cardTop);
         DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
-        // 内容刚好填满页高：基准以上余高被统计行/图表卡全部吸收
+        // 限高后余白页底：底部余量 = 未被卡片吸收的余高（>100 防回归吃满）
         const float bottomMargin =
             screen.height - (root->frame.y + root->frame.height);
         DOCTEST_CHECK_MESSAGE(
-            bottomMargin <= 1.0f,
-            "600 档内容应填满页高（底部余量 ≤1），实际 " +
+            bottomMargin > 100.0f,
+            "600 档限高后页底应留白（余量 >100），实际 " +
                 std::to_string(bottomMargin));
     }
 
-    // 960 档（1600×1000 真实页高，fs=1）：基准 476、余高 960−476−0.5=483.5 →
-    // 统计卡恒 96，图表卡 220+483.5（写死具体值，不用恒等式）
+    // 960 档（1600×1000 真实页高，fs=1）：余高 559.5 超单卡上限 → 卡钳在 120
     {
         core::theme::setWindowHeight(960.0f);
         const float fs = core::theme::fontScale();
@@ -703,20 +703,21 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
-        DOCTEST_CHECK_MESSAGE(stat->frame.height > 96.0f,
-            "960 档统计卡应吸收余高（>96），实际 " + std::to_string(stat->frame.height));
+        // 限高后卡钳在上限 120（±1 容浮点）
+        DOCTEST_CHECK_MESSAGE(stat->frame.height > 119.0f && stat->frame.height < 121.0f,
+            "960 档统计卡应钳在上限 120，实际 " + std::to_string(stat->frame.height));
         // 卡高增长后卡内两行仍居中分布、在卡内且不重叠
         const float cardTop = stat->frame.y;
         const float cardBottom = cardTop + stat->frame.height;
         DOCTEST_CHECK(number->frame.y >= label->frame.y + label->frame.height);
         DOCTEST_CHECK(number->frame.y >= cardTop);
         DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
-        // 内容刚好填满页高：基准以上余高被统计行/图表卡全部吸收
+        // 限高后余白页底（不再填满页高）
         const float bottomMargin =
             screen.height - (root->frame.y + root->frame.height);
         DOCTEST_CHECK_MESSAGE(
-            bottomMargin <= 1.0f,
-            "960 档内容应填满页高（底部余量 ≤1），实际 " +
+            bottomMargin > 100.0f,
+            "960 档限高后页底应留白（余量 >100），实际 " +
                 std::to_string(bottomMargin));
     }
 
@@ -727,10 +728,11 @@ REGISTER_TEST(home_stat_chart_dual_tier,
     return true;
 })
 
-// C-2（need380）改写：今日 token 图表卡已砍（原 need270「与 Claude 注册态解耦」
-// 随卡片移除失去对象）。本用例锁定：无图表卡 + 5 张统计卡恒在场 + 页底无死区。
+// C-2（need380）改写 + 限高（need#7）：今日 token 图表卡已砍（原 need270「与
+// Claude 注册态解耦」随卡片移除失去对象）。本用例锁定：无图表卡 + 5 张统计卡
+// 恒在场 + 卡钳在上限 120、页底留白。
 REGISTER_TEST(home_no_chart_extra_to_stats,
-              "home_module: 图表卡已砍且 5 统计卡恒在场（C-2 need380）", {
+              "home_module: 图表卡已砍、5 统计卡恒在场、单卡限高 120（C-2 need380 / need#7）", {
     core::theme::setFontScale(1.0f);
     core::theme::setWindowHeight(960.0f);  // 窗高不封顶 → fs=1
 
@@ -762,14 +764,14 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
     const auto* root = ui.find("home.root");
     DOCTEST_REQUIRE(stat != nullptr);
     DOCTEST_REQUIRE(root != nullptr);
-    // 余高全归统计行（图表卡已砍）
-    DOCTEST_CHECK_MESSAGE(stat->frame.height > 96.0f,
-        "统计卡应吸收余高（>96），实际 " + std::to_string(stat->frame.height));
+    // 限高：余高超上限 → 卡钳在 120，页底留白（不再吃满）
+    DOCTEST_CHECK_MESSAGE(stat->frame.height > 119.0f && stat->frame.height < 121.0f,
+        "统计卡应钳在上限 120，实际 " + std::to_string(stat->frame.height));
     const float bottomMargin =
         screen.height - (root->frame.y + root->frame.height);
     DOCTEST_CHECK_MESSAGE(
-        bottomMargin <= 1.0f,
-        "无图表卡时页底不应留死区（余量 ≤1），实际 " +
+        bottomMargin > 100.0f,
+        "限高后页底应留白（余量 >100），实际 " +
             std::to_string(bottomMargin));
 
     core::theme::setWindowHeight(1000.0f);

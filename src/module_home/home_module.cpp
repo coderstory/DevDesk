@@ -51,6 +51,11 @@ constexpr float kHomeActionsBottomMargin = 16.0f;
 // 卡片自身宽度固定，行内换行交给 EUI flow（core/layout.h layoutFlow）。
 constexpr float kHomeCardMinW = 180.0f;
 constexpr int kHomeCardMaxCols = 5;
+// 统计卡最大高度（逻辑 px，随 fontScale 缩放）：卡高 = 基准 96 + 余高，但余高
+// 全吃会让 1600×1000 大窗单行卡被撑到数百像素（用户 2026-11-24 限高需求）。
+// 上限 120 = 基准 + 8px 网格三档（need220 密度基线），卡内两行排版（16+4+34
+// =54 内容 + 40 内边距）在 120 高里仍居中不空旷；超出部分留白页底。
+constexpr float kHomeStatMaxH = 120.0f;
 
 int homeGridColumns(float availableW, float gap) {
     for (int cols = kHomeCardMaxCols; cols > 1; --cols) {
@@ -452,9 +457,16 @@ public:
             // 顶距 32→0（批L）：高度向内边距为 0，基准里旧 32 顶距已不存在
             // 0.5px 余量：防浮点求和越过视口触发本不该出现的滚动条。
             const float extraH = std::max(0.0f, innerH - baseContentH - 0.5f);
-            // 余高去向：图表卡已砍（C-2 need380），统计行全吃。
+            // 余高去向：图表卡已砍（C-2 need380），统计行吃，但单卡封顶
+            // kHomeStatMaxH——超出留白页底，卡片不得无限长。
             // 网格化后统计区可能多行，增量按行均摊——单卡高度不随窗宽飘。
-            const float statsGrowTotalH = hasStats ? extraH : 0.0f;
+            const float maxGrowPerRow =
+                std::max(0.0f, core::theme::scaled(kHomeStatMaxH) - statBaseH);
+            const float statsGrowTotalH =
+                hasStats
+                    ? std::min(extraH,
+                               maxGrowPerRow * static_cast<float>(statRows))
+                    : 0.0f;
             const float statsGrowH =
                 (hasStats && statRows > 0)
                     ? statsGrowTotalH / static_cast<float>(statRows)

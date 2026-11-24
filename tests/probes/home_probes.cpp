@@ -310,13 +310,23 @@ int main(int argc, char* argv[]) {
             std::cerr << "home_probes: 组 D 结构缺失 home.stats\n";
             passed = false;
         } else {
-            const float expectStatsH =
-                composeH - (40.0f + 2.0f * 20.0f + 44.0f + 16.0f + 0.5f);
-            if (std::fabs(stats->frame.height - expectStatsH) > 1.0f) {
-                std::cerr << "home_probes: 组 D FAIL——统计行未吃满余高：高 "
-                          << stats->frame.height << " 期望 " << expectStatsH
-                          << "（图表卡回涨或余高分配回退？）\n";
-                passed = false;
+            // 统计卡限高（用户 2026-11-24 需求）：单卡封顶 kHomeStatMaxH=120
+            //（随 fontScale 缩放），余高留白页底——替换旧「吃满余高」判据。
+            // 下限 96*fontScale 基准防压缩；上限逐卡断言（行数随窗宽变，
+            // 块高 = maxH*行数 + gap*(行数-1)，逐卡判免重算行数）。
+            const float maxCardH = core::theme::scaled(120.0f) + 1.0f;
+            const float minCardH = core::theme::scaled(96.0f) - 1.0f;
+            for (const char* cardId : kStatCardIds) {
+                const core::dsl::Element* card = ui->find(cardId);
+                if (card == nullptr) continue;  // 结构在场性由组 A 覆盖
+                if (card->frame.height > maxCardH ||
+                    card->frame.height < minCardH) {
+                    std::cerr << "home_probes: 组 D FAIL——统计卡 " << cardId
+                              << " 高 " << card->frame.height
+                              << " 越出 [" << minCardH << ", " << maxCardH
+                              << "]（限高钳制回退？）\n";
+                    passed = false;
+                }
             }
         }
     }
