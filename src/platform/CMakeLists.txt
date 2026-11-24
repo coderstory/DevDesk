@@ -157,6 +157,17 @@ target_compile_definitions(devdesk_platform PUBLIC
     CPPHTTPLIB_OPENSSL_SUPPORT
 )
 
+# cpp-httplib vendored 头在 OpenSSL 4.1 下调用已弃用 API（X509_check_host /
+# X509_check_ip_asc / ASN1_STRING_length），Windows CI（MinGW + OpenSSL 4.1）
+# 叠全仓 -Werror 即编译红（bug#493）。只对实际 include httplib.h / http_headers.h
+# 的 TU 把该告警降级为非致命（仍打印、不静默）；macOS/Linux 是 OpenSSL 3.x 无此
+# 告警故仅 WIN32。抑制面就是以下三个 TU，勿改回全局或整 target。
+if(WIN32)
+    set_source_files_properties(
+        http_server.cpp github_api.cpp http_server_sockopt_win.cpp
+        PROPERTIES COMPILE_OPTIONS "-Wno-error=deprecated-declarations")
+endif()
+
 # libgit2 vendored（target 定义在根 CMakeLists，platform 之前；need:8）。
 # ⚠ target 名是 **libgit2package**（v1.9.7 src/libgit2/CMakeLists.txt 实读；OUTPUT_NAME=git2
 # → libgit2.a）——写成 `git2` 会被当普通库名生成 `-lgit2`，ld cannot find（实测踩坑）。

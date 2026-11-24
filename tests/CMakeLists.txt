@@ -422,6 +422,16 @@ endif()
 
 devdesk_apply_warnings(devdesk_tests)
 
+# 同上（bug#493）：这三个用例 TU 直接 include httplib.h，Windows + OpenSSL 4.1
+# 弃用 API 告警叠 -Werror 即红；仅 WIN32 降级为非致命，抑制面只这三个 TU。
+if(WIN32)
+    set_source_files_properties(
+        test_modules/test_proxy_router.cpp
+        test_modules/test_streaming_proxy.cpp
+        test_modules/test_streaming_stress.cpp
+        PROPERTIES COMPILE_OPTIONS "-Wno-error=deprecated-declarations")
+endif()
+
 # 终端桥接（macOS）：module_terminal 注册链拉入 create_terminal_module → 需后端符号。
 # 库本体在根 CMakeLists 定义（须在 add_subdirectory(tests) 之前）。
 if(TARGET devdesk_terminal_bridge)
