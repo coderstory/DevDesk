@@ -1,8 +1,8 @@
 // src/module_memory/panel/settings_store.cpp
 #include "settings_store.h"
 
-#include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <system_error>
 
 #include "core/logging.h"
@@ -17,17 +17,32 @@ std::filesystem::path settingsFile() {
     return engine::memoryDataDir() / "panel_settings.json";
 }
 
+// bug490 前的出厂默认：savePanelSettings 全量写三键，存量文件里精确等于此值 =
+// 从未自定义（旧滑条时代的中位默认）。迁移只抬这三个精确值，其它值——含 ≤0
+// 的关闭语义——原样保留，不丢用户配置。
+constexpr long long kLegacyUsageDayAlertTokens = 1000000;
+constexpr long long kLegacyUsageSoftBudgetTokens = 3000000;
+constexpr long long kLegacyUsageHardBudgetTokens = 5000000;
+
+long long migrateUsageThreshold(long long v, long long legacyDefault,
+                                long long newDefault) {
+    return v == legacyDefault ? newDefault : v;
+}
+
 }  // namespace
 
 MemoryPanelSettings loadPanelSettings() {
     MemoryPanelSettings s;
-    FILE* f = std::fopen(settingsFile().string().c_str(), "rb");
-    if (f == nullptr) return s;  // 首跑无文件 = 全默认
+    // ifstream 直收 fs::path：Windows 宽字符路径原生支持。禁 path::string() 喂 fopen
+    //（窄字节被 fopen 按 ACP 解释，非 ASCII 路径打不开，bug480/bug362）
+    std::ifstream f(settingsFile(), std::ios::binary);
+    if (!f.is_open()) return s;  // 首跑无文件 = 全默认
     std::string text;
     char buf[4096];
-    std::size_t n = 0;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
-    std::fclose(f);
+    while (f.good()) {
+        f.read(buf, sizeof(buf));
+        text.append(buf, static_cast<std::size_t>(f.gcount()));
+    }
     auto parsed = platform::json::parse(text);
     if (parsed.isFail() || !parsed.value().isObject()) return s;
     const auto obj = parsed.value().asObject();
@@ -56,12 +71,19 @@ MemoryPanelSettings loadPanelSettings() {
                              : 0;
     s.llmProfileName = getStr("llmProfileName");
     s.mcpSearchEnabled = getBool("mcpSearchEnabled", true);
-    // 需-9 / need:380 B-5 用量告警（旧文件缺键 = 默认开 + 中位阈值；旧键阈值原样
-    // 读入继续生效 = 存量自定义值的迁移路径）
+    // 需-9 / need:380 B-5 用量告警（旧文件缺键 = 默认开 + 默认阈值；旧键阈值原样
+    // 读入继续生效 = 存量自定义值的迁移路径）。bug490：精确等于旧默认的三键视为
+    // 未自定义、读取时内存态抬到新默认（不改写盘时机），其余值原样保留。
     s.usageAlertsEnabled = getBool("usageAlertsEnabled", true);
-    s.usageDayAlertTokens = getInt64("usageDayAlertTokens", 1000000);
-    s.usageSoftBudgetTokens = getInt64("usageSoftBudgetTokens", 3000000);
-    s.usageHardBudgetTokens = getInt64("usageHardBudgetTokens", 5000000);
+    s.usageDayAlertTokens = migrateUsageThreshold(
+        getInt64("usageDayAlertTokens", kUsageDayAlertTokensDefault),
+        kLegacyUsageDayAlertTokens, kUsageDayAlertTokensDefault);
+    s.usageSoftBudgetTokens = migrateUsageThreshold(
+        getInt64("usageSoftBudgetTokens", kUsageSoftBudgetTokensDefault),
+        kLegacyUsageSoftBudgetTokens, kUsageSoftBudgetTokensDefault);
+    s.usageHardBudgetTokens = migrateUsageThreshold(
+        getInt64("usageHardBudgetTokens", kUsageHardBudgetTokensDefault),
+        kLegacyUsageHardBudgetTokens, kUsageHardBudgetTokensDefault);
     s.inferHourlyLimit = getInt("inferHourlyLimit", 4);
     s.usageDayGate.armed = getBool("usageAlertDayArmed", true);
     s.usageDayGate.lastFireDay = getInt64("usageAlertDayLastDay", 0);
@@ -115,19 +137,20 @@ core::Result<void> savePanelSettings(const MemoryPanelSettings& settings) {
     }
     std::error_code ec;
     std::filesystem::create_directories(engine::memoryDataDir(), ec);
-    FILE* f = std::fopen(settingsFile().string().c_str(), "wb");
-    if (f == nullptr) {
+    std::ofstream f(settingsFile(), std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) {
         LOG_WARN("记忆面板设置写入失败（目录不可写）");
         return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
                                         "目录不可写");
     }
-    // 短写 / fclose 冲刷失败（磁盘满最常显形处）都必须报 fail：半截 JSON 下次
+    // 短写 / close 冲刷失败（磁盘满最常显形处）都必须报 fail：半截 JSON 下次
     // load 会整体落默认，mcpSearchEnabled=false 的工具会借机复活
     const std::string& payload = text.value();
-    const std::size_t written =
-        std::fwrite(payload.data(), 1, payload.size(), f);
-    const bool flushed = std::fclose(f) == 0;
-    if (written != payload.size() || !flushed) {
+    f.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    const bool written = !f.fail();  // 短写/写盘失败置 badbit
+    f.close();
+    const bool flushed = !f.fail();  // close 冲刷失败置 failbit
+    if (!written || !flushed) {
         LOG_WARN("记忆面板设置写入不完整（磁盘满/IO）");
         return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
                                         "写入不完整");

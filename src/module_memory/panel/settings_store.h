@@ -14,6 +14,13 @@
 
 namespace module::memory::panel {
 
+// bug490 记忆 token 预算默认（三档唯一定义源：成员默认 / 缺键回退 / 存量迁移目标）。
+// 2026-11-24 用户澄清「日 1000 万 / 周 5000 万 / 月 1 亿」指记忆模块；产品无周档，
+// 周 5000 万并入月软档。
+inline constexpr long long kUsageDayAlertTokensDefault = 10'000'000;
+inline constexpr long long kUsageSoftBudgetTokensDefault = 50'000'000;
+inline constexpr long long kUsageHardBudgetTokensDefault = 100'000'000;
+
 struct MemoryPanelSettings {
     bool sanitizeEnabled = true;  // 脱敏闸（默认开；关闭须二次确认，定案 2）
     int recallThresholdPct = 85;  // 升级阈值（Recall@5 低于此值提醒升级；红线 85）
@@ -23,15 +30,15 @@ struct MemoryPanelSettings {
     bool mcpSearchEnabled = true;  // memory_search MCP 工具注册开关（旧文件缺键 = true）
     // 需-9 / need:380 B-5：用量告警三档阈值收敛为「单开关 + 内部值」——UI 只留
     // 开/关（usageAlertsEnabled），阈值不再有滑条入口；存量自定义值原键保留、
-    // 开关开时继续生效（不丢用户配置）。默认值取原滑条量程的合理中位：
-    // 日 100 万（程 5 万~200 万）· 月软 300 万（程 50 万~500 万）· 月硬 500 万
-    // （程 100 万~1000 万）。月档与消耗卡预算同一套数。
+    // 开关开时继续生效（不丢用户配置）。bug490（2026-11-24）上调默认：日 1000 万
+    // · 月软 5000 万 · 月硬 1 亿；月档与消耗卡/提炼暂停同一套数。旧默认
+    // 100 万/300 万/500 万只作存量迁移识别键（等于旧默认 = 未自定义）。
     bool usageAlertsEnabled = true;              // UI 单开关；false = 只静默不告警
-    long long usageDayAlertTokens = 1000000;     // 日档阈值；≤0 = 关闭
-    long long usageSoftBudgetTokens = 3000000;   // 月档·软档；≤0 = 关闭
-    long long usageHardBudgetTokens = 5000000;   // 月档·硬档；≤0 = 关闭
+    long long usageDayAlertTokens = kUsageDayAlertTokensDefault;      // 日档；≤0 = 关闭
+    long long usageSoftBudgetTokens = kUsageSoftBudgetTokensDefault;  // 月档·软档；≤0 = 关闭
+    long long usageHardBudgetTokens = kUsageHardBudgetTokensDefault;  // 月档·硬档；≤0 = 关闭
     // G-1 提炼节流（spec 控耗 2「每小时云端调用上限可配置，默认保守值」）：
-    // 默认 4 次/小时（OQ-2 保守取值：月硬档 3M token ≈ 全月约 375 次提炼的量级约束）
+    // 默认 4 次/小时（OQ-2 保守取值；独立于预算档，不随 bug490 阈值上调放大）
     int inferHourlyLimit = 4;                    // ≤0 = 关闭节流
     proposals::UsageAlertGate usageDayGate;
     proposals::UsageAlertGate usageSoftGate;

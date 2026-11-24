@@ -4,7 +4,6 @@
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/markdown_notes_source.h"
-#include "core/mcp_tool.h"
 #include "core/module_interface.h"
 #include "core/platform_info.h"
 #include "core/router.h"
@@ -15,7 +14,6 @@
 #include "core/event_bus.h"
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
-#include "platform/tool_kit.h"
 #include "todo_dialogs.h"
 #include "todo_observability.h"
 #include "todo_service.h"
@@ -510,18 +508,10 @@ public:
         if (!service_ || todoTools_) return;
         todoTools_ = std::make_unique<TodoTools>(*service_);
         todoTools_->registerAll();
-        // need394（F-1）：同一批 todo.* 实例以 todo_* 名开给 MCP 对外面——
-        // 后端零重写，注册/注销随模块启停成对（markdown_tools 同款生命周期）
-        ::platform::tool_kit::registerToolsAsMcp(
-            ::core::mcp::globalMcpTools(), todoTools_->tools());
     }
 
     void detachTools() {
         if (!todoTools_) return;
-        // 先注销 MCP 面（adapter shared 持有工具，在途 execute 不悬垂），再撤
-        // 智能体面注册
-        ::platform::tool_kit::unregisterToolsAsMcp(
-            ::core::mcp::globalMcpTools(), todoTools_->tools());
         todoTools_->unregisterAll();
         todoTools_.reset();
     }

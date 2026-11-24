@@ -216,6 +216,10 @@ inline constexpr const char* kSql = R"(
     -- **不新写一套加密**。空串合法（「没有 env」）。
     -- written_at 供 24h 清扫与排序；file_path 记当时物化出来的文件路径
     -- （会话退出自删 + 24h 清扫后该路径已不存在，属正常）。
+    --
+    -- 废弃（只读保留，debt498）：need380 B-7 砍除「运行临时会话」链路后本表已无
+    -- 生产者，上面那段写入契约随链路一并失效；存量数据无害，保留供导出 / 展示侧只读。
+    -- 新代码禁写本表、禁新增消费方；不删表（存量数据与既有只读消费方仍在）。
     CREATE TABLE IF NOT EXISTS claude_run_settings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_key TEXT NOT NULL UNIQUE,

@@ -6,6 +6,7 @@
 
 #include "memory_module_internal.h"
 
+
 #include <ui_kit/text_metrics.h>  // cachedTextWidth（M9 TAB 估宽统一入口）
 
 #include "core/tool.h"
@@ -194,6 +195,11 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         // 第二帧起与渲染同源；其它视图不挂 provider，原缓存测量路径不变。
         scroll.contentHeightProvider([this](float, float vh) {
             return std::max(vh, cfgContentBottom_);
+        });
+    }
+    if (view == kViewReview) {
+        scroll.contentHeightProvider([this](float, float vh) {
+            return std::max(vh, reviewContentBottom_);
         });
     }
     scroll.content(drawView).build();

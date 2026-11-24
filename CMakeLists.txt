@@ -541,6 +541,20 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying app icons to build directory"
 )
 
+# 图标源文件变更必须触发重链：上述两段 POST_BUILD 只在 DevDesk 链接时执行，
+# 增量构建只改 assets/ 里的图标而不重链 → build/assets 停留旧图。挂 LINK_DEPENDS
+# 使链接规则依赖全部 5 个图标源文件：源变 → 重链 → POST_BUILD 必跑。
+# 禁止改为「拷贝前移 / 独立目标 + add_dependencies(DevDesk …)」：EUI-NEO bulk copy
+# 是 DevDesk 上更早定义的 POST_BUILD 且自带旧 icon.ico/icon.png，前移会让其同名
+# 覆盖反扑。
+set(DEVDESK_ICON_SOURCES
+    "${CMAKE_SOURCE_DIR}/assets/tray-icon-template.png"
+    "${CMAKE_SOURCE_DIR}/assets/tray-icon-template@2x.png"
+    "${CMAKE_SOURCE_DIR}/assets/tray-icon-win.ico"
+    "${CMAKE_SOURCE_DIR}/assets/icon.ico"
+    "${CMAKE_SOURCE_DIR}/assets/icon.png")
+set_property(TARGET DevDesk APPEND PROPERTY LINK_DEPENDS "${DEVDESK_ICON_SOURCES}")
+
 # 随包字体（need:132 字体统一线）：6 文件平铺 assets 根——EUI resolveFontFilePath
 # 只按 filename 在 exeDir/assets 等候选命中，assets 子目录不命中。DevDesk assets
 # 非整树同步（本文件只对托盘/应用图标逐文件 copy；EUI bulk copy 只拷 EUI 自己的

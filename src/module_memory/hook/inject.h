@@ -23,6 +23,12 @@ inline constexpr int kHookSearchTimeoutMs = 800;
 // 码点计数（"字"的口径）；非法 UTF-8 按字节近似（调用方输入已过检索层）
 std::size_t countChars(const std::string& utf8);
 
+// bug415 词面重合判据：查询与记忆正文是否共享内容词——CJK 二元组（剔功能词，
+// 见 inject.cpp kFunctionBigrams）/ ASCII 词（≥3 字符，忽略大小写）。命中 =
+// 「词面相关」，走既有 0.4 语义门槛；不命中才由 hook 侧要求确认档复检。
+// 只做「有无」判定，不产分数：telemem search 融合段无逐条 score（bug255 已证）。
+bool hasLexicalOverlap(const std::string& query, const std::string& text);
+
 // ── 需-3 前缀文法（细则 §1.1，单测钉死）──
 // 解析 text 偏移 0 的 "[类型|主题]"：类型 ∈ {踩坑,决策,契约,环境} 精确匹配；
 // 主题 = 首个 ']' 前的非空文本。任何不合规（非 '[' 起始、无 '|'、未知类型、

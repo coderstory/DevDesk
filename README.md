@@ -17,7 +17,7 @@
 [![c++](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus&logoColor=white)](#架构)
 [![gui](https://img.shields.io/badge/GUI-EUI--NEO-D97757?style=flat-square)](#架构)
 [![deps](https://img.shields.io/badge/runtime%20deps-none-2ea44f?style=flat-square)](#快速开始)
-[![tests](https://img.shields.io/badge/tests-2048-2ea44f?style=flat-square)](#项目状态)
+[![tests](https://img.shields.io/github/actions/workflow/status/coderstory/DevDesk/ci.yml?branch=dev&label=tests&style=flat-square)](#项目状态)
 
 <br>
 
@@ -198,8 +198,8 @@ claude mcp add --transport http devdesk http://127.0.0.1:8931/mcp
 <h2 align="center"><a name="项目状态"></a>📌 项目状态</h2>
 
 <p align="center">
-十三页全功能运行（可插拔模块 9 个：笔记 / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸 / MCP / 上线；壁纸默认关闭）<br>
-全量测试 <b>历史快照 Total 2048 / Failed 0</b>（macOS，2026-10-31；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
+十三页全功能运行（可插拔模块 11 个：笔记 / Git / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸 / MCP / 终端 / 上线；壁纸默认关闭）<br>
+全量测试以每次运行输出 <b><code>Total:</code></b> 为准（CI 双平台运行刷新，不在文档固化数字）<br>
 <sub>Total 与 Passed 的差额是按平台条件 <code>DOCTEST_SKIP</code> 的用例（Windows 专属实现 / soak 门控 / 非活跃平台分支等），不是失败</sub>
 </p>
 

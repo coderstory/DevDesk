@@ -4,9 +4,14 @@
 // 持久化用例走 DEVDESK_DATA_ROOT 隔离根（resetCaseGlobals 出厂已设构建树内
 // test_data），先落 seed 防其它用例写过的 panel_settings.json 串味。
 #include "doctest.h"
+#include "test_support.h"
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 
+#include "core/paths.h"
+#include "module_memory/engine/telemem_config.h"
 #include "module_memory/panel/settings_store.h"
 #include "module_memory/proposals/usage_alert.h"
 
@@ -217,19 +222,100 @@ REGISTER_TEST(usage_alert_settings_round_trip,
     DOCTEST_CHECK_EQ(back.usageSoftGate.lastFireDay, 20261029);
     DOCTEST_CHECK_FALSE(back.usageHardGate.armed);
     DOCTEST_CHECK_EQ(back.usageHardGate.lastFireDay, 20261028);
-    // 旧文件（无新键）→ 全默认（开关开 + 中位 100 万 / 300 万 / 500 万，闸全武装）；
-    // need:380 B-5 迁移口径：旧文件已自定义的阈值键原样读入继续生效（上行往返已证）
+    // 旧文件无自定义 → 全默认（开关开 + bug490 默认 1000 万 / 5000 万 / 1 亿，闸
+    // 全武装）；need:380 B-5 迁移口径：已自定义的阈值键原样读入继续生效（上行往返已证）
     MemoryPanelSettings legacy;
-    legacy.sanitizeEnabled = false;  // 只带旧键
+    legacy.sanitizeEnabled = false;  // 只改旧键，阈值保持出厂默认
     DOCTEST_REQUIRE(module::memory::panel::savePanelSettings(legacy).isOk());
     auto dflt = module::memory::panel::loadPanelSettings();
-    DOCTEST_CHECK_EQ(dflt.usageDayAlertTokens, 1000000);
-    DOCTEST_CHECK_EQ(dflt.usageSoftBudgetTokens, 3000000);
-    DOCTEST_CHECK_EQ(dflt.usageHardBudgetTokens, 5000000);
+    DOCTEST_CHECK_EQ(dflt.usageDayAlertTokens, 10000000);
+    DOCTEST_CHECK_EQ(dflt.usageSoftBudgetTokens, 50000000);
+    DOCTEST_CHECK_EQ(dflt.usageHardBudgetTokens, 100000000);
     DOCTEST_CHECK_TRUE(dflt.usageAlertsEnabled);
     DOCTEST_CHECK_TRUE(dflt.usageDayGate.armed);
     DOCTEST_CHECK_EQ(dflt.usageDayGate.lastFireDay, 0);
     DOCTEST_CHECK_TRUE(dflt.usageSoftGate.armed);
     DOCTEST_CHECK_TRUE(dflt.usageHardGate.armed);
+    return true;
+})
+
+// 防：bug480——settings 文件路径经 path::string()（Windows ACP）喂 fopen，非 ACP 可
+// 表示字符目录下存取全失败。U+1F600 在 ACP=936 不可表示，红在旧写法、绿在 fs::path 直收。
+REGISTER_TEST(memory_panel_settings_non_ascii_path_round_trip,
+              "bug480 非 ACP 可表示字符路径下设置存读往返", {
+    namespace fs = std::filesystem;
+    test_support::TempDir dir("mem_panel_bug480");
+    const fs::path root = dir.path / fs::path(L"mem-\U0001F600");
+    const auto u8 = root.u8string();
+    test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                     std::string(u8.begin(), u8.end()));
+    MemoryPanelSettings s;
+    s.mcpSearchEnabled = false;
+    s.usageDayAlertTokens = 424242;
+    s.llmProfileName = "bug480-emoji-path";
+    DOCTEST_CHECK(module::memory::panel::savePanelSettings(s).isOk());
+    auto back = module::memory::panel::loadPanelSettings();
+    DOCTEST_CHECK_EQ(back.usageDayAlertTokens, 424242);
+    DOCTEST_CHECK_EQ(back.llmProfileName, std::string("bug480-emoji-path"));
+    DOCTEST_CHECK_FALSE(back.mcpSearchEnabled);
+    return true;
+})
+
+// 防：bug490——记忆 token 预算上调（日 1000 万 / 月软 5000 万 / 月硬 1 亿）后的
+// 存量与边界：缺键取新默认；三键精确等于旧默认（savePanelSettings 全量写下的未
+// 自定义值）迁移到新默认；自定义值原样保留；≤0 关闭语义不得被迁移成正值。
+// 回退迁移或误迁移非正数都会红。
+REGISTER_TEST(usage_alert_budget_upgrade_migration,
+              "bug490 预算上调：缺键新默认 / 旧默认迁移 / 自定义与关闭语义保留", {
+    namespace fs = std::filesystem;
+    test_support::TempDir dir("mem_panel_bug490");
+    const auto u8 = dir.path.u8string();
+    test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                     std::string(u8.begin(), u8.end()));
+    const fs::path file =
+        module::memory::engine::memoryDataDir() / "panel_settings.json";
+    // ① 最老文件三键缺失 → 新默认
+    {
+        std::error_code ec;
+        fs::create_directories(file.parent_path(), ec);
+        std::ofstream f(file, std::ios::binary | std::ios::trunc);
+        DOCTEST_REQUIRE(f.is_open());
+        f << "{\"sanitizeEnabled\":false}";
+        f.close();
+    }
+    auto missing = module::memory::panel::loadPanelSettings();
+    DOCTEST_CHECK_EQ(missing.usageDayAlertTokens, 10000000);
+    DOCTEST_CHECK_EQ(missing.usageSoftBudgetTokens, 50000000);
+    DOCTEST_CHECK_EQ(missing.usageHardBudgetTokens, 100000000);
+    // ② 三键等于旧默认（视为未自定义）→ 迁移为新默认
+    MemoryPanelSettings oldDefaults;
+    oldDefaults.usageDayAlertTokens = 1000000;
+    oldDefaults.usageSoftBudgetTokens = 3000000;
+    oldDefaults.usageHardBudgetTokens = 5000000;
+    DOCTEST_REQUIRE(module::memory::panel::savePanelSettings(oldDefaults).isOk());
+    auto migrated = module::memory::panel::loadPanelSettings();
+    DOCTEST_CHECK_EQ(migrated.usageDayAlertTokens, 10000000);
+    DOCTEST_CHECK_EQ(migrated.usageSoftBudgetTokens, 50000000);
+    DOCTEST_CHECK_EQ(migrated.usageHardBudgetTokens, 100000000);
+    // ③ 自定义值 → 原样保留
+    MemoryPanelSettings custom;
+    custom.usageDayAlertTokens = 123456;
+    custom.usageSoftBudgetTokens = 2345678;
+    custom.usageHardBudgetTokens = 3456789;
+    DOCTEST_REQUIRE(module::memory::panel::savePanelSettings(custom).isOk());
+    auto kept = module::memory::panel::loadPanelSettings();
+    DOCTEST_CHECK_EQ(kept.usageDayAlertTokens, 123456);
+    DOCTEST_CHECK_EQ(kept.usageSoftBudgetTokens, 2345678);
+    DOCTEST_CHECK_EQ(kept.usageHardBudgetTokens, 3456789);
+    // ④ ≤0 = 关闭语义，不得被迁移成正值
+    MemoryPanelSettings off;
+    off.usageDayAlertTokens = 0;
+    off.usageSoftBudgetTokens = -1;
+    off.usageHardBudgetTokens = -1000000;
+    DOCTEST_REQUIRE(module::memory::panel::savePanelSettings(off).isOk());
+    auto offBack = module::memory::panel::loadPanelSettings();
+    DOCTEST_CHECK_EQ(offBack.usageDayAlertTokens, 0);
+    DOCTEST_CHECK_EQ(offBack.usageSoftBudgetTokens, -1);
+    DOCTEST_CHECK_EQ(offBack.usageHardBudgetTokens, -1000000);
     return true;
 })

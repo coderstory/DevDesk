@@ -63,10 +63,6 @@ std::string escapeWtTitle(const std::string& title);
 // `trap 'rm -f "<settings>"' EXIT` 自删。**不能 exec**：exec 替换 shell 进程，EXIT 陷阱随之消失、自删就没了。
 std::string buildMacCommandBody(const LaunchSpec& spec);
 
-// 启动清扫：删 run-settings/ 里 24h 前的陈旧 run-*.json（兜底崩溃/强杀留下的孤儿）；
-// best-effort，单条失败忽略不阻断启动。
-void sweepStaleRunSettingsFiles(const std::filesystem::path& dir);
-
 // 稳定短标识（8 位 hex，FNV-1a 32）：macOS 脚本文件名的 <id> 槽位。LaunchSpec 不含 profile id，故用
 // title 哈希：同一 profile 稳定、不同 profile 不撞。
 std::string stableToken(const std::string& text);

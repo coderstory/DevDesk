@@ -61,16 +61,25 @@
 | ✅ 允许 | ❌ 禁止 |
 |--------|--------|
 | `main` → `module_*` | `module_*` → `module_*`（互相依赖）|
-| `module_*` → `core` | `module_*` → `EUI-NEO`（通过 core 间接）|
-| `module_*` → `platform` | `core` → `platform`（保持 core 纯净）|
-| `platform` → `core`（用 Result）| `core` → `EUI-NEO` **运行时行为**（窗口/渲染/事件循环/组件；类型桥接例外见注 ①）|
-| `core` → `EUI-NEO` **仅 header-only 类型桥接**（注 ①）| `module_*` → `EUI-NEO`（必须经 core 适配）|
+| `module_*` → `core` | `core` → `platform`（保持 core 纯净）|
+| `module_*` → `platform` | `core` → `EUI-NEO` **运行时行为**（窗口/渲染/事件循环/组件；类型桥接例外见注 ①）|
+| `platform` → `core`（用 Result）| `module_*` → `EUI-NEO` **运行时入口**（事件循环 / 窗口 / 渲染后端；注 ②）|
+| `core` → `EUI-NEO` **仅 header-only 类型桥接**（注 ①）| `module_*` 直接 link `eui_neo` 目标（注 ②）|
+| `module_*` → `EUI-NEO` **头文件**（DSL / 类型 / 组件签名，include 经 core PUBLIC 传播；注 ②）| |
 
 > **注 ①（core → EUI-NEO 类型桥接例外，2026-09-23 审计 [6] 转正）**：core 仅可引用 EUI-NEO 的**类型**——
 > `eui::Color` 值类型 token、`eui::Ui`/`eui::Screen` 签名参数透传、`component_theme.h` 的 header-only
 > `ThemeColorTokens` 映射；`devdesk_core` PUBLIC 链接 `eui_neo` 是为向 `module_*`/tests 传播 include
 > usage requirements（静态库链接不强制解析符号），core 目标文件不含 EUI 运行时调用。「core 保持可单测」
 > 的本意不变：core 逻辑测试不构造 GUI 环境。完整边界见 spec §4.2.1。
+
+> **注 ②（module_* → EUI-NEO 头文件，2026-11-24 追认既有实践；debt#495）**：模块必然要画 UI，UI 全部是
+> EUI DSL，`src/module_*/` 下直接 `#include <eui/...>` 消费**头文件**（DSL / 类型 / 组件签名；2026-11-24
+> 实测 54 个文件）是允许的——这不是放宽约束：include 可见性由 `devdesk_core` PUBLIC 链接 `eui_neo`
+> 传播（与注 ① 同一条链路）。边界 = **运行时入口**：模块内不得启动 / 驱动事件循环、自建窗口或切换
+> 渲染后端，也不得直接 link `eui_neo` 目标（`src/module_git/CMakeLists.txt:22-24`、`src/module_mcp/CMakeLists.txt:4`
+> 均按此口径注释）。可静态检查判据：`src/module_*/CMakeLists.txt` 出现 link `eui_neo` 即违规（grep 可判定）；
+> 头文件消费不构成违规。模块若真需要运行时入口，该能力应落在 main / 框架层，不经 core 适配中转。
 
 ---
 

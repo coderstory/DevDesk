@@ -58,6 +58,9 @@ core::Result<int> McpService::start(int requestedPort) {
     port_ = server_->actualPort();  // port 0 → OS 分配的临时端口
     state_ = ServiceState::Running;
     lastError_.clear();
+    // 启动即把源工具镜像进 MCP 注册表（debt#416 单一注册源）：MCP 页按注册表快照
+    // 计数，页面首帧不得依赖首个外部 POST；POST 入口的 sync 保留（运行期自愈）。
+    mirror_.sync();
     return core::Result<int>::ok(port_);
 }
 

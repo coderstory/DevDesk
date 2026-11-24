@@ -513,3 +513,37 @@ REGISTER_TEST(schedule_user_message_unknown_field_falls_back,
     DOCTEST_CHECK_EQ(hint, std::string("规则配置有误，请检查后重试"));
     return true;
 })
+
+// debt497：schedule_rule 全部字段键都有人话映射——含嵌套键与 cron/event 变体，
+// 真实解析失败路径的 errorMessage 同样不得回显内部名。
+// 防：interval.every_sec / calendar.month_day 之类的键名再次直出 pageError_ / showToast。
+REGISTER_TEST(schedule_user_message_field_coverage,
+              "schedule: user_message 覆盖 interval/calendar/cron/event 字段（不回显内部名）", {
+    for (const char* key : {"interval.every_sec", "interval.anchor", "interval.window",
+                            "calendar.interval", "calendar.weekdays", "calendar.month_day",
+                            "calendar.nth_weekday", "calendar.nth_weekday.n",
+                            "calendar.nth_weekday.weekday", "calendar.last_workday",
+                            "calendar.time", "calendar.anchor_date",
+                            "cron.expr", "event.events", "event.cooldown_sec"}) {
+        const std::string hint = core::user_message::scheduleFieldHint(key);
+        DOCTEST_CHECK_MESSAGE(!hint.empty(), std::string("字段缺人话: ") + key);
+        DOCTEST_CHECK_MESSAGE(hint.find('.') == std::string::npos,
+                              std::string("提示文案回显内部名: ") + key + " -> " + hint);
+    }
+    // 间隔单位是秒（UI 标签「间隔秒数」），不得回退成分钟措辞
+    DOCTEST_CHECK_MESSAGE(core::user_message::scheduleFieldHint("interval").find("分钟") == std::string::npos,
+                          "interval 提示单位与 every_sec 不符");
+    // 接线实证：真实解析失败走人话
+    const auto r = parseRuleSpec(RuleKind::Calendar,
+                                 R"({"unit":"month","month_day":0,"time":"10:00"})");
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK_MESSAGE(r.errorMessage().find("month_day") == std::string::npos,
+                          "解析失败的 errorMessage 泄漏内部字段名: " + r.errorMessage());
+    DOCTEST_CHECK_MESSAGE(r.errorMessage().find("每月执行日期") != std::string::npos,
+                          "解析失败应走 user_message 人话文案: " + r.errorMessage());
+    const auto ri = parseRuleSpec(RuleKind::Interval, R"({"every_sec": 0})");
+    DOCTEST_CHECK(ri.isFail());
+    DOCTEST_CHECK_MESSAGE(ri.errorMessage().find("every_sec") == std::string::npos,
+                          "interval 解析失败泄漏内部字段名: " + ri.errorMessage());
+    return true;
+})

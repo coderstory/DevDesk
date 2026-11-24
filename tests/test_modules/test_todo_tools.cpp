@@ -12,10 +12,10 @@
 #include "core/mcp_tool.h"
 #include "core/module_interface.h"
 #include "core/tool.h"
+#include "module_mcp/mcp_tool_mirror.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_tools.h"
 #include "platform/json.h"
-#include "platform/tool_kit.h"
 
 #include <memory>
 #include <string>
@@ -629,17 +629,19 @@ REGISTER_TEST(todo_tools_schema_spot_check_and_registry,
     return true;
 })
 
-// need394 F-1（D-1 命名下划线）：6 件 todo.* 经 tool_kit::McpToolAdapter 以
-// todo_* 名进 MCP 对外面——后端与智能体面同一份实现（描述/schema 同源、执行零
-// 语义漂移）；点号原名不得漏进对外面
+// debt#416（单一注册源 = ToolMirror 裁决）：原 need394 的 tool_kit::McpToolAdapter
+// 直注注册块已删除，本用例改锁镜像命名规则——6 件 todo.* 经 ToolMirror 以 todo_* 名
+// 进 MCP 对外面，后端与智能体面同一份实现（描述/schema 同源、执行零语义漂移）；
+// 点号原名不得漏进对外面
 REGISTER_TEST(todo_tools_mcp_registration,
-              "need394: 6 件 todo_* 进 MCP 对外面，描述/schema 同源，空参与目标不存在走 isError", {
+              "debt416: 6 件 todo_* 经 ToolMirror 进 MCP 对外面，描述/schema 同源，空参与目标不存在走 isError", {
     ToolEnv env("mcp");
     DOCTEST_REQUIRE(env.ready);
     env.tools->registerAll();
 
     core::mcp::McpToolRegistry mcp;
-    platform::tool_kit::registerToolsAsMcp(mcp, env.tools->tools());
+    module::mcp::ToolMirror mirror(mcp);
+    mirror.sync();
     DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 6);
 
     const char* names[] = {"todo_list",       "todo_create", "todo_update",
@@ -654,7 +656,7 @@ REGISTER_TEST(todo_tools_mcp_registration,
         DOCTEST_CHECK(!tool->description().empty());
         DOCTEST_CHECK(tool->inputSchemaJson().find("\"type\":\"object\"") !=
                       std::string::npos);
-        // 点号原名不进对外面（D-1：对外全下划线）
+        // 点号原名不进对外面（对外全下划线）
         DOCTEST_CHECK(mcp.find("todo." + name.substr(5)).isFail());
     }
     DOCTEST_CHECK(mcp.find("todo_list").value()->description().find("待办任务") !=
@@ -674,8 +676,13 @@ REGISTER_TEST(todo_tools_mcp_registration,
         DOCTEST_CHECK(r.value().isError);
     }
 
-    // 整批注销后离场（模块 onStop 同口径）
-    platform::tool_kit::unregisterToolsAsMcp(mcp, env.tools->tools());
+    // 源无变更时二次 sync 零增删（幂等）
+    mirror.sync();
+    DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 6);
+
+    // 源侧注销 → 下一次 sync 镜像整批消失（模块 onStop 的自愈路径）
+    env.tools->unregisterAll();
+    mirror.sync();
     DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 0);
     return true;
 })

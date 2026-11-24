@@ -123,6 +123,7 @@ private:
     // 供滚动区 contentHeightProvider：EUI stack wrapContent 对绝对定位子元素
     // 测量偏小（声明几何 1424 被解析为 1320），滚动总高走渲染真值。
     float cfgContentBottom_ = 0;
+    float reviewContentBottom_ = 0;
 
     // 审核页：过滤 chips（下标即枚举序）/批量/展开/编辑
     int filterType_ = 0;   // 0=全部 1=合并 2=失效 3=遗忘 4=新增

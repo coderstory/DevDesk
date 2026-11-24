@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "core/logging.h"
@@ -870,13 +871,16 @@ core::Result<std::string> PanelState::exportAllToJson() {
     const std::filesystem::path out = std::filesystem::path(dir.value()) /
                                       ("devdesk-memory-" + std::string(stamp) +
                                        ".json");
-    FILE* f = std::fopen(out.string().c_str(), "wb");
-    if (f == nullptr) {
+    // ofstream 直收 fs::path（Windows 宽字符原生）：禁 path::string() 喂 fopen，
+    // 窄字节被按 ACP 解释，非 ASCII 目录创建导出文件必失败（bug480）
+    std::ofstream stream(out, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open()) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "导出文件创建失败");
     }
-    std::fwrite(text.value().data(), 1, text.value().size(), f);
-    std::fclose(f);
+    stream.write(text.value().data(),
+                 static_cast<std::streamsize>(text.value().size()));
+    stream.close();
     return core::Result<std::string>::ok(out.string());
 }
 
