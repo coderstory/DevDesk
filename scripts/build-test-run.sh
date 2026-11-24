@@ -564,11 +564,28 @@ if [ "$RUN_TEST" = "1" ]; then
   # （test_main.cpp 对 0 命中显式打 [ERROR] 并退出 2 防假绿）。曾用 `|| true` 吞退出码 +
   # grep "Failed: 0" 判绿：0 命中时二进制已报错退出，这里仍打「✅ 测试全绿」——门禁
   # 红变绿是最危险的形态。现在：退出码非 0 一律红；grep 只作数字/文案提取，不参与红绿判定。
+  if [ "$PARALLEL_TESTS" = "1" ] && [ -n "$FILTER" ]; then
+    # --filter 与 --parallel-tests 并用回退串行（审计 2026-11-24 第 3 条）：过滤词圈定
+    # 的是定点排查集合，片级哈希会把它打散、其余片 0 命中退 2 → 并行路径必红（假红）。
+    # 串行跑同一集合语义等价且无此洞——回退是唯一两全落点。
+    echo "⏭ --filter 与 --parallel-tests 并用：回退串行跑同一过滤集合（过滤定点集不需要分片）"
+    PARALLEL_TESTS=0
+  fi
   if [ "$PARALLEL_TESTS" = "1" ]; then
     # need505 并行分片：N 进程并发跑 --shard=i/N，汇总一行 Total。红绿判定仍只认退出
     # 码——任何片 rc 非 0 一律红（含 0 命中/崩溃/坏参数），片内 fail-fast 语义不变。
+    # SHARDS 非正整数硬退 2：0/负/非数值会让 seq 生成 0 个片 →「Total: 0」被上层
+    # 当全绿（假绿洞与「过滤 0 命中」同类，宁红勿绿）。
     SHARD_N="${DEVDESK_TEST_SHARDS:-6}"
-    SHARD_DIR="$BUILD_DIR_ABS/testtmp/shard-run"
+    case "$SHARD_N" in
+      ''|*[!0-9]*|0)
+        echo "❌ DEVDESK_TEST_SHARDS 必须是正整数（收到: \"$SHARD_N\"）——拒绝按 0 片跑出 Total: 0 假绿"
+        exit 2 ;;
+    esac
+    # 目录带脚本 PID：两实例（多会话/多 worktree 同构建目录）并发跑互不 rm -rf 对方
+    # 的片日志（审计 2026-11-24 nit）。
+    TEST_RC=0
+    SHARD_DIR="$BUILD_DIR_ABS/testtmp/shard-run-$$"
     rm -rf "$SHARD_DIR"
     mkdir -p "$SHARD_DIR"
     echo "并行模式：$SHARD_N 片（--shard=i/N 哈希分桶，每片独立进程/数据根；片内顺序+fail-fast 不变）"

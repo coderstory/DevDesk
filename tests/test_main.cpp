@@ -361,8 +361,23 @@ int main(int argc, char** argv) {
                       << spec << std::endl;
             return 2;
         }
-        shardIndex = std::atoi(spec.substr(0, slash).c_str());
-        shardCount = std::atoi(spec.substr(slash + 1).c_str());
+        // 严格数字解析（审计 2026-11-24 nit）：atoi("abc")=0 会把非数字静默当片 0；
+        // strtol 溢出回 LONG_MAX 不抛（项目禁异常），越界检查兜住。
+        const auto parseNum = [](const std::string& s, int& out) {
+            if (s.empty() ||
+                s.find_first_not_of("0123456789") != std::string::npos) {
+                return false;
+            }
+            out = static_cast<int>(std::strtol(s.c_str(), nullptr, 10));
+            return true;
+        };
+        const std::string idxStr = spec.substr(0, slash);
+        const std::string cntStr = spec.substr(slash + 1);
+        if (!parseNum(idxStr, shardIndex) || !parseNum(cntStr, shardCount)) {
+            std::cout << "[ERROR] --shard 需要 i/N 数字形态（如 --shard=1/6），收到: "
+                      << spec << std::endl;
+            return 2;
+        }
         if (shardCount < 1 || shardIndex < 0 || shardIndex >= shardCount) {
             std::cout << "[ERROR] --shard 越界: " << spec
                       << "（要求 0 <= i < N，N >= 1）" << std::endl;
