@@ -1799,6 +1799,9 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
                           .size(w, h - editorTop - kStatusH)
                           .value(s.editText)
                           .multiline(true)
+                          // bug478：只读降级 / 二进制 suspect 态由框架层拦截文本变更
+                          //（下方 onChange 守卫保留为双保险）
+                          .readOnly(!editable)
                           .scrollbar(true)
                           .softWrap(s.wrapOn)  // F-19 换行钮实时口径（EUI 旋钮）
                           .fontSize(static_cast<float>(s.editorFontSize))
