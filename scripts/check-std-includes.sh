@@ -839,6 +839,10 @@ function compute_effective(   k, tgt, n, arr2, j, cl) {
             if (!(CUR in OPQ)) { OPQ[CUR] = 1; NOPQ++; OPQLIST[NOPQ] = CUR }
             continue
         }
+        # NOEXEMPT=1（仅 --self-test 变异树）：「既有风格」豁免服务真守卫（防误报），
+        # 不服务自证——探针文件经项目头（json.h:8 / tool_kit.h:6 显式 <optional>）
+        # 合法继承的豁免会把「删 include」变异吞掉，坏树 A/B 永远绿（假绿自测）。
+        if (NOEXEMPT != "") continue
         n = split(HSYS[tgt], arr2, " ")
         for (j = 1; j <= n; j++)
             if (arr2[j] != "") EFFECTIVE[arr2[j]] = 1
@@ -846,7 +850,7 @@ function compute_effective(   k, tgt, n, arr2, j, cl) {
     # 项目头也常用尖括号引（`#include <ui_kit/card.h>`，见 ui_kit/ 与 eui/ 的用法）。
     # 这些会落进 SELF_SYS；解析得到项目头就照样采信它的显式 include，解析不到就
     # 当作普通系统/第三方头忽略（**不**记 OPAQUE——尖括号几乎总是系统头）。
-    for (k in SELF_SYS) {
+    if (NOEXEMPT == "") for (k in SELF_SYS) {
         tgt = resolve_quoted(CUR, k)
         if (tgt == "") continue
         n = split(HSYS[tgt], arr2, " ")
@@ -918,7 +922,7 @@ HEADERS="$(printf '%s\n' "$FILES" | grep '\.h$' || true)"
 # 两遍：MODE=index 产出项目头的显式 <> 头清单；MODE=check 据此算有效集。
 # 每遍都单独判「结果为空」：空跑一遍的守卫会以 0 退出，而「匹配 0 条」与「没红」是两件事。
 run_gate() {
-    local files="$1" extra="${2:-}"
+    local files="$1" extra="${2:-}" noexempt="${3:-}"
     local idx="$TMP/hdr.idx" out rc nidx hdrs
     hdrs="$HEADERS"
     [ -n "$extra" ] && hdrs="${hdrs}
@@ -943,7 +947,7 @@ ${extra}"
         return 2
     fi
     out="$(printf '%s\n' "$files" | tr '\n' ' ' | \
-        xargs awk -v MODE=check -v IDX="$idx" -f "$AWKF" 2>"$TMP/err")"
+        xargs awk -v MODE=check -v IDX="$idx" -v NOEXEMPT="$noexempt" -f "$AWKF" 2>"$TMP/err")"
     rc=$?
     echo "$out"
     cat "$TMP/err"
@@ -989,12 +993,15 @@ if [ "$SELF_TEST" -eq 1 ]; then
 
     mk_probe() { :; }   # 探针文件位置固定在 PROBE_REL，无需生成器
 
+    # 坏树 A/B 传 noexempt=1（关「既有风格」豁免）：探针文件的直接项目头
+    # （platform/json.h / platform/tool_kit.h）显式 include <optional>，豁免会
+    # 合法吞掉「删 include」变异 —— 豁免服务真守卫，不服务自证。
     # 坏树 A：删掉一行 #include <optional> → 必须红
     mkdir -p "$TMP/badA"
     grep -v '^#include <optional>$' "${ROOT}/${PROBE_REL}" > "$TMP/badA/probe.cpp"
     if diff -q "${ROOT}/${PROBE_REL}" "$TMP/badA/probe.cpp" >/dev/null 2>&1; then
         echo "  ❌ 坏树 A：变异是空操作 —— 这条自测无效"; ok=1
-    elif OUT="$(run_gate "$TMP/badA/probe.cpp" 2>/dev/null)"; then
+    elif OUT="$(run_gate "$TMP/badA/probe.cpp" "" 1 2>/dev/null)"; then
         echo "  ❌ 坏树 A：删掉 #include <optional> 后仍绿 —— **假绿守卫**"; ok=1
     else
         echo "  ✅ 坏树 A：红 — $(printf '%s\n' "$OUT" | grep -v '^  ' | head -1 | cut -c1-110)"
@@ -1007,7 +1014,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
     } > "$TMP/badB/probe.cpp"
     if diff -q "${ROOT}/${PROBE_REL}" "$TMP/badB/probe.cpp" >/dev/null 2>&1; then
         echo "  ❌ 坏树 B：变异是空操作 —— 这条自测无效"; ok=1
-    elif OUT="$(run_gate "$TMP/badB/probe.cpp" 2>/dev/null)"; then
+    elif OUT="$(run_gate "$TMP/badB/probe.cpp" "" 1 2>/dev/null)"; then
         echo "  ❌ 坏树 B：塞了裸 std::optional 用法仍绿 —— **假绿守卫**"; ok=1
     else
         echo "  ✅ 坏树 B：红 — $(printf '%s\n' "$OUT" | grep -v '^  ' | head -1 | cut -c1-110)"
