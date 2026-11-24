@@ -18,7 +18,9 @@
 #include <eui/dsl.h>
 #include <eui/types.h>
 
+#include <chrono>
 #include <cmath>
+#include <thread>
 
 namespace {
 
@@ -76,11 +78,11 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
 })
 
 // 场景2（防「实心填充按钮做 Tab」，§4.2 / §8 #1 禁止项）：
-// wtab active：text=textPrimary(#1A1A1A) + underline=primary(#07C160) + hit 透明
-// 无填充。事故：Tab 用实心填充按钮（v1.0 §3.3 旧设计橙色实心）——本 helper
-// 钉死"灰字 / 深灰字 + 绿下划线"，hit area 透明不构成填充。
+// need501 B：wtab active = 底部指示条（primaryText/2.5/radius999）+ textPrimary
+// 字 + 常驻透明 bg（hover 载体 primarySoftBg）+ hit 透明。事故：Tab 回退实心
+// 填充按钮或旧 S2.2 块面式——钉死"指示条 + 常驻透明底"。
 REGISTER_TEST(ui_kit_wtab_active_colors,
-              "ui_kit wtab active: text=textPrimary + underline=primary + transparent hit", {
+              "ui_kit wtab active: bottom indicator + textPrimary + transparent bg/hit", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02c_tab_active");
@@ -89,21 +91,27 @@ REGISTER_TEST(ui_kit_wtab_active_colors,
 
     const auto* txt = ui.find("tab.a.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // active text = textPrimary #1A1A1A（深灰，非 textSecondary 灰）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), deepened(0x36));
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), deepened(0xD3));
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), deepened(0x99));
+    // active 字 = textPrimary（深字，非 textSecondary 灰）
+    DOCTEST_CHECK(sameColor(txt->textColor, t.colors.textPrimary));
 
-    // S2.2 wtab active bg = primarySoftBg #E6FBF2 + radius 8
+    // need501 B 无静止底：bg 常驻但透明，hover 载体 = primarySoftBg + radius 8
     const auto* bg = ui.find("tab.a.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    DOCTEST_CHECK(sameColor(bg->color, t.colors.primarySoftBg));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 0x00);  // 静止透明，非块面填充
+    DOCTEST_CHECK(sameColor(bg->hoverColor, t.colors.primarySoftBg));
     DOCTEST_CHECK_EQ(bg->radius, 8.0f);
-    // underline rect removed (S6.2 wtab block-style)（§4.2 钉死"底部 2px"）
+
+    // 指示条：primaryText 槽 / 高 2.5 / radius 999 / 贴 tab 底缘 y = h-2.5
+    const auto* ind = ui.find("tab.a.ind");
+    DOCTEST_REQUIRE(ind != nullptr);
+    DOCTEST_CHECK(sameColor(ind->color, t.colors.primaryText));
+    DOCTEST_CHECK(floatEq(ind->height.value, 2.5f));
+    DOCTEST_CHECK_EQ(ind->radius, 999.0f);
+    DOCTEST_CHECK(floatEq(ind->y, 33.5f));
+
+    // 旧 S2.2 块面式标记节点不得回归（underline 命名属于被淘汰旧款）
     const auto* underline_legacy = ui.find("tab.a.underline");
-    DOCTEST_CHECK(underline_legacy == nullptr);  // underline removed in block-style
-    // underline 贴底：y = h - 2 = 34
-    DOCTEST_CHECK(floatEq(bg->y, 0.0f));  // bg rect starts at stack origin
+    DOCTEST_CHECK(underline_legacy == nullptr);
 
     // hit area 透明（alpha=0）——防 §4.2 "实心填充按钮做 Tab"
     const auto* hit = ui.find("tab.a.hit");
@@ -114,10 +122,10 @@ REGISTER_TEST(ui_kit_wtab_active_colors,
 })
 
 // 场景3（防「实心填充按钮做 Tab」，§4.2 禁止项）：
-// wtab inactive：text=textSecondary(#666) + 无 underline 节点。
-// 事故：未激活态仍画下划线或填充底——与 active 视觉不分（§4.2 未激活="无背景"）。
+// need501 B wtab inactive：textSecondary + bg 常驻透明（hover 载体）+ 无指示条。
+// 事故：未激活态画填充底或指示条——与 active 视觉不分。
 REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
-              "ui_kit wtab inactive: text=textSecondary + no underline node", {
+              "ui_kit wtab inactive: textSecondary + resident transparent bg + no indicator", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02c_tab_inactive");
@@ -126,13 +134,20 @@ REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
 
     const auto* txt = ui.find("tab.i.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // inactive bg 不创建（透明底） text = textSecondary #4B5563（灰字，非 textPrimary 深灰）
+    // inactive 字 = textSecondary（灰字）
     DOCTEST_CHECK(sameColor(txt->textColor, t.colors.textSecondary));
     DOCTEST_CHECK(!sameColor(txt->textColor, t.colors.primary));  // 不等于 primary 绿字
 
-    // inactive 不创建 underline 节点（避免与 active 视觉冲突）
+    // bg 常驻透明（hover 载体 primarySoftBg），不得有填充色
     const auto* bg = ui.find("tab.i.bg");
-    DOCTEST_CHECK(bg == nullptr);
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 0x00);
+    DOCTEST_CHECK(sameColor(bg->hoverColor, t.colors.primarySoftBg));
+    DOCTEST_CHECK_EQ(bg->radius, 8.0f);
+
+    // 未激活无指示条节点
+    const auto* ind = ui.find("tab.i.ind");
+    DOCTEST_CHECK(ind == nullptr);
 
     // hit 仍透明（不画填充底）
     const auto* hit = ui.find("tab.i.hit");
@@ -220,11 +235,15 @@ REGISTER_TEST(ui_kit_selection_unified_metrics,
     DOCTEST_CHECK_EQ(accent->width.value, 3.0f);
     DOCTEST_CHECK_EQ(accent->width.value, ui_kit::kSelectionBarAccentWidth);
 
-    // wtab active bg radius = 8 (S2.2 block-style)（§4.2 钉死）
+    // need501 B：指示条高 2.5 / radius 999 胶囊 + hover 载体 radius 8（§4 钉死）
     eui::Ui ui2;
     ui2.begin("w02c_metrics_tab");
     ui_kit::wtab(ui2, "m.tab", "x", true, 0.0f, 0.0f, 80.0f, 36.0f, t);
     ui2.end();
+    const auto* ind2 = ui2.find("m.tab.ind");
+    DOCTEST_REQUIRE(ind2 != nullptr);
+    DOCTEST_CHECK_EQ(ind2->radius, 999.0f);
+    DOCTEST_CHECK(floatEq(ind2->height.value, 2.5f));
     const auto* bg2 = ui2.find("m.tab.bg");
     DOCTEST_REQUIRE(bg2 != nullptr);
     DOCTEST_CHECK_EQ(bg2->radius, 8.0f);
@@ -247,5 +266,44 @@ REGISTER_TEST(ui_kit_selection_unified_metrics,
     DOCTEST_REQUIRE(thumb != nullptr);
     const float thumbD = kSh - 2.0f * ui_kit::kWswitchThumbPadding;
     DOCTEST_CHECK(floatEq(thumb->radius, thumbD / 2.0f));
+    return true;
+})
+
+// 场景4（need501 §10 滑移）：切激活后立即 compose = 插值中间态（指示条仍在
+// 旧位附近、未瞬跳到新位），>kSlideSeconds 后落位到新位。事故：滑移退化成
+// 瞬跳（无中间帧）或中断跳变。墙钟口径：帧间隔 < 160ms 中间态断言才成立，
+// 进程内 compose 正常远小于该值，极端负载假红按 flake 复跑。
+REGISTER_TEST(ui_kit_wtab_slide_interpolation,
+              "ui_kit wtab slide: mid-flight frame stays near old pos, settles after 160ms", {
+    eui::Ui ui;
+    const auto& t = core::theme::current();
+    auto frame = [&](bool tab0Active) {
+        ui.begin(tab0Active ? "sl_f_a" : "sl_f_b");
+        ui_kit::wtab(ui, "sl.0", "甲乙", tab0Active, 0.0f, 0.0f, 80.0f, 36.0f, t);
+        ui_kit::wtab(ui, "sl.1", "丙丁", !tab0Active, 80.0f, 0.0f, 80.0f, 36.0f, t);
+        ui.end();
+    };
+    frame(true);
+    const auto* i0 = ui.find("sl.0.ind");
+    DOCTEST_REQUIRE(i0 != nullptr);
+    // 组内首个激活：无动画初始位（rest），local x = restAbsX - 0
+    const float startX = i0->x;  // .position 相对 stack 的 local x（无窗口无 layout，frame 恒 0）
+
+    // 切激活后立即 compose：elapsed ≪ kSlideSeconds → 指示条未到目标
+    frame(false);
+    DOCTEST_CHECK(ui.find("sl.0.ind") == nullptr);  // 失活即无指示条
+    const auto* i1 = ui.find("sl.1.ind");
+    DOCTEST_REQUIRE(i1 != nullptr);
+    // .x = .position 的 local x（相对所属 stack）；tab1 stack 原点 80 → 绝对 = .x + 80
+    const float midAbsX = i1->x + 80.0f;
+    DOCTEST_CHECK(midAbsX < startX + 20.0f);  // 仍在旧位附近（未瞬跳 80px）
+
+    // 落位帧：> kSlideSeconds(160ms) 后到达新 rest 位
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    frame(false);
+    const auto* i1s = ui.find("sl.1.ind");
+    DOCTEST_REQUIRE(i1s != nullptr);
+    const float endAbsX = i1s->x + 80.0f;
+    DOCTEST_CHECK(endAbsX > startX + 60.0f);  // 目标 ≈ start + 80（tab 右移一位）
     return true;
 })

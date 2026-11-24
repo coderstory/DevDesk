@@ -537,7 +537,7 @@ const float h = 540.0f;
             .position(0.0f, area.y - 52.0f)
             .size(w, h - (area.y - 52.0f))
             .content([&] {
-            // S3.10 弹窗级小 Tab：块面式 32px/12px/13px（淘汰下划线式 components::tabs）
+            // S3.10 弹窗级小 Tab：36 高/11.2 字；need#501（2026-11-24 翻案）定稿 B 底部下划线式
             {
                 const char* kTabLabels[] = {"基础信息", "模型配置", "环境变量"};
                 const float kTabW[] = {88.0f, 88.0f, 88.0f};

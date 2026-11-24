@@ -6,7 +6,10 @@
 #include "markdown_module_internal.h"
 
 #include <algorithm>
+#include <iterator>  // std::distance（closeTab 激活右移；check-std-includes）
 #include <utility>  // std::move / std::pair（check-std-includes：不靠传递包含）
+
+#include <components/tooltip.h>
 
 namespace module::markdown {
 
@@ -98,13 +101,22 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& componentTheme) {
     if (openNotes_.empty()) return;  // 无标签时不创建元素（池130：带高恒 kNoteTabBarH）
-    constexpr float kTabMinW = 80.0f;
-    constexpr float kTabMaxW = 200.0f;
-    // 池130：不再横跨整页——调用方按页坐标贴编辑列顶（x=树宽+gap，宽=编辑列宽）
+    // need501 §3.4/§5：C 连体卡片——tab 边贴边成条带，相邻 1px 分隔线；
+    // 选中卡 surfaceElevated + 描边 + 顶部 2px 指示条，下缘并入内容区。
+    constexpr float kTabMinW = 96.0f;      // need501 §3.4 tab 宽档
+    constexpr float kTabMaxW = 160.0f;
+    constexpr float kIndH = 2.0f;          // 顶部指示条高（need501 §5）
+    constexpr float kIndInset = 8.0f;      // 指示条左右内缩（设计未定宽，取 §3.1 口径）
+    constexpr float kIndRadius = 999.0f;   // 胶囊条
+    constexpr float kDivW = 1.0f;          // 相邻 tab 分隔线（need501 §5 borderMuted）
+    constexpr float kDivInset = 8.0f;
+    constexpr float kCloseVisual = 16.0f;  // 关闭钮视觉区（need501 §3.4）
+    constexpr float kCloseHot = 24.0f;     // 关闭钮热区 > 视觉区
+    constexpr float kCardRadius = 8.0f;    // 选中卡上圆角（36 档配 8，need501 §5）
     ui.row("md.note.tabs")
         .position(x, y)
         .size(w, kNoteTabBarH)
-        .gap(0.0f)
+        .gap(0.0f)  // 条带：tab 边贴边（need501 §5 连体卡）
         .content([&] {
             for (size_t i = 0; i < openNotes_.size(); ++i) {
                 const auto& path = openNotes_[i];
@@ -113,40 +125,88 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                 fs::path p(path);
                 std::string name = p.filename().replace_extension("").string();
                 if (name.empty()) name = path;
-                // 估宽后钳位
-                const float nameW = estimateTextWidth(name, 12.0f);
+                // 估宽后钳位 + 超长省略号截断（need501 §3.4 label 截断）。
+                // F3：估宽与渲染同基准 scaled(13)（曾 12 vs 13 失配，130% 档
+                // 截断阈值失效压关闭钮——bug150 同坑）。
+                const float nameFont = core::theme::scaled(13.0f);
+                const float nameW = estimateTextWidth(name, nameFont);
                 const float tabW = std::min(kTabMaxW, std::max(kTabMinW, nameW + 42.0f));
+                const std::string label =
+                    truncateNoteLabel(name, tabW - 42.0f, nameFont);
                 ui.stack("md.note.tab." + std::to_string(i))
                     .size(tabW, kNoteTabBarH)
                     .content([&] {
-                        // tab 背景（S2.2 块面 Tab：选中 primarySoftBg + H10 描边，未选中透明）
+                        // 卡底：选中 = surfaceElevated + 描边；未选 = 透明 + hover 槽底
                         ui.rect("md.note.tab." + std::to_string(i) + ".bg")
                             .size(tabW, kNoteTabBarH)
-                            .color(active ? t.colors.primarySoftBg
+                            .color(active ? t.colors.surfaceElevated
                                           : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                            .hoverColor(t.colors.hover)
-                            .radius(t.sizes.radius)
+                            .hoverColor(active ? t.colors.surfaceElevated
+                                               : t.colors.hover)
+                            .radius(active ? kCardRadius : 0.0f)
                             .border(active ? 1.0f : 0.0f, t.colors.borderDefault)
                             .onClick([this, path] {
                                 if (path != currentPath_) openNote(path);
                             })
                             .build();
-                        // tab 名称
+                        // 选中卡下缘并入内容区：rect 无逐角圆角，radius 8 的
+                        // 下角楔形用同色小条盖平（贴内容区顶，视觉=连体卡）
+                        if (active) {
+                            ui.rect("md.note.tab." + std::to_string(i) + ".seam")
+                                .position(0.0f, kNoteTabBarH)
+                                .size(tabW, kCardRadius)
+                                .color(t.colors.surfaceElevated)
+                                .build();
+                        }
+                        // 顶部指示条（need501 §5：primaryText 槽胶囊条）
+                        if (active) {
+                            ui.rect("md.note.tab." + std::to_string(i) + ".ind")
+                                .position(kIndInset, 0.0f)
+                                .size(tabW - 2 * kIndInset, kIndH)
+                                .color(t.colors.primaryText)
+                                .radius(kIndRadius)
+                                .build();
+                        }
+                        // 相邻 tab 1px 分隔线（i>0，条带内左缘）
+                        if (i > 0) {
+                            ui.rect("md.note.tab." + std::to_string(i) + ".div")
+                                .position(0.0f, kDivInset)
+                                .size(kDivW, kNoteTabBarH - 2 * kDivInset)
+                                .color(t.colors.borderMuted)
+                                .build();
+                        }
+                        // tab 名称（左 8，右留关闭钮区）
                         ui.text("md.note.tab." + std::to_string(i) + ".name")
                             .position(8.0f, 0.0f)
                             .size(tabW - 32.0f, kNoteTabBarH)
-                            .text(name)
+                            .text(label)
                             .fontSize(core::theme::scaled(13.0f))
                             .lineHeight(kNoteTabBarH)
                             .verticalAlign(eui::VerticalAlign::Center)
-                            .color(active ? t.colors.primary
+                            .color(active ? t.colors.accentText
                                           : t.colors.textSecondary)
                             .fontWeight(active ? 600 : 400)
                             .build();
-                        // 关闭钮（×），hover 浅灰底
+                        // 截断时挂 tooltip（need501 §3.4：省略号 + tooltip）
+                        if (label != name) {
+                            const std::string nameId =
+                                "md.note.tab." + std::to_string(i) + ".name";
+                            components::tooltip(ui, nameId + ".tip")
+                                .theme(componentTheme)
+                                .source(nameId)
+                                .value(name)
+                                .anchor(x + tabW * 0.5f, y + kNoteTabBarH * 0.5f)
+                                .bounds(w, kNoteTabBarH)
+                                .minWidth(120.0f)
+                                .maxWidth(std::max(160.0f, w * 0.6f))
+                                .zIndex(40)
+                                .build();
+                        }
+                        // 关闭钮：热区 24×24 > 视觉区 16×16（need501 §3.4），
+                        // 点击只关 tab 不切换激活（need501 §3.5 独立 hit）
                         ui.stack("md.note.tab." + std::to_string(i) + ".close")
-                            .position(tabW - 28.0f, (kNoteTabBarH - 24.0f) * 0.5f)
-                            .size(24.0f, 24.0f)
+                            .position(tabW - 28.0f, (kNoteTabBarH - kCloseHot) * 0.5f)
+                            .size(kCloseHot, kCloseHot)
                             .content([&] {
                                 ui.rect("md.note.tab." + std::to_string(i) + ".close.bg")
                                     .size(24.0f, 24.0f)
@@ -155,19 +215,22 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                                     .radius(t.sizes.radiusSmall)
                                     .onClick([this, path] { closeTab(path); })
                                     .build();
-                                // bug150：盒/行高固定 24 与外层 stack、hover rect
-                                // 严格重合（修前用 scaled(24)，非 100% 字号档行盒
-                                // 溢出 stack → 图标 ink 中心漂移 12·(s-1) px，
-                                // 130% 档实测偏 3.6px）；字号仍随档缩放，EUI 按
-                                // ink 盒居中，任意档视觉居中。
+                                // bug150：热区 stack 24×24 与 hover rect 严格
+                                // 重合；图标视觉盒 16×16 以整数偏移 (4,4) 内缩
+                                // 居中（盒/行高不用 scaled()，非 100% 字号档
+                                // 行盒溢出 stack → ink 中心漂移 12·(s-1) px，
+                                // 130% 档实测偏 3.6px）；字号仍随档缩放，EUI
+                                // 按 ink 盒居中，任意档视觉居中。
                                 ui.text("md.note.tab." + std::to_string(i) + ".close.icon")
-                                    .size(24.0f, 24.0f)
+                                    .position(4.0f, 4.0f)
+                                    .size(kCloseVisual, kCloseVisual)
                                     .text("\xC3\x97")  // ×
-                                    .fontSize(core::theme::scaled(14.0f))
-                                    .lineHeight(24.0f)
+                                    .fontSize(core::theme::scaled(11.0f))
+                                    .lineHeight(kCloseVisual)
                                     .horizontalAlign(eui::HorizontalAlign::Center)
                                     .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(t.colors.textTertiary)
+                                    .color(components::theme::withOpacity(
+                                        t.colors.textTertiary, 0.6f))
                                     .build();
                             })
                             .build();
@@ -181,10 +244,12 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
 void MarkdownModule::closeTab(const std::string& path) {
     auto it = std::find(openNotes_.begin(), openNotes_.end(), path);
     if (it == openNotes_.end()) return;
+    // need501 §3.5：关闭激活 tab → 激活右移邻 tab（同下标=原右邻；右缘无=末个=原左邻）
+    const auto idx = static_cast<std::size_t>(std::distance(openNotes_.begin(), it));
     openNotes_.erase(it);
     if (path == currentPath_) {
         if (!openNotes_.empty()) {
-            openNote(openNotes_.back());
+            openNote(openNotes_[std::min(idx, openNotes_.size() - 1)]);
         } else {
             currentPath_.clear();
             editorText_.clear();

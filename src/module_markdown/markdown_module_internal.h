@@ -312,6 +312,40 @@ inline float estimateTextWidth(const std::string& s, float fontSize) {
     return w;
 }
 
+// 剥掉字符串尾部不完整的 UTF-8 序列（前导字节 + 不足的续字节）。
+// 前置：s 尾部只可能缺"续字节数"（pop_back 逐字节剥），不存在非法中间态。
+inline void stripPartialUtf8Tail(std::string& s) {
+    while (!s.empty()) {
+        std::size_t p = s.size();
+        while (p > 0 &&
+               (static_cast<unsigned char>(s[p - 1]) & 0xC0) == 0x80) --p;
+        if (p == 0) return;  // 全续字节：不应出现（前置保证），防御性保留
+        const unsigned char lead = static_cast<unsigned char>(s[p - 1]);
+        if (lead < 0x80) return;  // ASCII 边界：完整
+        const std::size_t need =
+            ((lead & 0xE0) == 0xC0) ? 1u
+            : ((lead & 0xF0) == 0xE0) ? 2u
+            : ((lead & 0xF8) == 0xF0) ? 3u : 0u;
+        if (s.size() - p >= need) return;  // 序列完整
+        s.resize(p - 1);  // 剥掉不完整序列，再查前一字节
+    }
+}
+
+// need501 F2/F3：note tab 标签截断——估宽与渲染同基准（fontPx 传 scaled 档），
+// UTF-8 多字节边界回退（预算卡在序列中间时剥掉不完整尾序列），防中文标签
+// 从序列中间截断出花块；预算内原名返回，超预算省略号收尾。
+inline std::string truncateNoteLabel(const std::string& name, float budgetPx,
+                                     float fontPx) {
+    if (estimateTextWidth(name, fontPx) <= budgetPx) return name;
+    std::string label = name;
+    while (!label.empty() && estimateTextWidth(label, fontPx) > budgetPx) {
+        label.pop_back();
+        stripPartialUtf8Tail(label);
+    }
+    stripPartialUtf8Tail(label);
+    return label.empty() ? std::string("…") : label + "…";
+}
+
 // 指针坐标是窗口坐标，浮层构建在页面子树内 → 经 menuAnchorForPointer 统一换算。
 inline core::MenuAnchor menuAnchorForPointerInPage(const eui::PointerEvent& ev,
                                             float scrollOffsetY = 0.0f) {
@@ -485,7 +519,7 @@ private:
                         const core::theme::Tokens& t) ;
 
     // 方案 A 笔记标签条：已打开的笔记以 tab 行展示在头部与编辑器之间。
-    // 每 tab = 笔记名 + 关闭钮；激活 tab = 块面式（primarySoftBg 底+primary 字+8px 圆角，S2.2）。
+    // 每 tab = 笔记名 + 关闭钮；激活 tab = need501 B 连体卡（surfaceElevated 底+顶部胶囊指示条+accentText 字，2026-11-24 翻案，S2.2 块面式废除）。
     // 关闭最后一个 tab 回到空态；数据源 = openNotes_ 向量（会话内存态）。
     // 池130：不再横跨整页/全局扣高——由调用方按页坐标放在编辑列顶部
     //（x=树面板动画宽+gap，宽=编辑列宽），树列恢复满高。

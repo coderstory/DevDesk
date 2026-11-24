@@ -411,7 +411,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
                 })
                 .build();
 
-            // S2.2 块面 Tab：高度 40、4px 间距（gaps=3，tabW 反算）；primarySoftBg+primary 字。
+            // need501 B Tab（2026-11-24 翻案）：高度 40、4px 间距（gaps=3，tabW 反算）；textPrimary 字+底部 primaryText 指示条。
             // 节点 id = md.mode.0..3，hit/text/bg 按 wtab 约定。
             // 标签逐字「编辑/实时/双栏/预览」不变（modeOrderIndex 逆映射）。
             const float tabGap = 4.0f;
