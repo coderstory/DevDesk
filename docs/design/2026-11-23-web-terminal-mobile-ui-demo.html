@@ -4,6 +4,7 @@
   demo 仅视觉校准，不是实现蓝图；仅设计验证，非产品实现。
   单文件、零外部依赖、零网络请求。切换器与模拟开关只服务于设计走查，不属于产品界面。
   已对齐 PRD v4 与技术卡 v3：无手动密钥入口、独立深/浅双色板、长按 500ms 选择模式、粘贴双路径、断线两段式与尺寸钳制。
+  2026-11-24 实现期口径同步：设置页第 5 tab「网页访问」/ 退出卡双按钮两态 / 4 KB 补发队列 / tab 重命名 32 字符 / 桌面重启空态 / 自诊区 / 端口持久化；产品页 ?demo=1 才 mock。
 -->
 <html lang="zh-CN">
 <head>
@@ -104,6 +105,8 @@ body{display:flex;background:#E8EFEA;font-family:var(--sans);color:var(--text-1)
 .tab-x{position:relative;width:32px;height:32px;margin-right:-8px;border:0;background:transparent;color:var(--text-3);font-size:16px;line-height:1;border-radius:6px;cursor:pointer}
 .tab-x::after{content:"";position:absolute;inset:-6px}
 .tab-x:active{color:var(--error-text)}
+.tab-rename{height:28px;width:110px;min-width:0;border:1px solid var(--primary);border-radius:6px;padding:0 6px;font:13px var(--sans);color:var(--text-1);background:var(--surface);outline:none}
+.pending-badge{font-size:12px;color:var(--text-3);white-space:nowrap}
 .iconbtn{width:44px;height:44px;flex:0 0 44px;border:0;background:transparent;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;color:var(--text-1);cursor:pointer}
 .iconbtn:active{background:var(--hover)}
 .vdiv{width:1px;height:24px;background:var(--border);margin:0 4px;flex:0 0 1px}
@@ -210,6 +213,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 .bind-side .mono{font:13px var(--mono);color:var(--text-1)}
 .desk-muted{font-size:13px;color:var(--text-3);min-height:44px;display:flex;align-items:center}
 .desk-actions{margin-top:16px;display:flex;gap:8px}
+.settings-tabs{display:flex;gap:4px;margin:0 auto 16px;max-width:920px;border-bottom:1px solid var(--border-muted)}
+.stab{height:40px;display:flex;align-items:center;padding:0 16px;font-size:14px;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.stab.on{color:var(--primary-text);font-weight:600;border-bottom-color:var(--primary)}
+.diag{font-size:12px;line-height:18px;color:var(--text-2)}
+.diag .diag-sub{font:12px var(--mono);color:var(--text-3)}
+.diag .btn-text{align-self:flex-start;height:36px;margin-top:4px;padding:0}
+.toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);z-index:60;background:rgba(15,31,24,.86);color:#fff;font-size:13px;line-height:20px;border-radius:8px;padding:10px 16px;white-space:nowrap;animation:fade .15s ease-out}
 
 @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
 @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
@@ -224,7 +234,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 
 <aside class="switcher">
   <div class="sw-title">网页终端 · UI demo</div>
-  <div class="sw-badge">仅 demo：此切换器与下方三个模拟开关不属于产品界面；demo 仅设计验证，非产品实现。</div>
+  <div class="sw-badge">仅 demo：此切换器与下方三个模拟开关不属于产品界面；demo 仅设计验证，非产品实现。产品页 ?demo=1 才装配 mock，正常打开走真服务。</div>
   <div class="sw-toggles">
     <label class="tg"><input type="checkbox" id="tg-land"> 横屏 667×375</label>
     <label class="tg"><input type="checkbox" id="tg-safe"> 刘海/手势安全区 47/34</label>
@@ -342,16 +352,14 @@ const WIDE_LINES = [
 
 function sessionCard(kind){
   if(kind === 'exit'){
-    return `<div class="card-scrim"></div><div class="ov-card" role="dialog" aria-label="会话已结束">
-      <h3>会话已结束</h3>
-      <p>退出码 <b>1</b>。可重新开始，输出将从空白开始。</p>
-      <div class="ov-actions"><button class="btn primary">重新开始</button><button class="btn ghost">关闭标签</button></div>
+    return `<div class="card-scrim"></div><div class="ov-card" role="dialog" aria-label="终端已退出">
+      <h3>终端已退出（退出码 1）</h3>
+      <div class="ov-actions" style="margin-top:16px"><button class="btn primary">重新开始</button><button class="btn ghost">关闭标签</button></div>
     </div>`;
   }
-  return `<div class="card-scrim"></div><div class="ov-card" role="dialog" aria-label="会话启动失败">
-    <h3>会话启动失败</h3>
-    <p>无法启动默认 shell，请检查默认 shell 与启动目录配置。</p>
-    <div class="ov-actions"><button class="btn primary">重试</button><button class="btn ghost">关闭标签</button></div>
+  return `<div class="card-scrim"></div><div class="ov-card" role="dialog" aria-label="终端启动失败">
+    <h3>终端启动失败：无法启动默认 shell</h3>
+    <div class="ov-actions" style="margin-top:16px"><button class="btn primary">重新开始</button><button class="btn ghost">关闭标签</button></div>
   </div>`;
 }
 
@@ -361,7 +369,8 @@ function term(o){
   const active = (o.active === undefined) ? 0 : o.active;
   const tabsHtml = tabs.map((t,i)=>{
     const on = i === active;
-    return `<div class="tab${on?' on':''}">${t}${on?'<button class="tab-x" aria-label="关闭 '+t+'">×</button>':''}</div>`;
+    const label = (on && o.rename) ? `<input class="tab-rename" value="${o.rename}" maxlength="32" aria-label="重命名终端">` : t;
+    return `<div class="tab${on?' on':''}">${label}${on?'<button class="tab-x" aria-label="关闭 '+t+'">×</button>':''}</div>`;
   }).join('');
 
   const top = `<header class="topbar">
@@ -377,7 +386,7 @@ function term(o){
   if(o.skeleton){
     canvas = `<div class="canvas"><div class="sk">${[62,84,46,70,38,88,54,76,40,66,82,50].map(w=>`<i style="width:${w}%"></i>`).join('')}</div></div>`;
   } else if(o.empty){
-    canvas = `<div class="canvas empty"><div class="empty-inner"><div class="empty-title">暂无终端</div><button class="btn primary">新建终端</button></div></div>`;
+    canvas = `<div class="canvas empty"><div class="empty-inner"><div class="empty-title">${o.emptyTitle||'暂无终端'}</div><button class="btn primary">新建终端</button></div></div>`;
   } else {
     canvas = `<div class="canvas${o.selecting?' selecting':''}"><pre>${o.selecting ? SELECT_LINES : (o.wide ? WIDE_LINES : TERM_LINES)}</pre></div>`;
   }
@@ -386,6 +395,7 @@ function term(o){
 
   const bottom = `<footer class="bottombar">
     <button class="paste">粘贴</button>
+    ${o.pending?`<span class="pending-badge">未发送 ${o.pending}</span>`:''}
     <div class="conn"><i class="dot ${o.dot||''}"></i>${o.status||'已连接'}</div>
   </footer>`;
 
@@ -393,7 +403,7 @@ function term(o){
       <button role="menuitem">配置</button><div class="sep"></div><button role="menuitem" class="danger">退出登录</button>
     </div>` : '';
 
-  return `<div class="term">${top}${reconnect}${wrap}${bottom}${menu}</div>`;
+  return `<div class="term">${top}${reconnect}${wrap}${bottom}${menu}${o.toast?`<div class="toast" role="status">${o.toast}</div>`:''}</div>`;
 }
 
 function handshakeScreen(fail){
@@ -506,16 +516,27 @@ function desk(o){
     </div>`;
   }
 
-  return `<div class="desk-wrap"><div class="desk-card">
+  return `<div class="desk-wrap">
+    <div class="settings-tabs"><span class="stab">通用</span><span class="stab">模块</span><span class="stab">日志</span><span class="stab">同步</span><span class="stab on">网页访问</span></div>
+    <div class="desk-card">
     <h2>网页访问</h2>
     <p class="desk-sub">开启后，同一局域网内的设备可访问本机终端。未绑定验证器时，请用桌面端二维码完成绑定。</p>
     <div class="desk-row"><span class="dl">启用网页访问</span><span class="switch ${o.on?'on':''}"><i></i></span></div>
     ${o.portErr ? `<div class="desk-err">${o.portErr}</div>` : ''}
-    <div class="desk-row"><span class="dl">端口</span><input class="desk-input" value="7878" ${o.portReadonly?'readonly':''}><span class="desk-hint">服务运行时不可修改</span></div>
+    <div class="desk-row"><span class="dl">端口</span><input class="desk-input" value="7878" ${o.portReadonly?'readonly':''}><span class="desk-hint">改后立即保存，重启沿用</span></div>
     <div class="sec-label">访问地址</div>
     ${addrRows}
     <div class="sec-label">验证器绑定</div>
     ${o.off ? '<div class="desk-muted">开启后在此显示二维码</div>' : `<div class="bind">${bindZone}</div>`}
+    <div class="sec-label">自诊信息</div>
+    <div class="diag">
+      <div>${o.off ? '监听地址：未监听' : '监听地址：0.0.0.0:7878（局域网可见）'}</div>
+      ${(!o.off && !o.nolan) ? '<div class="diag-sub">http://192.168.1.23:7878</div><div class="diag-sub">http://192.168.31.44:7878</div>' : ''}
+      <div>在线设备：${o.off ? 0 : (o.bound ? 2 : 0)}</div>
+      <div>最近登录：${(!o.off && o.bound) ? '今天 15:20' : '—'}</div>
+      ${(!o.off && o.firewall) ? '<div class="warn-line">手机连不上？若为首次启动，请在 Windows 防火墙中允许 DevDesk 访问专用网络。</div>' : ''}
+      <button class="btn-text">打开日志目录</button>
+    </div>
   </div></div>`;
 }
 
@@ -547,8 +568,11 @@ const SCREENS = {
   'term-closed': {g:'终端主界面', n:'服务关闭覆盖', html:()=>term({}) + fullOverlay(true)},
   'term-revoked': {g:'终端主界面', n:'绑定已撤销覆盖', html:()=>term({}) + fullOverlay(false)},
   'term-exit': {g:'终端主界面', n:'会话退出卡', html:()=>term({card:'exit'})},
-  'term-failed': {g:'终端主界面', n:'会话启动失败卡', html:()=>term({card:'fail'})},
+  'term-failed': {g:'终端主界面', n:'终端启动失败卡', html:()=>term({card:'fail'})},
   'term-selecting': {g:'终端主界面', n:'文本选择模式', html:()=>term({selecting:true})},
+  'term-restart-empty': {g:'终端主界面', n:'桌面重启空态', html:()=>term({tabs:[], empty:true, emptyTitle:'桌面端已重启，会话已全部结束'})},
+  'term-rename': {g:'终端主界面', n:'tab 重命名', html:()=>term({tabs:['构建任务','终端 2'], active:0, rename:'构建任务'})},
+  'term-queue': {g:'终端主界面', n:'断线补发', html:()=>term({pending:3, toast:'部分输入未送达', reconnect:2, status:'重连中', dot:'warn'})},
 
   'limit-sse': {g:'资源上限', n:'SSE 订阅满（503）', html:()=>term({status:'已断开', dot:'err'}) + limitOverlay({title:'连接数已达上限', body:'已在线端不受影响', primary:'重试'})},
   'limit-handshake': {g:'资源上限', n:'握手超限（429）', html:()=>term({status:'已断开', dot:'err'}) + limitOverlay({title:'连接请求过于频繁，请稍后再试', body:'42 秒后可重试', primary:'重试', primaryDisabled:true})},
@@ -570,18 +594,19 @@ const SCREENS = {
   'desk-unbound': {g:'桌面专区（对照）', n:'未绑定', desk:true, html:()=>desk({on:true})},
   'desk-bound': {g:'桌面专区（对照）', n:'已绑定验证器', desk:true, html:()=>desk({on:true, bound:true})},
   'desk-port': {g:'桌面专区（对照）', n:'端口占用', desk:true, html:()=>desk({portErr:'端口 7878 被占用，请更换端口后重试'})},
-  'desk-nolan': {g:'桌面专区（对照）', n:'无局域网', desk:true, html:()=>desk({on:true, nolan:true})}
+  'desk-nolan': {g:'桌面专区（对照）', n:'无局域网', desk:true, html:()=>desk({on:true, nolan:true})},
+  'desk-diag': {g:'桌面专区（对照）', n:'自诊区（防火墙提示）', desk:true, html:()=>desk({on:true, bound:true, firewall:true})}
 };
 
 const ORDER = [
   ['加密会话', ['handshake','handshake-fail']],
   ['绑定页（扫码后）', ['bind-valid','bind-submitting','bind-wrong','bind-dead','bind-expired','bind-used']],
   ['登录页', ['login-empty','login-submitting','login-wrong','login-locked','login-unbound']],
-  ['终端主界面', ['term-loading','term-normal','term-multi','term-overflow','term-menu','term-empty','term-reconnect','term-closed','term-revoked','term-exit','term-failed','term-selecting']],
+  ['终端主界面', ['term-loading','term-normal','term-multi','term-overflow','term-menu','term-empty','term-reconnect','term-closed','term-revoked','term-exit','term-failed','term-selecting','term-restart-empty','term-rename','term-queue']],
   ['配置页', ['cfg-normal','cfg-saving','cfg-failed','cfg-dir-missing','cfg-dir-file','cfg-dir-perm','cfg-independent-dark']],
   ['粘贴', ['paste-lan','paste-prefill','paste-fail']],
   ['资源上限', ['limit-sse','limit-handshake','limit-sessions','limit-ticket']],
-  ['桌面「网页访问」专区（对照）', ['desk-unbound','desk-bound','desk-port','desk-nolan']]
+  ['桌面「网页访问」专区（对照）', ['desk-unbound','desk-bound','desk-port','desk-nolan','desk-diag']]
 ];
 
 /* ========== 渲染与交互 ========== */
