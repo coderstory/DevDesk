@@ -175,6 +175,13 @@ async function main() {
       cols: (window.__wt.client._lastFrame || {}).cols,
     }), { timeout: 10000 }).catch((e) => ({ evaluateError: String(e && e.message ? e.message : e) }));
     console.log('GRID_PROBE', JSON.stringify(probe));
+    // 回归钉子（bug#497）：帧头端序错位时 rows/cols 变 256 倍、lines 与 rows 不等。
+    // C++ web_grid 写小端；protocol.js 任一数值漏传 littleEndian=true 即在此红。
+    if (!(probe.rows >= 8 && probe.rows <= 200) ||
+        !(probe.cols >= 20 && probe.cols <= 200) ||
+        probe.lines !== probe.rows) {
+      throw new Error('GRID_FRAME_INVALID ' + JSON.stringify(probe));
+    }
     await shot(page, '02-grid.png');
     if (process.env.DEVDESK_E2E_DEBUG === '1') {
       const diag = await page.evaluate(() => JSON.stringify({
@@ -188,9 +195,18 @@ async function main() {
     }
 
     // 输入回显
+    await page.evaluate(() => {
+      // 帧里每格是独立对象（{ch:'h'},{ch:'i'}），JSON.stringify 不会出现连续 "hi"；
+      // 回显断言必须按行拼回文本再查。
+      window.__frameText = () => {
+        const f = window.__wt.client._lastFrame;
+        if (!f || !f.lines) return '';
+        return f.lines.map((r) => (r || []).map((c) => (c && c.ph ? '' : (c && c.ch) || ' ')).join('')).join('\n');
+      };
+    });
     await page.evaluate(() => window.__wt.client.sendInput('echo hi\r'));
     await page.waitForFunction(
-      () => JSON.stringify(window.__wt.client._lastFrame || {}).includes('hi'),
+      () => window.__frameText().includes('hi'),
       null, { timeout: 30000 });
     state.steps.push('echo-hi');
     console.log('STEP echo-hi');

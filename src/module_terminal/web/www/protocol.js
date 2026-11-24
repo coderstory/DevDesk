@@ -48,17 +48,19 @@
 
   var FLAG_FULL = 2;
 
+  // 端序合约：C++ web_grid.cpp 的 appendU16/appendU32 写小端；DataView 默认大端，
+  // 所有数值读写必须传 littleEndian=true。漏传 → rows/cols 变 256 倍、文本错位。
   function encodeFrame(f) {
     var enc = new TextEncoder();
     var header = new Uint8Array(26);
     var hv = new DataView(header.buffer);
     header[0] = MAGIC0; header[1] = MAGIC1; header[2] = VERSION;
     header[3] = (f.cursorVisible ? FLAG_CURSOR : 0) | (f.full === false ? 0 : FLAG_FULL);
-    hv.setUint16(4, f.rows); hv.setUint16(6, f.cols);
-    hv.setUint16(8, f.cursorRow); hv.setUint16(10, f.cursorCol);
-    hv.setUint32(12, f.scrollOffset || 0); hv.setUint32(16, f.scrollbackCount || 0);
-    hv.setUint32(20, f.generation || 0);
-    hv.setUint16(24, f.rows);
+    hv.setUint16(4, f.rows, true); hv.setUint16(6, f.cols, true);
+    hv.setUint16(8, f.cursorRow, true); hv.setUint16(10, f.cursorCol, true);
+    hv.setUint32(12, f.scrollOffset || 0, true); hv.setUint32(16, f.scrollbackCount || 0, true);
+    hv.setUint32(20, f.generation || 0, true);
+    hv.setUint16(24, f.rows, true);
     var parts = [header];
     for (var r = 0; r < f.rows; r++) {
       var row = f.lines[r] || [];
@@ -81,14 +83,14 @@
         }
         var tb = enc.encode(text);
         var H = new Uint8Array(16); var dv = new DataView(H.buffer);
-        dv.setUint16(0, cells); H[2] = width; H[3] = runFlags(cell);
-        dv.setUint32(4, hexToU32(cell.fg)); dv.setUint32(8, hexToU32(cell.bg));
-        dv.setUint16(12, 0); dv.setUint16(14, tb.length);
+        dv.setUint16(0, cells, true); H[2] = width; H[3] = runFlags(cell);
+        dv.setUint32(4, hexToU32(cell.fg), true); dv.setUint32(8, hexToU32(cell.bg), true);
+        dv.setUint16(12, 0, true); dv.setUint16(14, tb.length, true);
         runs.push(H, tb);
         c = j;
       }
       var rh = new Uint8Array(4); var rdv = new DataView(rh.buffer);
-      rdv.setUint16(0, r); rdv.setUint16(2, runs.length / 2);
+      rdv.setUint16(0, r, true); rdv.setUint16(2, runs.length / 2, true);
       parts.push(rh);
       for (var k = 0; k < runs.length; k++) parts.push(runs[k]);
     }
@@ -104,25 +106,25 @@
     if (buf[2] !== VERSION) throw new Error('bad version');
     var dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     var flags = buf[3];
-    var rows = dv.getUint16(4), cols = dv.getUint16(6);
-    var cursorRow = dv.getUint16(8), cursorCol = dv.getUint16(10);
-    var scrollOffset = dv.getUint32(12), scrollbackCount = dv.getUint32(16), generation = dv.getUint32(20);
-    var rowCount = dv.getUint16(24);
+    var rows = dv.getUint16(4, true), cols = dv.getUint16(6, true);
+    var cursorRow = dv.getUint16(8, true), cursorCol = dv.getUint16(10, true);
+    var scrollOffset = dv.getUint32(12, true), scrollbackCount = dv.getUint32(16, true), generation = dv.getUint32(20, true);
+    var rowCount = dv.getUint16(24, true);
     var dec = new TextDecoder();
     var off = 26, lines = new Array(rows), indices = [];
     for (var r = 0; r < rowCount && off + 4 <= buf.length; r++) {
-      var rowIndex = dv.getUint16(off);
-      var runCount = dv.getUint16(off + 2);
+      var rowIndex = dv.getUint16(off, true);
+      var runCount = dv.getUint16(off + 2, true);
       off += 4;
       var row = new Array(cols);
       var filled = 0;
       for (var run = 0; run < runCount && off + 16 <= buf.length; run++) {
-        var cells = dv.getUint16(off);
+        var cells = dv.getUint16(off, true);
         var width = buf[off + 2];
         var rf = buf[off + 3];
-        var fg = u32ToHex(dv.getUint32(off + 4));
-        var bg = u32ToHex(dv.getUint32(off + 8));
-        var textLen = dv.getUint16(off + 14);
+        var fg = u32ToHex(dv.getUint32(off + 4, true));
+        var bg = u32ToHex(dv.getUint32(off + 8, true));
+        var textLen = dv.getUint16(off + 14, true);
         var text = dec.decode(buf.subarray(off + 16, off + 16 + textLen));
         off += 16 + textLen;
         var fgv = (rf & F_FG_DEFAULT) ? null : fg;
