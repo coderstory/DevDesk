@@ -73,7 +73,7 @@ inline constexpr const char* kLogLevelPresetLabels[] = {
 //（存测试库地址，GitHub 同步整表跳过），老板不认识=无用候选。UI 入口移除；
 // project_card_store/表保留（MCP project_info 工具仍在用，删除数据另行拍板）。
 inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志", "同步",
-                                                    "网页访问"};
+                                                    "网页终端"};
 inline constexpr int kSettingTabCount = 5;
 inline constexpr int kTabGeneral = 0;
 inline constexpr int kTabModules = 1;

@@ -1,4 +1,4 @@
-// 「网页访问」设置卡（need#490 W6）无头 compose 断言：四态 + 地址列表 + 倒计时 + 自诊字段。
+// 「网页终端」设置卡（need#490 W6，need#2 整改）无头 compose 断言：四态 + 并排带 + 倒计时 + 自诊字段。
 // 断言节点存在/不存在，不退回状态枚举；二维码矩阵用真实编码器产出（与探针同源）。
 #include "doctest.h"
 
@@ -32,7 +32,8 @@ struct CardFixture {
               bool confirm = false) {
         in.webAccess = snap;
         in.webBindingConfirm = confirm;
-        ms::CardDrawArgs args{ui, id, 540.0f, ms::webAccessCardHeight(snap, confirm),
+        ms::CardDrawArgs args{ui, id, 540.0f,
+                              ms::webAccessCardHeight(snap, confirm, 540.0f),
                               core::theme::current(), 0.0f, 900.0f, in, a, /*narrow=*/false};
         ms::drawWebAccessCard(args);
     }
@@ -96,12 +97,14 @@ REGISTER_TEST(web_access_card_closed_state,
         fx.draw(ui, "web.closed", snap);
         const auto* title = ui.find("web.closed.title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK(title->text.find("网页访问") != std::string::npos);
+        DOCTEST_CHECK(title->text.find("网页终端") != std::string::npos);
+        const auto* swLabel = ui.find("web.closed.switch.label");
+        DOCTEST_REQUIRE(swLabel != nullptr);
+        DOCTEST_CHECK(swLabel->text.find("启用网页终端") != std::string::npos);
         DOCTEST_CHECK(ui.find("web.closed.sw.track") != nullptr);
         DOCTEST_CHECK(ui.find("web.closed.port.input") != nullptr);
-        const auto* addr = ui.find("web.closed.addr.empty");
-        DOCTEST_REQUIRE(addr != nullptr);
-        DOCTEST_CHECK(addr->text.find("服务未开启") != std::string::npos);
+        DOCTEST_CHECK(ui.find("web.closed.addr.empty") == nullptr);
+        DOCTEST_CHECK(ui.find("web.closed.diag.logdir") == nullptr);
         const auto* bind = ui.find("web.closed.bind.empty");
         DOCTEST_REQUIRE(bind != nullptr);
         DOCTEST_CHECK(bind->text.find("开启后在此显示二维码") != std::string::npos);
@@ -114,26 +117,25 @@ REGISTER_TEST(web_access_card_closed_state,
 })
 
 REGISTER_TEST(web_access_card_unbound_state,
-              "web_access_card: 未绑定态列出地址/二维码矩阵/倒计时/自诊三行", {
+              "web_access_card: 未绑定态二维码矩阵/倒计时/自诊两列式且地址块已删", {
     CardFixture fx;
     const auto snap = unboundSnapshot();
     test_support::HeadlessFrame f("webaccessunbound");
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         fx.draw(ui, "web.unbound", snap);
-        const auto* addr0 = ui.find("web.unbound.addr.0.text");
-        DOCTEST_REQUIRE(addr0 != nullptr);
-        DOCTEST_CHECK(addr0->text.find("192.168.1.23") != std::string::npos);
-        const auto* chip = ui.find("web.unbound.addr.1.chip");
-        DOCTEST_REQUIRE(chip != nullptr);
-        DOCTEST_CHECK(chip->text.find("本机") != std::string::npos);
+        DOCTEST_CHECK(ui.find("web.unbound.addr.0.text") == nullptr);
+        DOCTEST_CHECK(ui.find("web.unbound.addr.1.chip") == nullptr);
         DOCTEST_CHECK(ui.find("web.unbound.qr.bg") != nullptr);
         DOCTEST_CHECK(ui.find("web.unbound.qr.m.0.0") != nullptr);
         const auto* countdown = ui.find("web.unbound.qr.countdown");
         DOCTEST_REQUIRE(countdown != nullptr);
         DOCTEST_CHECK(countdown->text.find("剩余") != std::string::npos);
+        const auto* portLabel = ui.find("web.unbound.diag.port.label");
+        DOCTEST_REQUIRE(portLabel != nullptr);
+        DOCTEST_CHECK(portLabel->text.find("监听地址") != std::string::npos);
         DOCTEST_CHECK(ui.find("web.unbound.diag.port") != nullptr);
-        DOCTEST_CHECK(ui.find("web.unbound.diag.online") != nullptr);
-        DOCTEST_CHECK(ui.find("web.unbound.diag.last") != nullptr);
+        DOCTEST_CHECK(ui.find("web.unbound.diag.online.label") != nullptr);
+        DOCTEST_CHECK(ui.find("web.unbound.diag.last.label") != nullptr);
         return true;
     }));
     return true;

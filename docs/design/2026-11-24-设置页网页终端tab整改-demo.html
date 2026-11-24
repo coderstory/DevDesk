@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<!-- demo 仅视觉校准，不是实现蓝图。设置页「网页终端」tab 整改（need#2，F1-F4）。
+     自包含单文件，无外部依赖，浏览器直开。右上状态切换器模拟三态；拖窗 1000-1600 验证自适应。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevDesk 设置 · 网页终端（demo）</title>
+<style>
+  :root{
+    --bg:#F7F7F7; --card:#FFFFFF; --border:#E5E5E5; --border2:#EDEDED;
+    --t1:#1A1A1A; --t2:#666666; --t3:#999999;
+    --pri:#36D399; --pri-h:#2EC48F; --pri-p:#23B07F; --pri-soft:#E6FBF2; --pri-text:#157E4E;
+    --err:#EF4444; --err-text:#B91C1C; --warn-text:#B45309;
+    --sec-btn:#F2F2F2; --sidebar:#EBF6EF;
+    --pad-x:28px; --label-w:110px; --gap:8px; --ctl-x:calc(var(--pad-x) + var(--label-w) + var(--gap));
+  }
+  *{margin:0;padding:0;box-sizing:border-box;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  html,body{height:100%;}
+  body{background:var(--bg);display:flex;overflow:hidden;}
+  /* ── 外壳：侧栏固定 + 主区内滚 ── */
+  .sidebar{width:208px;flex:none;background:var(--sidebar);border-right:1px solid var(--border);padding:16px 0;}
+  .sidebar .nav{padding:10px 20px;font-size:14px;color:var(--t2);}
+  .sidebar .nav.active{background:#FFFFFF;color:var(--pri-text);font-weight:600;border-radius:0 8px 8px 0;}
+  .main{flex:1;overflow-y:auto;padding:40px;min-width:0;}
+  /* ── tab 栏（F1：网页终端）── */
+  .tabs{display:flex;gap:24px;margin-bottom:24px;border-bottom:1px solid var(--border);}
+  .tab{font-size:14px;color:var(--t2);padding:8px 2px 10px;cursor:default;}
+  .tab.on{color:var(--t1);font-weight:600;border-bottom:2px solid var(--pri);}
+  /* ── 卡片 ── */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;
+        box-shadow:0 1px 3px rgba(0,0,0,.04),0 2px 6px rgba(0,0,0,.02);
+        padding:24px var(--pad-x);max-width:1100px;}
+  .card h1{font-size:19px;font-weight:700;color:var(--t1);height:26px;line-height:26px;}
+  .hint{font-size:12px;color:var(--t3);height:18px;line-height:18px;margin-top:8px;}
+  /* ── 行体系：标签列 110 + 值/控件列 + 右缘锚定 ── */
+  .row{display:flex;align-items:center;height:44px;margin-top:8px;}
+  .row .lb{width:var(--label-w);flex:none;font-size:15px;font-weight:600;color:var(--t1);}
+  .row .val{flex:1;font-size:15px;color:var(--t1);}
+  .row.right .val{display:flex;justify-content:flex-end;align-items:center;gap:var(--gap);}
+  .grp{margin-top:24px;}
+  .band{margin-top:24px;display:flex;gap:32px;align-items:flex-start;}
+  .band .col{min-width:0;}
+  .band .col.bind{flex:0 1 auto;max-width:480px;}
+  .band .col.diag{flex:1;min-width:280px;}
+  .band.stacked{flex-direction:column;gap:24px;}
+  .band.stacked .col.diag{min-width:0;}
+  .grp-title{height:28px;line-height:28px;font-size:13px;font-weight:700;color:var(--t2);}
+  .info{display:flex;align-items:center;height:32px;margin-top:0;}
+  .info + .info{margin-top:0;}
+  .info .lb{width:var(--label-w);flex:none;font-size:13px;color:var(--t2);}
+  .info .val{font-size:13px;color:var(--t1);}
+  .info .val.dim{color:var(--t3);}
+  .err-row{height:32px;line-height:32px;font-size:13px;color:var(--err-text);}
+  .fw{margin-top:8px;font-size:12px;line-height:18px;color:var(--warn-text);}
+  /* ── 组件 ── */
+  .switch{width:44px;height:24px;border-radius:999px;background:#E5E5E5;position:relative;cursor:pointer;
+          transition:background .15s ease-out;flex:none;}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+                 background:#fff;transition:left .15s ease-out;box-shadow:0 1px 2px rgba(0,0,0,.15);}
+  .switch.on{background:var(--pri);}
+  .switch.on::after{left:22px;}
+  .switch.lock{opacity:.6;cursor:default;}
+  .btn{border:none;border-radius:10px;cursor:pointer;font-size:13px;color:var(--t1);
+       transition:transform .22s cubic-bezier(.34,1.56,.64,1),background .1s ease-out;
+       display:inline-flex;align-items:center;justify-content:center;}
+  .btn:active{transform:scale(.96);}
+  .btn.sec{background:var(--sec-btn);height:32px;padding:0 16px;}
+  .btn.sec:hover{background:var(--border2);}
+  .btn.pri{background:var(--pri);color:#fff;height:32px;padding:0 16px;font-weight:600;}
+  .btn.pri:hover{background:var(--pri-h);}
+  .btn.pri:active{background:var(--pri-p);}
+  .btn.danger{background:var(--err);color:#fff;height:32px;padding:0 16px;font-weight:600;}
+  .btn.danger:hover{background:#DC2626;}
+  .btn.sm{height:32px;padding:0 14px;}
+  .port-wrap{display:flex;justify-content:flex-end;align-items:center;gap:var(--gap);flex:1;}
+  .port-hint{font-size:12px;color:var(--t3);margin-right:auto;}
+  .port-hint.bad{color:var(--err-text);}
+  .port-input{width:96px;height:32px;border:1px solid var(--border);border-radius:10px;
+              padding:0 10px;font-size:13px;color:var(--t1);outline:none;
+              transition:border-color .1s ease-out;}
+  .port-input:focus{border-color:var(--pri);}
+  .ro{font-size:15px;color:var(--t1);}
+  .ro small{font-size:12px;color:var(--t3);margin-left:12px;}
+  /* ── QR / 绑定块 ── */
+  .qr-zone{display:flex;gap:20px;margin-top:8px;align-items:flex-start;}
+  .qr{width:160px;height:160px;flex:none;background:#fff;border:1px solid var(--border);
+      border-radius:6px;display:grid;grid-template-columns:repeat(21,1fr);grid-template-rows:repeat(21,1fr);padding:12px;}
+  .qr i{background:var(--t1);border-radius:1px;}
+  .qr-side{flex:1;min-width:0;padding-top:4px;}
+  .qr-side .cd{font-size:13px;color:var(--t1);}
+  .qr-side .cd.expired{color:var(--err-text);}
+  .qr-side .btn{margin-top:12px;}
+  .qr-side .desc{margin-top:12px;font-size:12px;line-height:18px;color:var(--t3);}
+  .bind-head{font-size:15px;font-weight:700;color:var(--t1);height:26px;line-height:26px;margin-top:8px;}
+  .del-wrap{display:flex;justify-content:flex-end;margin-top:8px;height:32px;}
+  .confirm{margin-top:8px;display:flex;align-items:center;gap:8px;justify-content:flex-end;}
+  .confirm .txt{font-size:13px;color:var(--err-text);margin-right:auto;}
+  .placeholder{font-size:13px;color:var(--t3);height:32px;line-height:32px;margin-top:0;}
+  /* ── demo 控制器（非产品 UI）── */
+  .demo-bar{position:fixed;top:12px;right:16px;display:flex;gap:8px;z-index:9;}
+  .demo-bar button{border:1px solid var(--border);background:#fff;border-radius:8px;
+                   padding:6px 12px;font-size:12px;cursor:pointer;color:var(--t2);}
+  .demo-bar button.on{background:var(--pri-soft);color:var(--pri-text);border-color:var(--pri);font-weight:600;}
+  .demo-note{margin-top:16px;font-size:12px;color:var(--t3);}
+</style>
+</head>
+<body>
+<div class="demo-bar">
+  <button data-st="off" class="on">关闭</button>
+  <button data-st="unbound">开启·未绑定</button>
+  <button data-st="bound">开启·已绑定</button>
+</div>
+
+<div class="sidebar">
+  <div class="nav">首页</div>
+  <div class="nav">笔记本</div>
+  <div class="nav active">设置</div>
+</div>
+
+<div class="main">
+  <div class="tabs">
+    <div class="tab">通用</div>
+    <div class="tab on">网页终端</div>
+    <div class="tab">GitHub 同步</div>
+  </div>
+
+  <div class="card">
+    <h1>网页终端</h1>
+    <div class="hint">开启后，同一局域网内的设备可访问本机终端。</div>
+
+    <!-- 服务 -->
+    <div class="row right" id="swRow">
+      <div class="lb" id="swLabel">启用网页终端</div>
+      <div class="val"><div class="switch" id="sw"></div></div>
+    </div>
+    <div class="err-row" id="errRow" style="display:none">端口被占用，服务启动失败</div>
+    <div class="row right" id="portRow">
+      <div class="lb">端口</div>
+      <div class="val port-wrap" id="portCtl"><!-- JS 填充 --></div>
+    </div>
+
+    <!-- 并排带：验证器绑定（左）｜自诊信息（右）；innerW<560 回落上下堆叠 -->
+    <div class="band" id="band">
+      <div class="col bind">
+        <div class="grp-title">验证器绑定</div>
+        <div id="bindZone"><!-- JS 填充 --></div>
+      </div>
+      <div class="col diag">
+        <div class="grp-title">自诊信息</div>
+        <div id="diagZone"><!-- JS 填充 --></div>
+        <div class="fw" id="fwRow" style="display:none">手机连不上？若为首次启动，请在 Windows 防火墙中允许 DevDesk 访问专用网络。（仅 Windows 渲染，macOS 无此行）</div>
+      </div>
+    </div>
+
+    <div class="demo-note">demo：本行与右上切换器为演示控件，非产品 UI。拖窗 1000–1600 验证右轨贴边与标签列固定。</div>
+  </div>
+</div>
+
+<script>
+// QR 图案（静态占位点阵，非真实编码）
+const qrPat = [];
+let seed = 7;
+for (let i = 0; i < 441; i++) { seed = (seed * 1103515245 + 12345) % 2147483648; qrPat.push((seed >> 16) % 100 < 46); }
+// 三个定位角强制实心
+for (const [ox, oy] of [[0,0],[14,0],[0,14]])
+  for (let r = 0; r < 7; r++) for (let c = 0; c < 7; c++)
+    qrPat[(oy + r) * 21 + ox + c] = !(r === 0 || r === 6 || c === 0 || c === 6) ? (r >= 2 && r <= 4 && c >= 2 && c <= 4) : true;
+
+const $ = id => document.getElementById(id);
+const sw = $('sw');
+
+function portRowHTML(on) {
+  if (on) return `<span class="ro" style="margin-right:auto">7878<small>服务运行时不可修改</small></span>`;
+  return `<span class="port-hint" id="portHint">端口范围 1024–65535</span>
+          <input class="port-input" id="portInput" value="7878">
+          <button class="btn pri" style="width:64px" id="portApply">应用</button>`;
+}
+
+function bindZoneHTML(st) {
+  if (st === 'off') return `<div class="placeholder">开启后在此显示二维码</div>`;
+  if (st === 'unbound') return `
+    <div class="qr-zone">
+      <div class="qr">${qrPat.map(v => v ? '<i></i>' : '<i style="background:transparent"></i>').join('')}</div>
+      <div class="qr-side">
+        <div class="cd">剩余 05:32</div>
+        <button class="btn sec" style="width:64px">刷新</button>
+        <div class="desc">手机扫码后按页面提示操作。验证器密钥只经 otpauth 链接一次性交给验证器，不落此处。</div>
+      </div>
+    </div>`;
+  return `
+    <div class="bind-head">验证器已绑定</div>
+    <div class="info"><div class="lb">绑定时间</div><div class="val">11-24 13:20</div></div>
+    <div class="info"><div class="lb">最近登录</div><div class="val">11-24 14:02</div></div>
+    <div class="del-wrap"><button class="btn danger" id="delBtn" style="width:96px">删除绑定</button></div>
+    <div class="confirm" id="confirmRow" style="display:none">
+      <span class="txt">确认删除绑定？所有网页登录会立即失效。</span>
+      <button class="btn pri" style="width:88px" id="cfYes">确认删除</button>
+      <button class="btn sec" style="width:56px" id="cfNo">取消</button>
+    </div>`;
+}
+
+function diagZoneHTML(st) {
+  const on = st !== 'off';
+  return `
+    <div class="info"><div class="lb">监听地址</div><div class="val ${on ? '' : 'dim'}">${on ? '0.0.0.0:7878（局域网可见）' : '未监听'}</div></div>
+    <div class="info"><div class="lb">在线设备</div><div class="val ${on ? '' : 'dim'}">${on ? '2' : '0'}</div></div>
+    <div class="info"><div class="lb">最近登录</div><div class="val ${on ? '' : 'dim'}">${on ? '11-24 14:02' : '从未登录'}</div></div>`;
+}
+
+function render(st) {
+  const on = st !== 'off';
+  sw.classList.toggle('on', on);
+  $('swLabel').textContent = on ? '启用网页终端' : '启用网页终端';
+  $('portCtl').innerHTML = portRowHTML(on);
+  $('bindZone').innerHTML = bindZoneHTML(st);
+  $('diagZone').innerHTML = diagZoneHTML(st);
+  $('errRow').style.display = 'none';
+  $('fwRow').style.display = 'none';
+  const del = $('delBtn');
+  if (del) del.onclick = () => { const c = $('confirmRow'); c.style.display = c.style.display === 'none' ? 'flex' : 'none'; };
+  const cy = $('cfYes'); if (cy) cy.onclick = () => render('unbound');
+  const cn = $('cfNo'); if (cn) cn.onclick = () => { $('confirmRow').style.display = 'none'; };
+  const pi = $('portInput');
+  if (pi) {
+    const check = () => {
+      const v = parseInt(pi.value, 10);
+      const ok = /^\d+$/.test(pi.value) && v >= 1024 && v <= 65535;
+      const h = $('portHint');
+      h.textContent = ok ? '端口范围 1024–65535' : '端口需为 1024–65535 的数字';
+      h.classList.toggle('bad', !ok);
+    };
+    pi.oninput = check;
+    $('portApply').onclick = check;
+  }
+}
+
+document.querySelectorAll('.demo-bar button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.demo-bar button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  render(b.dataset.st);
+});
+sw.onclick = () => {
+  const cur = document.querySelector('.demo-bar button.on').dataset.st;
+  render(cur === 'off' ? 'bound' : 'off');
+  document.querySelectorAll('.demo-bar button').forEach(x => x.classList.remove('on'));
+  document.querySelector(`.demo-bar button[data-st="${cur === 'off' ? 'bound' : 'off'}"]`).classList.add('on');
+};
+// 并排带自适应：卡内容宽 innerW<560 回落上下堆叠（与设计文档 §7 阈值一致）
+function layoutBand(){
+  const inner = document.querySelector('.card').clientWidth - 56;
+  document.getElementById('band').classList.toggle('stacked', inner < 560);
+}
+window.addEventListener('resize', layoutBand);
+layoutBand();
+// URL hash 直达态：#off / #unbound / #bound（校验用）
+const h = location.hash.replace('#', '');
+if (['off', 'unbound', 'bound'].includes(h)) {
+  document.querySelectorAll('.demo-bar button').forEach(x => x.classList.toggle('on', x.dataset.st === h));
+  render(h);
+} else render('off');
+</script>
+</body>
+</html>

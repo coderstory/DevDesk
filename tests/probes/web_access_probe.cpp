@@ -1,4 +1,4 @@
-// web_access_probe.cpp — 设置页「网页访问」专区四态探针（need#490 W6）
+// web_access_probe.cpp — 设置页「网页终端」专区四态探针（need#490 W6 / need#2 整改）
 //
 // 运行：web_access_probe [--screenshot <路径>] [--size WxH]
 // 不带 --screenshot = 纯 compose + 断言（零文件）。
@@ -53,7 +53,7 @@ void drawCard(eui::Ui& ui, const std::string& id,
     SettingsCardActions a;
     const auto& t = core::theme::current();
     CardDrawArgs args{ui, id, w,
-                      module::settings::webAccessCardHeight(snap, confirm), t,
+                      module::settings::webAccessCardHeight(snap, confirm, w), t,
                       0.0f, 0.0f, in, a, /*narrow=*/false};
     module::settings::drawWebAccessCard(args);
 }
@@ -191,27 +191,26 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // 专区四部分 + 开关/端口/地址（关闭态）
-    requireText(*ui, "web.closed.title", "网页访问", &passed);
-    requireText(*ui, "web.closed.switch.label", "启用网页访问", &passed);
+    // 专区四部分 + 开关/端口（关闭态）；F2/F3 后地址块与日志按钮不复存在
+    requireText(*ui, "web.closed.title", "网页终端", &passed);
+    requireText(*ui, "web.closed.switch.label", "启用网页终端", &passed);
     ui->find("web.closed.sw.track") != nullptr ||
         (std::cerr << "web_access_probe: FAIL——缺开关轨道\n", passed = false);
     ui->find("web.closed.port.input") != nullptr ||
         (std::cerr << "web_access_probe: FAIL——关闭态端口不可编辑\n",
          passed = false);
-    requireText(*ui, "web.closed.addr.empty", "服务未开启", &passed);
+    ui->find("web.closed.addr.empty") == nullptr ||
+        (std::cerr << "web_access_probe: FAIL——地址块未删净\n", passed = false);
     requireText(*ui, "web.closed.bind.empty", "开启后在此显示二维码", &passed);
     requireText(*ui, "web.closed.diag.title", "自诊信息", &passed);
 
     // 错误态：红字含「端口」
     requireText(*ui, "web.error.error", "端口", &passed);
 
-    // 未绑定态：地址 + 二维码 + 倒计时
-    const auto* addr0 = ui->find("web.unbound.addr.0.text");
-    if (addr0 == nullptr || addr0->text.empty()) {
-        std::cerr << "web_access_probe: FAIL——未绑定态无地址行\n";
-        passed = false;
-    }
+    // 未绑定态：二维码 + 倒计时；地址行已删（F2）
+    ui->find("web.unbound.addr.0.text") == nullptr ||
+        (std::cerr << "web_access_probe: FAIL——未绑定态地址行未删净\n",
+         passed = false);
     const auto* qrBg = ui->find("web.unbound.qr.bg");
     if (qrBg == nullptr) {
         std::cerr << "web_access_probe: FAIL——未绑定态缺二维码底\n";
@@ -231,16 +230,24 @@ int main(int argc, char* argv[]) {
     }
     requireText(*ui, "web.unbound.qr.countdown", "剩余", &passed);
 
-    // 已绑定态：状态字 + 删除绑定 + 无二维码
+    // 已绑定态：状态字 + 删除绑定 + 无二维码 + 无日志目录按钮（F3）
     requireText(*ui, "web.bound.bind.state", "验证器已绑定", &passed);
     ui->find("web.bound.unbind") != nullptr ||
         (std::cerr << "web_access_probe: FAIL——已绑定态缺删除按钮\n",
+         passed = false);
+    ui->find("web.bound.diag.logdir") == nullptr ||
+        (std::cerr << "web_access_probe: FAIL——日志目录按钮未删净\n",
          passed = false);
     if (ui->find("web.bound.qr.bg") != nullptr) {
         std::cerr << "web_access_probe: FAIL——已绑定态仍渲染二维码\n";
         passed = false;
     }
     requireText(*ui, "web.bound.confirm.text", "确认删除绑定", &passed);
+    // F4 并排带：两分组标题同树；自诊改 label-value 两列
+    requireText(*ui, "web.bound.bind.title", "验证器绑定", &passed);
+    requireText(*ui, "web.bound.diag.port.label", "监听地址", &passed);
+    requireText(*ui, "web.bound.diag.online.label", "在线设备", &passed);
+    requireText(*ui, "web.bound.diag.last.label", "最近登录", &passed);
 
     // 截图（渲染当前已断言的四态树）
     probe::captureIfRequested(args, window, runtime, &passed);

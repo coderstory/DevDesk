@@ -157,8 +157,6 @@ struct SettingsCardActions {
     std::function<void()> requestRevokeBinding;       // 展开删除绑定确认
     std::function<void()> confirmRevokeBinding;       // 确认撤销验证器绑定
     std::function<void()> cancelRevokeBinding;        // 取消确认
-    std::function<void(const std::string&)> copyWebAddress;  // 复制访问地址
-    std::function<void()> openWebLogDir;              // 打开日志目录（自诊）
 };
 
 // 单卡绘制入参（注册表按序调用；签名统一，未用到的字段忽略）

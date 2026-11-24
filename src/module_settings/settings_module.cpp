@@ -38,7 +38,6 @@
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/autostart.h"      // platform::autostart（开机自启动注册态回读/写入，UAT6）
-#include "platform/file_open.h"      // openDirectory（网页访问自诊「打开日志目录」）
 #include "platform/system_theme.h"
 #include "platform/wallpaper_capability.h"  // platform::wallpaper::supported（壁纸格可见性 + 插拔卡卡高二值）
 
@@ -1375,7 +1374,8 @@ public:
         webSnapshot_ =
             webSvc ? webSvc->snapshot() : ::core::WebAccessSnapshot{};
         if (!webError_.empty()) webSnapshot_.error = webError_;
-        webAccessHeight_ = webAccessCardHeight(webSnapshot_, webBindingConfirm_);
+        webAccessHeight_ = webAccessCardHeight(webSnapshot_, webBindingConfirm_,
+                                               contentW);
         const auto compTheme = core::theme::componentTokensWeChat(t);
 
         ui.column("settings.root")
@@ -1834,13 +1834,6 @@ private:
         a.requestRevokeBinding = [this] { webBindingConfirm_ = true; };
         a.confirmRevokeBinding = [this] { confirmRevokeBinding(); };
         a.cancelRevokeBinding = [this] { webBindingConfirm_ = false; };
-        a.copyWebAddress = [](const std::string& addr) {
-            ::core::window::setClipboardText(addr);
-        };
-        a.openWebLogDir = [] {
-            (void)::platform::file_open::openDirectory(
-                ::core::paths::logsDir().string());
-        };
 
         return a;
     }
