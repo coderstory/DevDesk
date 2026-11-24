@@ -7,6 +7,7 @@ set(DEVDESK_WEB_TERMINAL_TEST_SOURCES
     test_modules/test_terminal_web_bridge.cpp
     test_modules/test_terminal_web_crypto.cpp
     test_modules/test_terminal_web_auth.cpp
+    test_modules/test_web_access_card.cpp
     test_modules/test_qr_encode.cpp
     test_platform/test_net_interfaces.cpp
 )

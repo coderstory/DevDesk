@@ -31,6 +31,21 @@ std::string deriveInfo(const char* direction, const std::string& hid,
 
 } // namespace
 
+void CryptoSession::setTicketId(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ticketId_ = id;
+}
+
+bool CryptoSession::hasTicket() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !ticketId_.empty();
+}
+
+std::string CryptoSession::ticketIdCopy() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ticketId_;
+}
+
 bool ReplayWindow::checkAndAdvance(std::uint64_t counter) {
     if (!primed_) {
         primed_ = true;
@@ -174,7 +189,7 @@ std::size_t CryptoSessionTable::authenticatedCount() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::size_t n = 0;
     for (const auto& kv : sessions_) {
-        if (!kv.second->ticketId.empty()) ++n;
+        if (kv.second->hasTicket()) ++n;
     }
     return n;
 }

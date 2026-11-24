@@ -17,7 +17,10 @@
 
 namespace module::terminal::web {
 
-inline constexpr std::size_t kMaxSubscribers = 64;
+// SSE 并发上限 = 8：cpp-httplib 默认线程池 max(8, CPU-1)（本机 9），长连接各占
+// 一条工作线程；留 1 条给其它 API，超限必须 503 而不是把池占满饿死接口。
+// 文档口径 64 与实际实现 8 的偏差由 PM 同步（老板裁决 2026-11-24）。
+inline constexpr std::size_t kMaxSubscribers = 8;
 inline constexpr std::size_t kMaxQueuedFrames = 8;
 inline constexpr int kHeartbeatSeconds = 15;
 inline constexpr int kHalfOpenSeconds = 45;

@@ -12,6 +12,7 @@
 #include <deque>
 #include <filesystem>
 #include <map>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -130,7 +131,9 @@ inline constexpr int kHandshakeLimit = kHandshakeClientLimit;  // 兼容旧引�
 inline constexpr int kLoginFailureLimit = 5;  // 次/60s
 inline constexpr int kRateWindowSec = 60;
 
-// 60 秒滑动窗口；A 打满不影响 B（每地址独立 deque）
+// 60 秒滑动窗口；A 打满不影响 B（每地址独立 deque）。
+// 线程契约：HTTP 线程池会并发调用（握手入口不经服务主锁），故内部互斥；
+// 不给「仅单线程调用」的锁死契约——真实并发源就是 httplib 工作线程。
 class SlidingWindowLimiter {
 public:
     SlidingWindowLimiter(int limit, int windowSec);
@@ -141,6 +144,7 @@ public:
 private:
     int limit_;
     int windowSec_;
+    mutable std::mutex mutex_;
     std::map<std::string, std::deque<std::int64_t>> hits_;
 };
 

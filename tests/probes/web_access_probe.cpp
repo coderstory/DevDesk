@@ -11,7 +11,7 @@
 #include "settings_config.h"
 #include "settings_ui_cards.h"
 #include "web_access_card.h"
-#include "module_terminal/web/qr/qr_encode.h"
+#include "module_terminal/web/web_terminal_service.h"
 
 #include <algorithm>
 #include <chrono>
@@ -142,15 +142,24 @@ int main(int argc, char* argv[]) {
     error.bindState = core::WebBindState::Error;
     error.error = "端口 7878 被占用，请更换端口后重试";
 
-    module::terminal::web::QrMatrix qr;
-    const bool encoded = module::terminal::web::encode(
-        "http://192.168.1.23:7878/#b=probe-token-0123456789",
-        module::terminal::web::QrEcLevel::L, qr);
-    if (!encoded) {
-        std::cerr << "web_access_probe: FAIL——二维码编码失败\n";
+    // 未绑定态必须来自真实服务快照（不得自造矩阵）：起服务 → snapshot() 取 QR/地址/倒计时。
+    module::terminal::web::WebTerminalService service;
+    service.setPortForTest(0);
+    auto started = service.start();
+    if (started.isFail()) {
+        std::cerr << "web_access_probe: FAIL——服务启动失败: " << started.errorMessage() << "\n";
+        probe::terminateWindowBackend();
+        return 1;
+    }
+    core::WebAccessSnapshot unbound = service.snapshot();
+    if (!unbound.running || unbound.qrSize < 21 || unbound.qrMatrix.empty() ||
+        unbound.tokenRemainingSec <= 0) {
+        std::cerr << "web_access_probe: FAIL——真实服务快照缺二维码/令牌"
+                  << " qrSize=" << unbound.qrSize
+                  << " token=" << unbound.tokenRemainingSec << "\n";
         passed = false;
     }
-    core::WebAccessSnapshot unbound = makeUnbound(qr.size, qr.modules);
+    const int qrSize = unbound.qrSize;
 
     core::WebAccessSnapshot bound = makeUnbound(0, {});
     bound.qrMatrix.clear();
@@ -198,8 +207,11 @@ int main(int argc, char* argv[]) {
     requireText(*ui, "web.error.error", "端口", &passed);
 
     // 未绑定态：地址 + 二维码 + 倒计时
-    requireText(*ui, "web.unbound.addr.0.text", "192.168.1.23", &passed);
-    requireText(*ui, "web.unbound.addr.1.chip", "本机", &passed);
+    const auto* addr0 = ui->find("web.unbound.addr.0.text");
+    if (addr0 == nullptr || addr0->text.empty()) {
+        std::cerr << "web_access_probe: FAIL——未绑定态无地址行\n";
+        passed = false;
+    }
     const auto* qrBg = ui->find("web.unbound.qr.bg");
     if (qrBg == nullptr) {
         std::cerr << "web_access_probe: FAIL——未绑定态缺二维码底\n";
@@ -244,11 +256,12 @@ int main(int argc, char* argv[]) {
                                              kCardW, 900.0f, composeClosed, 10);
     const double msUnbound = averageComposeMs(
         runtime, window, "timing-b", kCardW, 900.0f, composeUnbound, 10);
-    std::cout << "web_access_probe: qr size=" << qr.size
+    std::cout << "web_access_probe: qr size=" << qrSize
               << " darkRects=" << qrRects << " compose closed=" << msClosed
               << "ms unbound=" << msUnbound
               << "ms qrCost=" << (msUnbound - msClosed) << "ms\n";
 
+    (void)service.stop();
     probe::terminateWindowBackend();
     if (!passed) {
         std::cerr << "web_access_probe: FAIL\n";

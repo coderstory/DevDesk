@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 #include <utility>
 
 #include "core/logging.h"
@@ -11,6 +12,9 @@
 
 namespace module::terminal::web {
 namespace {
+
+// 限流表地址数上限：到达后 tryAcquire 顺手剪掉窗口外无命中的条目。
+constexpr std::size_t kLimiterAddressCap = 256;
 
 using platform::web_crypto::base64UrlEncode;
 using platform::web_crypto::constantTimeEquals;
@@ -296,14 +300,29 @@ SlidingWindowLimiter::SlidingWindowLimiter(int limit, int windowSec)
     : limit_(limit), windowSec_(windowSec) {}
 
 bool SlidingWindowLimiter::tryAcquire(const std::string& address, std::int64_t nowSec) {
-    auto& hits = hits_[address];
+    std::lock_guard<std::mutex> lock(mutex_);
     const std::int64_t cutoff = nowSec - windowSec_;
+    // 表只增不删会让长期运行的内网扫描/多客户端地址把 map 撑大：超过上限时
+    // 顺手清掉窗口内已无命中的地址（当前地址保留，马上就要 push）。
+    if (hits_.size() > kLimiterAddressCap) {
+        for (auto it = hits_.begin(); it != hits_.end();) {
+            if (it->first != address && (it->second.empty() || it->second.back() < cutoff)) {
+                it = hits_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    auto& hits = hits_[address];
     while (!hits.empty() && hits.front() < cutoff) hits.pop_front();
     hits.push_back(nowSec);
     return static_cast<int>(hits.size()) <= limit_;
 }
 
-void SlidingWindowLimiter::reset(const std::string& address) { hits_.erase(address); }
+void SlidingWindowLimiter::reset(const std::string& address) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    hits_.erase(address);
+}
 
 LoginLockout::LoginLockout(int maxFailures, int windowSec)
     : maxFailures_(maxFailures), windowSec_(windowSec) {}

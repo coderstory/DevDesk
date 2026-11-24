@@ -11,6 +11,7 @@
 #include "platform/web_crypto.h"
 
 #include "core/logging.h"
+#include "core/secrets_store.h"
 
 #include "web_routes.h"
 #include "qr/qr_encode.h"
@@ -42,6 +43,41 @@ std::int64_t nowSec() {
 std::string stringifyOr(const JsonValue& value, const char* fallback) {
     auto text = platform::json::stringify(value);
     return text.isOk() ? text.value() : std::string(fallback);
+}
+
+// cookie_key 在 app_secrets 中只存 hex 文本（value 列走 protect 后端，非明文文件）。
+constexpr const char* kCookieKeyService = "devdesk.web_terminal";
+constexpr const char* kCookieKeyAccount = "cookie_key";
+
+std::string hexFromBytes(const std::vector<std::uint8_t>& bytes) {
+    static const char kHex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(bytes.size() * 2);
+    for (std::uint8_t b : bytes) {
+        out.push_back(kHex[b >> 4]);
+        out.push_back(kHex[b & 0x0f]);
+    }
+    return out;
+}
+
+int hexNibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+std::vector<std::uint8_t> bytesFromHex(const std::string& text) {
+    if (text.size() % 2 != 0) return {};
+    std::vector<std::uint8_t> out;
+    out.reserve(text.size() / 2);
+    for (std::size_t i = 0; i < text.size(); i += 2) {
+        const int hi = hexNibble(text[i]);
+        const int lo = hexNibble(text[i + 1]);
+        if (hi < 0 || lo < 0) return {};
+        out.push_back(static_cast<std::uint8_t>((hi << 4) | lo));
+    }
+    return out;
 }
 
 std::string makeInner(int status, const JsonValue& body) {
@@ -116,7 +152,7 @@ WebTerminalService::WebTerminalService()
       gridEncoder_(std::make_unique<::terminal::web::WebGridEncoder>()) {
     // 票据落地：重启后浏览器凭本地票据免登录（P0-2 持久化）。损坏文件解析为空表。
     tickets_ = TicketStore::loadFromFile(core::paths::appDataDir() / "web_tickets.dat");
-    cookieKey_ = wc::randomBytes(32);
+    // cookie_key 不在此生成：必须从 app_secrets 载入/落库（重启后旧票据仍可验签）。
     if (devConfig_.autostart) {
         if (devConfig_.port > 0) port_ = devConfig_.port;
         // Debug 测试入口：构造即开服；失败保留 error_ 供 snapshot 读取
@@ -154,7 +190,6 @@ core::Result<void> WebTerminalService::start() {
     bindState_ = core::WebBindState::Listening;
     bindTime_ = nowSec();
     error_.clear();
-    if (cookieKey_.empty()) cookieKey_ = wc::randomBytes(32);
     if (!hasBindToken_) {
         auto token = makeBindToken(nowSec());
         if (token.isOk()) {
@@ -166,15 +201,57 @@ core::Result<void> WebTerminalService::start() {
 }
 
 core::Result<void> WebTerminalService::stop() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (server_) {
-        server_->stop();
-        server_.reset();
+    std::unique_ptr<platform::http::Server> server;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // 锁序：mutex_ → server 生命周期。先把 server 摘出锁，再在外面 stop/join。
+        // 若在 mutex_ 内调 server_->stop()，httplib 会 join 工作线程；在飞 handler
+        // 正等 mutex_（如 state 分支）→ 互相等待，关服务/退出死锁。
+        server = std::move(server_);
+        running_ = false;
+        bindState_ = core::WebBindState::Stopping;
+        sessions_.clear();
     }
-    running_ = false;
-    bindState_ = core::WebBindState::Stopped;
-    sessions_.clear();
+    if (server) server->stop();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_) bindState_ = core::WebBindState::Stopped;  // 并发 start 已重开则不覆盖
+    }
     return core::Result<void>::ok();
+}
+
+bool WebTerminalService::ensureCookieKeyLocked() {
+    if (cookieKey_.size() == wc::kKeySize) return true;
+    auto stored = core::secrets_store::get(kCookieKeyService, kCookieKeyAccount);
+    if (stored.isOk()) {
+        auto decoded = bytesFromHex(stored.value());
+        if (decoded.size() != wc::kKeySize) {
+            LOG_ERROR("网页终端: app_secrets 中 cookie_key 形态非法（期望 64 hex），拒绝启用票据");
+            return false;
+        }
+        cookieKey_ = std::move(decoded);
+        return true;
+    }
+    if (stored.errorCode() != core::ErrorCode::NotFound) {
+        // 库不可用 / 解不开（被篡改）：不生成新密钥顶替——那会让旧票据无告知全失效，
+        // 并把真实故障伪装成「首次运行」。
+        LOG_ERROR("网页终端: cookie_key 读取失败，拒绝启用票据: " + stored.errorMessage());
+        return false;
+    }
+    auto generated = wc::randomBytes(wc::kKeySize);
+    if (generated.size() != wc::kKeySize) {
+        LOG_ERROR("网页终端: cookie_key RNG 失败，拒绝启用票据");
+        return false;
+    }
+    auto saved = core::secrets_store::set(kCookieKeyService, kCookieKeyAccount,
+                                          hexFromBytes(generated));
+    if (saved.isFail()) {
+        LOG_ERROR("网页终端: cookie_key 写入 app_secrets 失败，拒绝启用票据: " +
+                  saved.errorMessage());
+        return false;
+    }
+    cookieKey_ = std::move(generated);
+    return true;
 }
 
 core::Result<void> WebTerminalService::refreshToken() {
@@ -263,15 +340,27 @@ core::WebAccessSnapshot WebTerminalService::snapshotLocked() const {
     if (hasBindToken_) {
         const auto remaining = bindToken_.expireAt - nowSec();
         snap.tokenRemainingSec = remaining > 0 ? static_cast<int>(remaining) : 0;
-        // P0-1：绑定二维码来自真实令牌 URL（http://<ip>:<port>/#b=<token>）；
-        // 令牌刷新/过期/绑定后本函数按当前状态重算，无需额外同步点。
+        // P0-1：绑定二维码来自真实令牌 URL（http://<ip>:<port>/#b=<token>）。
+        // 未绑定态每帧 snapshot 都会走到这里：按 URL 缓存矩阵，令牌/端口不变不重编。
         if (!bound_ && bindToken_.state != BindTokenState::Terminal &&
             snap.tokenRemainingSec > 0) {
             const std::string url = bindUrlLocked();
-            QrMatrix matrix;
-            if (!url.empty() && encode(url, QrEcLevel::L, matrix)) {
-                snap.qrSize = matrix.size;
-                snap.qrMatrix = std::move(matrix.modules);
+            if (!url.empty() && url != qrCacheUrl_) {
+                QrMatrix matrix;
+                ++qrEncodeCount_;
+                if (encode(url, QrEcLevel::L, matrix)) {
+                    qrCacheUrl_ = url;
+                    qrCacheSize_ = matrix.size;
+                    qrCacheModules_ = std::move(matrix.modules);
+                } else {
+                    qrCacheUrl_.clear();
+                    qrCacheSize_ = 0;
+                    qrCacheModules_.clear();
+                }
+            }
+            if (!qrCacheUrl_.empty()) {
+                snap.qrSize = qrCacheSize_;
+                snap.qrMatrix = qrCacheModules_;
             }
         }
     }
@@ -351,6 +440,16 @@ void WebTerminalService::handleHandshakeGet(const platform::http::RequestCtx& ct
     int retryAfter = 60;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (handshakeHits_.size() > 256) {
+            for (auto it = handshakeHits_.begin(); it != handshakeHits_.end();) {
+                if (it->first != address &&
+                    (it->second.empty() || it->second.back() <= now - kRateWindowSec)) {
+                    it = handshakeHits_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
         auto& hits = handshakeHits_[address];
         hits.push_back(now);
         while (!hits.empty() && hits.front() <= now - kRateWindowSec) hits.pop_front();
@@ -455,6 +554,9 @@ void WebTerminalService::replySealed(platform::http::ResponseWriter& rw,
     rw.write(std::string(sealed.value().begin(), sealed.value().end()));
 }
 
+// 业务错误契约（老板裁决 2026-11-24，勿改成 HTTP 状态码）：票据满/登录锁定/会话满/
+// 限流一律在密文 JSON 的 "s" 带 409/429 语义、HTTP 层仍 200；HTTP 只表达传输/协议级
+// 错误（401/403/503）。前端按内层 "s"/"e" 分派。
 void WebTerminalService::handleEnvelopeImpl(const platform::http::RequestCtx& ctx,
                                             platform::http::ResponseWriter& rw,
                                             const std::string& hint) {
@@ -509,9 +611,10 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         const auto tokenValue = body.get("t");
         if (!tokenValue.isString() || tokenValue.asString().empty()) return false;
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensureCookieKeyLocked()) return false;  // 密钥不可用 = 拒绝，不降级
         auto ticket = tickets_.validate(tokenValue.asString(), cookieKey_, now);
         if (!ticket.isOk()) return false;
-        session->ticketId = ticket.value().idHex;
+        session->setTicketId(ticket.value().idHex);
         return true;
     };
 
@@ -714,6 +817,16 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
             if (totpSecret_.empty() || !verifyTotp(totpSecret_, codeValue.asString(), now)) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 loginLockout_.recordFailure(clientAddress, now);
+                if (loginFailures_.size() > 256) {
+                    for (auto it = loginFailures_.begin(); it != loginFailures_.end();) {
+                        if (it->first != clientAddress &&
+                            (it->second.empty() || it->second.back() <= now - kRateWindowSec)) {
+                            it = loginFailures_.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                }
                 auto& hits = loginFailures_[clientAddress];
                 hits.push_back(now);
                 while (!hits.empty() && hits.front() <= now - kRateWindowSec) hits.pop_front();
@@ -724,6 +837,7 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
             loginFailures_.erase(clientAddress);
         }
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensureCookieKeyLocked()) return makeInnerError(500, "key_unavailable");
         auto issued = tickets_.issue(cookieKey_, now);
         if (!issued.isOk()) {
             if (issued.errorCode() == core::ErrorCode::Conflict) {
@@ -732,7 +846,7 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
             return makeInnerError(500, "ticket_failed");
         }
         lastLogin_ = now;
-        session->ticketId = issued.value().ticket.idHex;
+        session->setTicketId(issued.value().ticket.idHex);
         persistTicketsLocked();
         JsonObject out;
         out.set("t", JsonValue(issued.value().token));
@@ -743,6 +857,7 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         const auto tokenValue = body.get("t");
         if (!tokenValue.isString()) return makeInnerError(400, "bad_ticket");
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensureCookieKeyLocked()) return makeInnerError(500, "key_unavailable");
         auto ticket = tickets_.validate(tokenValue.asString(), cookieKey_, now);
         if (!ticket.isOk()) return makeInnerError(401, "bad_ticket");
         tickets_.revoke(ticket.value().idHex);
@@ -785,31 +900,37 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
             }
             return makeInnerError(400, "bad_code");
         }
+        if (!ensureCookieKeyLocked()) return makeInnerError(500, "key_unavailable");
         totpSecret_ = bindToken_.secret;
         bound_ = true;
         boundAt_ = now;
         auto issued = tickets_.issue(cookieKey_, now);
         if (!issued.isOk()) return makeInnerError(409, "too_many_tickets");
         lastLogin_ = now;
-        session->ticketId = issued.value().ticket.idHex;
+        session->setTicketId(issued.value().ticket.idHex);
         persistTicketsLocked();
         JsonObject out;
         out.set("t", JsonValue(issued.value().token));
         return makeInner(200, JsonValue(out));
     }
     if (message == "bind.revoke") {  // 桌面/网页撤销验证器绑定
-        std::lock_guard<std::mutex> lock(mutex_);
-        tickets_.revokeAll();
-        auto token = makeBindToken(now);
-        if (token.isOk()) {
-            bindToken_ = token.value();
-            hasBindToken_ = true;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            tickets_.revokeAll();
+            auto token = makeBindToken(now);
+            if (token.isOk()) {
+                bindToken_ = token.value();
+                hasBindToken_ = true;
+            }
+            totpSecret_.clear();
+            bound_ = false;
+            boundAt_ = 0;
+            lastLogin_ = 0;
+            persistTicketsLocked();
         }
-        totpSecret_.clear();
-        bound_ = false;
-        boundAt_ = 0;
-        lastLogin_ = 0;
-        persistTicketsLocked();
+        // 与桌面 revokeBinding() 同一广播路径：其他在线端收到 revoke 后清票据并进 revoked 态。
+        // 不能持 mutex_ 广播（订阅回调/流写可能在别的锁上），故先释放主锁。
+        publishSessionEvent("revoke", "{}", true);
         return makeInner(200, JsonValue(nullptr));
     }
     return makeInnerError(400, "unknown_message");
@@ -843,7 +964,10 @@ void WebTerminalService::handleStream(const platform::http::RequestCtx& ctx,
     });
     if (!sub) {
         sessions_.finishStreamTicket(ticket, now);
-        replyError(rw, 503, "too_many_streams");
+        JsonObject out;
+        out.set("e", JsonValue("too_many_streams"));
+        out.set("m", JsonValue("同时查看的连接数已达上限"));
+        replyJson(rw, 503, stringifyOr(JsonValue(out), "{\"e\":\"too_many_streams\"}"));
         return;
     }
     forceFull_.store(true);
@@ -1178,13 +1302,32 @@ std::string WebTerminalService::bindClaimErrorForTest(const std::string& token,
     return {};
 }
 
+std::vector<std::uint8_t> WebTerminalService::cookieKeyForTest() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ensureCookieKeyLocked()) return {};
+    return cookieKey_;
+}
+
+int WebTerminalService::qrEncodeCountForTest() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return qrEncodeCount_;
+}
+
+void WebTerminalService::setPortForTest(int port) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_) port_ = port;
+}
+
 int WebTerminalService::actualPortForTest() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return server_ ? server_->actualPort() : 0;
 }
 
 void WebTerminalService::setConfiguredPort(int port) {
-    if (port < 1024 || port > 65535) return;
+    if (port < 1024 || port > 65535) {
+        LOG_WARN("网页终端: 忽略非法端口 " + std::to_string(port) + "（允许 1024-65535）");
+        return;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_) port_ = port;  // 运行中禁改：UI 端口行只读，重启后生效
 }

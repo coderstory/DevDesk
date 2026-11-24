@@ -16,6 +16,7 @@ enum class WebBindState {
     Stopped,
     Listening,
     Error,
+    Stopping,  // stop() 已摘服务器、正在等 httplib 工作线程 join（in-flight 请求可见）
 };
 
 // 只读快照：实现侧在 UI 主线程采样，消费方按值取走后再画（不得持锁渲染）

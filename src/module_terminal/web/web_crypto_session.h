@@ -53,7 +53,12 @@ public:
     std::int64_t createdAt = 0;
     std::int64_t lastSeen = 0;
     bool ready = false;
-    std::string ticketId;  // 绑定登录票据 id（非秘密，服务端校验用）
+
+    // 票据 id 由 HTTP 线程写、在线数口径由其它线程读：必须走本类 mutex_，
+    // 服务主锁不保护本对象（原公开字段跨锁读写 = UB）。值语义拷贝返回。
+    void setTicketId(const std::string& id);
+    bool hasTicket() const;
+    std::string ticketIdCopy() const;
 
     // 客户端公钥 → 共享密钥 → HKDF 方向密钥。仅握手后调用一次。
     core::Result<void> completeHandshake(const std::vector<std::uint8_t>& clientPublic);
@@ -69,7 +74,8 @@ private:
     std::vector<std::uint8_t> s2cKey_;
     std::uint64_t s2cCounter_ = 0;
     ReplayWindow replay_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
+    std::string ticketId_;  // 绑定登录票据 id（非秘密，服务端校验用）；读写全走 mutex_
 };
 
 class CryptoSessionTable {

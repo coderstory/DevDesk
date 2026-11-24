@@ -1,7 +1,9 @@
 // 网页终端服务级用例（need#490 W3）：握手/信封往返、篡改、重放、错 hid、会话与票据上限、
 // SSE seq 与队列合并、per-client 限流、Host/Origin 拒绝、debug 启动入口。
 #include "doctest.h"
+#include "test_support.h"
 
+#include "platform/http_client.h"
 #include "platform/json.h"
 #include "platform/web_crypto.h"
 
@@ -11,6 +13,8 @@
 #include "module_terminal/web/web_session_bridge.h"
 #include "module_terminal/web/web_terminal_service.h"
 #include "module_terminal/terminal_session_controller.h"
+#include "core/paths.h"
+#include "core/secrets_store.h"
 #include "module_terminal/terminal_settings.h"
 
 #include <chrono>
@@ -78,6 +82,92 @@ Handshaken doHandshake(CryptoSessionTable& table) {
     h.c2s = deriveClientKey("c2s", h.session->hid, client.privateKey, cpk, spk, h.session->salt);
     h.s2c = deriveClientKey("s2c", h.session->hid, client.privateKey, cpk, spk, h.session->salt);
     return h;
+}
+
+// 非回环地址：生产从连接地址判定；测试经 dev 测试钩子 header 替换（Debug 专属）。
+constexpr const char* kTestSpoofAddr = "192.168.99.50";
+constexpr const char* kWebKeyService = "devdesk.web_terminal";
+constexpr const char* kWebKeyAccount = "cookie_key";
+
+struct EnvHttpClient {
+    std::string base;
+    std::string hid;
+    std::vector<std::uint8_t> c2s;
+    std::vector<std::uint8_t> s2c;
+    std::uint64_t counter = 0;
+};
+
+platform::http::Response httpSend(platform::http::Request req) {
+    req.timeoutMs = 5000;
+    auto r = platform::http::send(req);
+    if (r.isFail()) {
+        platform::http::Response bad;
+        bad.networkError = true;
+        bad.errorMessage = r.errorMessage();
+        return bad;
+    }
+    return r.value();
+}
+
+bool initEnvClient(EnvHttpClient& c, const std::string& base) {
+    c.base = base;
+    platform::http::Request hsReq;
+    hsReq.method = "GET";
+    hsReq.url = base + "/api/hs";
+    hsReq.headers["x-devdesk-test-addr"] = kTestSpoofAddr;
+    auto hs = httpSend(hsReq);
+    if (hs.statusCode != 200) return false;
+    auto parsed = platform::json::parse(hs.body);
+    if (!parsed.isOk() || !parsed.value().isObject()) return false;
+    auto obj = parsed.value().asObject();
+    const auto hidV = obj.get("hid");
+    const auto spkV = obj.get("spk");
+    const auto saltV = obj.get("salt");
+    if (!hidV.isString() || !spkV.isString() || !saltV.isString()) return false;
+    c.hid = hidV.asString();
+    auto spk = wc::base64UrlDecode(spkV.asString());
+    auto salt = wc::base64UrlDecode(saltV.asString());
+    if (!spk.isOk() || !salt.isOk()) return false;
+    auto kp = wc::x25519Generate();
+    if (!kp.isOk()) return false;
+    const auto cpk = kp.value().publicKey;
+    platform::http::Request postReq;
+    postReq.method = "POST";
+    postReq.url = base + "/api/hs";
+    postReq.headers["x-devdesk-test-addr"] = kTestSpoofAddr;
+    postReq.headers["Content-Type"] = "application/json";
+    postReq.body = "{\"hid\":\"" + c.hid + "\",\"cpk\":\"" +
+                   wc::base64UrlEncode(cpk) + "\"}";
+    auto post = httpSend(postReq);
+    if (post.statusCode != 200) return false;
+    c.c2s = deriveClientKey("c2s", c.hid, kp.value().privateKey, cpk, spk.value(), salt.value());
+    c.s2c = deriveClientKey("s2c", c.hid, kp.value().privateKey, cpk, spk.value(), salt.value());
+    return !c.c2s.empty() && !c.s2c.empty();
+}
+
+// 密封 POST：返回解密后的明文；httpStatus / ok 回填。响应体是原始二进制信封。
+std::string sealedPost(EnvHttpClient& c, const std::string& path, const std::string& plain,
+                       int* httpStatus, bool* ok) {
+    *ok = false;
+    *httpStatus = 0;
+    std::vector<std::uint8_t> bytes(plain.begin(), plain.end());
+    auto sealed = wc::sealEnvelope(c.c2s, wc::makeNonce(wc::kDirectionC2S, c.counter++), bytes);
+    if (!sealed.isOk()) return {};
+    platform::http::Request req;
+    req.method = "POST";
+    req.url = c.base + path;
+    req.headers["x-devdesk-session"] = c.hid;
+    req.headers["x-devdesk-test-addr"] = kTestSpoofAddr;
+    req.headers["Content-Type"] = "application/octet-stream";
+    req.body.assign(sealed.value().begin(), sealed.value().end());
+    auto res = httpSend(req);
+    *httpStatus = res.statusCode;
+    if (res.networkError || res.statusCode != 200) return {};
+    std::vector<std::uint8_t> reply(res.body.begin(), res.body.end());
+    auto opened = wc::openEnvelope(c.s2c, reply);
+    if (!opened.isOk()) return {};
+    *ok = true;
+    return std::string(opened.value().begin(), opened.value().end());
 }
 
 } // namespace
@@ -175,7 +265,7 @@ REGISTER_TEST(web_bridge_seq_and_control, "web: seq 单调；数据队列满丢�
     return true;
 })
 
-REGISTER_TEST(web_bridge_subscriber_cap, "web: SSE 订阅者 64 上限，第 65 个返回空", {
+REGISTER_TEST(web_bridge_subscriber_cap, "web: SSE 订阅者 8 上限，第 9 个返回空（池 9 留 1 给 API）", {
     WebBridge bridge;
     std::vector<std::shared_ptr<StreamSubscriber>> subs;
     for (std::size_t i = 0; i < kMaxSubscribers; ++i) {
@@ -399,12 +489,17 @@ REGISTER_TEST(web_qr_matrix_from_token,
     int dark = 0;
     for (auto m : snap.qrMatrix) dark += m ? 1 : 0;
     DOCTEST_CHECK(dark > 0);
-    // 令牌刷新 → 矩阵随之更新（同一主机/端口，只有 token 变了）
+    // 同一令牌重复快照必须命中缓存：编码调用数不增（防每帧重跑 QR 编码）。
+    const int encodesAfterFirst = service.qrEncodeCountForTest();
+    for (int i = 0; i < 5; ++i) (void)service.snapshot();
+    DOCTEST_CHECK_EQ(service.qrEncodeCountForTest(), encodesAfterFirst);
+    // 令牌刷新 → URL 变 → 重编一次，矩阵随之更新（同一主机/端口，只有 token 变了）
     const auto before = snap.qrMatrix;
     DOCTEST_REQUIRE(service.refreshToken().isOk());
     auto after = service.snapshot();
     DOCTEST_CHECK(after.qrSize >= 21);
     DOCTEST_CHECK(after.qrMatrix != before);
+    DOCTEST_CHECK_EQ(service.qrEncodeCountForTest(), encodesAfterFirst + 1);
     (void)service.stop();
     return true;
 });
@@ -422,3 +517,135 @@ REGISTER_TEST(web_session_prune_reopens_capacity,
     DOCTEST_CHECK(table.beginHandshake(t + kSessionIdleSec + 2).isOk());
     return true;
 });
+
+// P0-2：cookie_key 必须落 app_secrets，重启（新实例）后旧票据仍能验签。
+REGISTER_TEST(web_cookie_key_persists_across_restart,
+              "web: cookie_key 存 app_secrets，重启后旧票据仍校验通过", {
+    test_support::TestDb tdb("devdesk_test_webkey_", "restart");
+    test_support::ScopedAppDatabase reg(tdb.handle());
+    const auto now = testNow();
+    std::vector<std::uint8_t> keyA;
+    std::string token;
+    {
+        WebTerminalService a;
+        keyA = a.cookieKeyForTest();
+        DOCTEST_REQUIRE_EQ(keyA.size(), std::size_t{32});
+        auto stored = core::secrets_store::get(tdb.handle(), kWebKeyService, kWebKeyAccount);
+        DOCTEST_REQUIRE(stored.isOk());
+        DOCTEST_CHECK_EQ(stored.value().size(), std::size_t{64});  // 32B → 64 hex
+        auto issued = a.ticketsForTest().issue(keyA, now);
+        DOCTEST_REQUIRE(issued.isOk());
+        token = issued.value().token;
+        DOCTEST_REQUIRE(a.ticketsForTest().saveToFile(
+            core::paths::appDataDir() / "web_tickets.dat"));
+    }
+    WebTerminalService b;  // 模拟进程重启：新实例、同一 app_secrets / 票据文件
+    auto keyB = b.cookieKeyForTest();
+    DOCTEST_REQUIRE_EQ(keyB.size(), std::size_t{32});
+    DOCTEST_CHECK(keyA == keyB);
+    auto validated = b.ticketsForTest().validate(token, keyB, now);
+    DOCTEST_CHECK(validated.isOk());
+    return true;
+})
+
+// P0-2：app_secrets 值被篡改 → 拒绝启用票据，且不得生成新密钥冒充「首次运行」。
+REGISTER_TEST(web_cookie_key_tampered_rejected,
+              "web: cookie_key 被篡改 → 拒绝且不静默生成新密钥", {
+    test_support::TestDb tdb("devdesk_test_webkey_", "tamper");
+    test_support::ScopedAppDatabase reg(tdb.handle());
+    {
+        WebTerminalService a;
+        DOCTEST_REQUIRE_EQ(a.cookieKeyForTest().size(), std::size_t{32});
+    }
+    DOCTEST_REQUIRE(tdb.handle()
+                        .exec("UPDATE app_secrets SET value='not-hex' WHERE service='" +
+                              std::string(kWebKeyService) + "' AND account='" +
+                              std::string(kWebKeyAccount) + "'")
+                        .isOk());
+    WebTerminalService b;
+    DOCTEST_CHECK(b.cookieKeyForTest().empty());
+    // 损坏行必须原样保留（不能被一次「修复式」覆盖掩盖故障）
+    auto prep = tdb.handle().prepare(
+        "SELECT value FROM app_secrets WHERE service=? AND account=?");
+    DOCTEST_REQUIRE(prep.isOk());
+    DOCTEST_REQUIRE(prep.value().bind(1, std::string(kWebKeyService)).isOk());
+    DOCTEST_REQUIRE(prep.value().bind(2, std::string(kWebKeyAccount)).isOk());
+    auto rows = prep.value().fetchAll();
+    DOCTEST_REQUIRE(rows.isOk());
+    DOCTEST_REQUIRE_EQ(rows.value().size(), std::size_t{1});
+    DOCTEST_CHECK_EQ(rows.value()[0].getString("value").value(), std::string("not-hex"));
+    return true;
+})
+
+// E2E 最小一条（非回环 + 自算 TOTP）：真实 HTTP 握手 → bind.claim → TOTP 确认 → bind.revoke。
+// 非回环由 dev 测试钩子 header 注入 clientAddress（生产按连接地址判定）。
+REGISTER_TEST(web_bind_totp_revoke_nonloopback_http,
+              "web: 非回环 HTTP 全链路 bind.claim/confirm(TOTP)/revoke", {
+    clearEnv("DEVDESK_WEB_AUTOSTART");
+    clearEnv("DEVDESK_WEB_PORT");
+    test_support::TestDb tdb("devdesk_test_webhttp_", "bindflow");
+    test_support::ScopedAppDatabase reg(tdb.handle());
+    setEnv("DEVDESK_WEB_TEST_HOOKS", "1");
+    WebTerminalService svc;
+    clearEnv("DEVDESK_WEB_TEST_HOOKS");
+    svc.setPortForTest(0);
+    DOCTEST_REQUIRE(svc.start().isOk());
+    const std::string base = "http://127.0.0.1:" + std::to_string(svc.actualPortForTest());
+    EnvHttpClient c;
+    DOCTEST_REQUIRE(initEnvClient(c, base));
+
+    bool ok = false;
+    int status = 0;
+    // 非回环证据：不带令牌的 claim 必须 400 no_token（回环会放行）
+    auto noToken = sealedPost(c, "/api/bind/claim", "{\"m\":\"bind.claim\",\"b\":{}}", &status, &ok);
+    DOCTEST_REQUIRE(ok);
+    // 密文内状态码是权威（HTTP 恒 200）；见 QA 口径：票据满/锁定也走密文内码。
+    auto noTokenJson = platform::json::parse(noToken);
+    DOCTEST_REQUIRE(noTokenJson.isOk());
+    DOCTEST_CHECK_EQ(noTokenJson.value().asObject().get("s").asInt(), std::int64_t{400});
+    DOCTEST_CHECK_EQ(noTokenJson.value().asObject().get("e").asString(), std::string("no_token"));
+
+    const std::string token = svc.bindTokenForTest();
+    DOCTEST_REQUIRE(!token.empty());
+    auto claim = sealedPost(c, "/api/bind/claim",
+                            "{\"m\":\"bind.claim\",\"b\":{\"token\":\"" + token + "\"}}",
+                            &status, &ok);
+    DOCTEST_REQUIRE(ok);
+    DOCTEST_CHECK_EQ(status, 200);
+    auto claimJson = platform::json::parse(claim);
+    DOCTEST_REQUIRE(claimJson.isOk());
+    DOCTEST_CHECK_EQ(claimJson.value().asObject().get("s").asInt(), std::int64_t{200});
+    const auto claimBody = claimJson.value().asObject().get("b");
+    DOCTEST_REQUIRE(claimBody.isObject());
+    const auto secret = claimBody.asObject().get("secret");
+    DOCTEST_REQUIRE(secret.isString());
+    auto secretBytes = wc::base32Decode(secret.asString());
+    DOCTEST_REQUIRE(secretBytes.isOk());
+
+    const auto code = totpCode(secretBytes.value(), testNow());
+    auto confirm = sealedPost(c, "/api/bind/confirm",
+                              "{\"m\":\"bind.confirm\",\"b\":{\"code\":\"" + code + "\"}}",
+                              &status, &ok);
+    DOCTEST_REQUIRE(ok);
+    DOCTEST_CHECK_EQ(status, 200);
+    auto confirmJson = platform::json::parse(confirm);
+    DOCTEST_REQUIRE(confirmJson.isOk());
+    const auto confirmObj = confirmJson.value().asObject();
+    const auto confirmErr = confirmObj.get("e");
+    DOCTEST_CHECK_MESSAGE(confirmObj.get("s").asInt() == std::int64_t{200},
+                          std::string("confirm inner e=") +
+                              (confirmErr.isString() ? confirmErr.asString() : "<none>"));
+    const auto confirmBody = confirmJson.value().asObject().get("b");
+    DOCTEST_REQUIRE(confirmBody.isObject());
+    DOCTEST_CHECK(confirmBody.asObject().get("t").isString());
+    DOCTEST_CHECK(svc.snapshot().bindTime > 0);
+
+    auto revoke = sealedPost(c, "/api/bind/revoke",
+                             "{\"m\":\"bind.revoke\",\"b\":{}}", &status, &ok);
+    DOCTEST_REQUIRE(ok);
+    DOCTEST_CHECK_EQ(status, 200);
+    DOCTEST_CHECK_EQ(svc.snapshot().bindTime, std::int64_t{0});
+    DOCTEST_CHECK(svc.snapshot().tokenRemainingSec > 0);
+    (void)svc.stop();
+    return true;
+})

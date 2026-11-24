@@ -113,9 +113,19 @@ public:
     // bind_expired/bind_used/bind_terminal。dispatch 与测试共用，防两处漂移。
     std::string bindClaimErrorForTest(const std::string& token, bool loopback) const;
     std::string bindTokenForTest() const;
+    // 确保 cookie_key 已从 app_secrets 载入（或首次生成并落库）；空返回 = 不可用。
+    // 失败不生成临时密钥冒充可用——旧票据会全失效且故障被掩盖。
+    std::vector<std::uint8_t> cookieKeyForTest();
+    // QR 编码调用计数：证明未绑定态重复 snapshot 命中缓存、不重编。
+    int qrEncodeCountForTest() const;
+    TicketStore& ticketsForTest() { return tickets_; }
+    // 测试缝：未运行时设监听端口；0 = 绑定任意空闲端口（测试免固定端口冲突）。
+    void setPortForTest(int port);
 
 private:
     core::WebAccessSnapshot snapshotLocked() const;
+    // 调用方须持 mutex_。密钥只存 app_secrets（系统机密存储禁项后的唯一通道）。
+    bool ensureCookieKeyLocked();
     void replyJson(platform::http::ResponseWriter& rw, int status, const std::string& json) const;
     void replyError(platform::http::ResponseWriter& rw, int status, const std::string& code) const;
     void replySealed(platform::http::ResponseWriter& rw,
@@ -176,6 +186,11 @@ private:
     int gridLastCursorRow_ = -1;
     int gridLastCursorCol_ = -1;
     std::string tabSnapshotJson_ = "{\"tabs\":[],\"activeId\":null}";
+    // 未绑定态 QR 缓存：键 = 绑定 URL（含令牌）。snapshot 每帧调用，令牌不变就不重编。
+    mutable std::string qrCacheUrl_;
+    mutable int qrCacheSize_ = 0;
+    mutable std::vector<std::uint8_t> qrCacheModules_;
+    mutable int qrEncodeCount_ = 0;
     std::map<int, std::string> tabTitles_;
     int lastRetryAfter_ = 0;
     SlidingWindowLimiter globalHandshakeLimiter_{kHandshakeGlobalLimit, kRateWindowSec};
