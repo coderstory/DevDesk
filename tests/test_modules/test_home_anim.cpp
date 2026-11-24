@@ -221,10 +221,59 @@ REGISTER_TEST(home_anim_typer_machine,
             ui.layout(800.0f, 400.0f);
             const auto* cur = ui.find("home.anim.typer.cursor");
             DOCTEST_REQUIRE(cur != nullptr);
-            // plateW=min(800*0.7+68,560)=560 → 行起点 x = 400-280+34 = 154
-            DOCTEST_CHECK(cur->frame.x > 154.0f);
-            DOCTEST_CHECK(cur->frame.x < 154.0f + 560.0f - 68.0f);
+            const auto* row = ui.find("home.anim.typer.row");
+            DOCTEST_REQUIRE(row != nullptr);
+            const float plateCenter = 400.0f;  // cx（plateW=560 居中锚同圆心）
+            // 居中锚（UAT 第 ⑥ 件）：文本锚 < 垫板中心 < 锚+前缀宽；光标=锚+前缀宽
+            DOCTEST_CHECK(row->frame.x < plateCenter);
+            DOCTEST_CHECK(row->frame.x + row->frame.width > plateCenter);
+            DOCTEST_CHECK(std::fabs((cur->frame.x - row->frame.x) -
+                                    (row->frame.width - 8.0f)) < 2.0f);  // 光标贴前缀尾
         }
     }
+    return true;
+})
+
+// ── resize 往复（UAT 第 ⑦ 件）：1600→1200→1000→1400 连续 compose，每档点数 =
+// 该尺寸公式期望值（≤600）、缩小再放大无历史几何残留。──
+REGISTER_TEST(home_anim_dot_resize_sequence,
+              "home_anim: resize 往复四档点数各=公式期望；缩放往复无残留", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "resize", true);
+    const auto& t = ::core::theme::current();
+    const auto countAt = [&](float w, float h) {
+        eui::Ui ui;
+        ui.begin("rz");
+        ui_kit::home_anim::drawDotGrid(ui, 0, 0, w, h, 1.0f, 1.0f, t);
+        ui.end();
+        ui.layout(w, h);
+        int n = 0;
+        for (int r = 0; r < 60; ++r) {
+            for (int c = 0; c < 80; ++c) {
+                if (ui.find("home.anim.dot." + std::to_string(r) + "." +
+                            std::to_string(c)) != nullptr) {
+                    ++n;
+                }
+            }
+        }
+        return n;
+    };
+    const auto expect = [&](float w, float h) {
+        const float sp = ui_kit::home_anim::gridSpacingFor(w, h);
+        return (static_cast<int>((w - 40.0f) / sp) + 1) *
+               (static_cast<int>((h - 54.0f) / sp) + 1);
+    };
+    int prev = -1;
+    for (float sz : {1600.0f, 1200.0f, 1000.0f, 1400.0f}) {
+        const float h = sz * 0.55f;
+        const int n = countAt(sz, h);
+        DOCTEST_CHECK_MESSAGE(n == expect(sz, h),
+                              "size " + std::to_string(static_cast<int>(sz)) +
+                                  " points " + std::to_string(n) + " != expect " +
+                                  std::to_string(expect(sz, h)));
+        DOCTEST_CHECK(n <= ui_kit::home_anim::kMaxDots);
+        if (prev > 0) DOCTEST_CHECK(n != prev);  // 档位变→点数变（防常量假验）
+        prev = n;
+    }
+    home_anim::resetForTests();
     return true;
 })

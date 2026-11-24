@@ -135,10 +135,12 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
         .border(1.0f, withOpacity(eui::Color("#FFFFFF"), 0.95f))
         .shadow(components::theme::shadow(core::theme::componentTokensWeChat(t), 3.0f, 1.0f, 0.12f, 0.02f))
         .build();
-    // 上标签
+    // 上标签（垫板内水平居中，风格与主行统一）
+    const float labelW =
+        core::TextPrimitive::measureTextWidth("RECENT · 最近打开", {}, 15.0f, 600.0f);
     ui.text("home.anim.typer.label")
-        .position(px, py - 26.0f)
-        .size(plateW, 18.0f)
+        .position(px + (plateW - labelW) * 0.5f, py - 26.0f)
+        .size(labelW + 8.0f, 18.0f)
         .text("RECENT · 最近打开")
         .fontSize(15.0f)
         .fontWeight(600)
@@ -150,9 +152,14 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
         std::fmod(phase, 1.1f) < 0.55f;
     const float rowY = py + 16.0f;
     const float rowH = 40.0f;
+    // 主行居中（UAT 第 ⑥ 件）：锚 x = 垫板中心 − 已打前缀实测宽/2，随打字微移
+    const float prefixW =
+        core::TextPrimitive::measureTextWidth(text, {}, 28.0f, 600.0f);
+    const float anchorX =
+        px + (plateW - std::min(prefixW, plateW - 68.0f)) * 0.5f;
     ui.text("home.anim.typer.row")
-        .position(px + 34.0f, rowY)
-        .size(plateW - 68.0f - (cursorOn ? 12.0f : 0.0f), rowH)
+        .position(anchorX, rowY)
+        .size(std::min(prefixW, plateW - 68.0f) + 8.0f, rowH)
         .text(text)
         .fontSize(28.0f)
         .fontWeight(600)
@@ -160,13 +167,9 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
         .color(t.colors.primaryText)
         .build();
     if (cursorOn) {
-        // 光标紧跟已打出前缀的实测宽（打/擦相位都随 shown 走；空前缀=行起点）。
-        // 测宽先例 = wtab/settings 的 core::TextPrimitive::measureTextWidth。
-        const float prefixW =
-            core::TextPrimitive::measureTextWidth(text, {}, 28.0f, 600.0f);
+        // 光标贴已打前缀末尾（居中锚 + 前缀宽；空前缀=锚点）
         ui.rect("home.anim.typer.cursor")
-            .position(px + 34.0f + std::min(prefixW, plateW - 68.0f - 6.0f),
-                      rowY + 6.0f)
+            .position(anchorX + std::min(prefixW, plateW - 68.0f), rowY + 6.0f)
             .size(3.0f, 28.0f * 1.15f)
             .color(t.colors.primary)
             .radius(2.0f)
@@ -174,9 +177,11 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
     }
     // 副语 + 轮换指示条（4 条 24×4，静 #DDEBE3 / 活 #36D399）
     if (!subtitle.empty()) {
+        const float subW =
+            core::TextPrimitive::measureTextWidth(subtitle, {}, 16.0f, 400.0f);
         ui.text("home.anim.typer.sub")
-            .position(px, py + plateH + 10.0f)
-            .size(plateW, 18.0f)
+            .position(px + (plateW - subW) * 0.5f, py + plateH + 10.0f)
+            .size(subW + 8.0f, 18.0f)
             .text(subtitle)
             .fontSize(16.0f)
             .color(eui::Color("#6B7280"))
