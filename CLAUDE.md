@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **DevDesk** 是面向开发者的跨平台桌面工具集（C++20 GUI 应用）：**Markdown 笔记本**（本地文件 + SQLite FTS5 全文搜索）、**Todo 看板**（SQLite 多列卡片）、**Claude 配置切换器**（多套 API profile + 本地 HTTP 代理带流式转发），另有**首页仪表盘**、**设置页**、**关于页**、**智能体页**（module_agent：任务 / 运行 / 工具）。
 
-> **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **14 行**，Router 实注册 13 页（上线组父项工厂返回 nullptr 不导航；枚举序见 `src/core/module_interface.h` 的 `PageId`）。可被模块开关插拔的有 9 个：笔记 / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸（默认关）/ MCP / 上线；Home / Settings / About 的 `gatingKey` 是 `nullptr`，不可禁用。`src/` 下有 12 个 `module_*` 目录。
+> **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **14 行**，Router 实注册 13 页（上线组父项工厂返回 nullptr 不导航；枚举序见 `src/core/module_interface.h` 的 `PageId`）。可被模块开关插拔的有 11 个：笔记 / Git / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸（默认关）/ MCP / 终端 / 上线；Home / Settings / About 的 `gatingKey` 是 `nullptr`，不可禁用。`src/` 下有 12 个 `module_*` 目录。
 
 目标平台：**macOS**（arm64）和 **Windows 11**——两平台均为原生支持。CI 双平台构建 + 测试守卫。
 
