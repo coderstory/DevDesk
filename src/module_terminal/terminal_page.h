@@ -50,6 +50,9 @@ public:
         onPanelResult_ = std::move(h);
     }
 
+    // M2 Task 2：字号快捷缩放通道（delta = +1/-1；0 = 恢复默认）。模块侧落库+下发网页。
+    void setFontSizeHandler(std::function<void(int)> h) { onFontSize_ = std::move(h); }
+
     // bug248：量化 resize 去抖 100ms——拖拽窗口时 layout 每帧变化，原实现每帧直接
     // resizeActive（ResizePseudoConsole + CancelIoEx 打断在飞 ReadFile），放大输入
     // 输出抖动；合并为 pending 静默 ≥100ms 后一次应用（首会话冷启动同样延迟 100ms，
@@ -100,11 +103,19 @@ private:
     bool settingsOpen_ = false;      // need250 设置面板开合
     float panelScroll_ = 0.0f;       // 面板内容区滚动偏移（超高内滚）
     std::function<void(bool)> onPanelResult_;  // bug278④ 面板结果通道（完成/×）
+    std::function<void(int)> onFontSize_;      // M2：Cmd/Ctrl +/−/0 字号通道
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 池#365：终端历史搜索态（成员级存活——搜索条闭包跨帧引用）
     TerminalSearchState search_;
     // 拖选/滚轮输入路由（M2 Task 1：从 compose 抽出的纯状态机）
     TerminalInputRouter input_;
+    // M2 Task 2：多击判定（双击选词/三击选行）+ 右键菜单状态
+    std::chrono::steady_clock::time_point lastClickAt_{};
+    CellPos lastClickPos_{};
+    int clickStreak_ = 0;
+    bool ctxMenuOpen_ = false;
+    float ctxMenuX_ = 0.0f;
+    float ctxMenuY_ = 0.0f;
     // TAB 栏交互态
     float tabScroll_ = 0.0f;         // TAB 区横滚偏移（溢出时 >0；栏视口态，切会话保位）
     int hoveredTabIndex_ = -1;       // 非激活 TAB hover（关闭钮淡入）

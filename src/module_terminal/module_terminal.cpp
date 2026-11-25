@@ -29,6 +29,13 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
     controller_.setNewSessionOptions(settings_.shell, settings_.startupDir, kScrollbackDefault);
     // bug278④：面板结果通道装配（完成/× 由页面转发到 finishSettingsPanel）
     page_.setPanelResultHandler([this](bool commit) { finishSettingsPanel(commit); });
+    // M2：Cmd/Ctrl + = / - / 0 字号快捷缩放——delta=0 回默认；改值即持久化并下发网页
+    page_.setFontSizeHandler([this](int delta) {
+        const int next = delta == 0 ? kFontSizeDefault : settings_.fontSize + delta;
+        settings_.fontSize = clampedFontSize(next);
+        (void)writeSettings(settings_);
+        core::platform::requestUiUpdate();
+    });
 }
 
 TerminalModule::~TerminalModule() { stopWebService(); }

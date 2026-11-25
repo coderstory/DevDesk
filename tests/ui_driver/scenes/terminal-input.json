@@ -30,6 +30,12 @@
 
     {"type": "key", "name": "Shortcut+C", "id": "app.term.input",
      "_comment": "有选区 → 模块级 onKeyEvent 复制（app 级 keyHandler→Router 兜底）"},
-    {"type": "screenshot", "path": "terminal-input-03-copied.png"}
+    {"type": "screenshot", "path": "terminal-input-03-copied.png"},
+    {"type": "key", "name": "Shortcut+F", "id": "app.term.input",
+     "_comment": "M2 Task 2：Cmd/Ctrl+F 开搜索条（页面层先于模块收键）"},
+    {"type": "wait", "until": "exists", "id": "app.term.search.bar", "timeoutMs": 5000},
+    {"type": "key", "name": "Escape", "id": "app.term.input",
+     "_comment": "Esc 关搜索条（input onCancel 通道）；搜索匹配/高亮由 doctest 覆盖（collectMatchLines/findMatchColumns），driver 无法驱动 input 文本（#242 属已知限制）"},
+    {"type": "screenshot", "path": "terminal-input-04-search.png"}
   ]
 }

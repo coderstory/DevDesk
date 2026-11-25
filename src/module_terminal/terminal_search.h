@@ -27,7 +27,16 @@ struct TerminalSearchState {
     // Enter 步进请求：onEnter 只置位，下一帧 compose 消费——扫描用当帧现值
     //（scrollback 增长后 compose 期捕获的 totalLines 已过期，P3-2 同款坑）。
     bool pendingStep = false;
+    int stepDirection = 1;    // +1 下一处 / -1 上一处（搜索条 ↑↓ 钮或 Shift+Enter）
 };
+
+// 一行文本里所有命中位置的「列区间」（终端格坐标，宽字按显示宽 2 计）。
+// 用于子串高亮：返回 [colBegin, colEnd) 升序、互不重叠的段。
+struct MatchSpan {
+    int colBegin;
+    int colEnd;
+};
+std::vector<MatchSpan> findMatchColumns(const std::string& text, const std::string& needle);
 
 // 收集全部命中行（升序）。大小写不敏感（ASCII 折算，避免 locale 依赖）。
 // needle 空 / totalLines ≤ 0 → 空。scrollbackLine 取不到的行按空串参与匹配。

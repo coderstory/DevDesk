@@ -22,6 +22,8 @@ public:
     // 结束拖动：头更新为落点，选区有效性 = 锚点≠落点
     void release(CellPos p);
     void clear();
+    // 直接给锚点/头（双击选词、三击选行）；a==b 时不算选区
+    void selectRange(CellPos a, CellPos b);
     // 切会话/重启：清选区并复位滚轮余数（抽缝前 page 的两处显式复位）
     void reset();
 

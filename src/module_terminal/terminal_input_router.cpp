@@ -30,6 +30,13 @@ void TerminalInputRouter::clear() {
     hasSelection_ = false;
 }
 
+void TerminalInputRouter::selectRange(CellPos a, CellPos b) {
+    pressing_ = false;
+    anchor_ = a;
+    head_ = b;
+    hasSelection_ = !(a.row == b.row && a.col == b.col);
+}
+
 void TerminalInputRouter::reset() {
     clear();
     scrollRemainder_ = 0.0f;

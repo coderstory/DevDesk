@@ -22,6 +22,9 @@
 #include "core/theme.h"
 #include "platform/folder_picker.h"
 #include "terminal_keyencoder.h"
+#include "terminal_text_util.h"
+#include "core/ui_geometry.h"
+#include <components/contextmenu.h>
 #include <components/dropdown.h>
 #include <components/input.h>
 #include <components/scroll.h>
@@ -357,16 +360,29 @@ GridLayout TerminalPage::compose(
                     std::max(1, static_cast<int>(bodyH / cellH));
                 const int startLine = std::max(
                     0, totalLines - viewRows - (act ? act->scrollOffset : 0));
-                const int fromLine = search_.matchLine >= 0
-                    ? search_.matchLine + 1
-                    : startLine;
-                int chosen = matches[0];   // 回绕兜底 = 首处命中
-                int chosenIdx = 0;
-                for (int mi = 0; mi < static_cast<int>(matches.size()); ++mi) {
-                    if (matches[static_cast<size_t>(mi)] >= fromLine) {
-                        chosen = matches[static_cast<size_t>(mi)];
-                        chosenIdx = mi;
-                        break;
+                // 方向：+1 下一处（回绕首处）/ -1 上一处（回绕末处）
+                const bool forward = search_.stepDirection >= 0;
+                int chosen = forward ? matches[0] : matches.back();
+                int chosenIdx = forward ? 0 : static_cast<int>(matches.size()) - 1;
+                if (forward) {
+                    const int fromLine =
+                        search_.matchLine >= 0 ? search_.matchLine + 1 : startLine;
+                    for (int mi = 0; mi < static_cast<int>(matches.size()); ++mi) {
+                        if (matches[static_cast<size_t>(mi)] >= fromLine) {
+                            chosen = matches[static_cast<size_t>(mi)];
+                            chosenIdx = mi;
+                            break;
+                        }
+                    }
+                } else {
+                    const int beforeLine =
+                        search_.matchLine >= 0 ? search_.matchLine - 1 : startLine - 1;
+                    for (int mi = static_cast<int>(matches.size()) - 1; mi >= 0; --mi) {
+                        if (matches[static_cast<size_t>(mi)] <= beforeLine) {
+                            chosen = matches[static_cast<size_t>(mi)];
+                            chosenIdx = mi;
+                            break;
+                        }
                     }
                 }
                 search_.matchLine = chosen;
@@ -516,17 +532,90 @@ GridLayout TerminalPage::compose(
                 }
             }
 
-            // 层 2：交互层（IBeam 文本光标，bug243 现象 1；拖选/滚轮/键盘/IME）
+            // M2 Task 2：可视行文本（多击选词/选行用；历史行取文本，屏上行拼 cell 串）
+    auto lineTextAtVisibleRow = [ctrl, layout](int r) -> std::string {
+        std::string text;
+        Session* s = ctrl->active();
+        if (s == nullptr) return text;
+        const int sbNow = ctrl->activeScrollbackCount();
+        const int totalNow = sbNow + s->frame.rows;
+        const int start = std::max(0, totalNow - layout.rows - s->scrollOffset);
+        const int line = start + r;
+        if (line < sbNow) {
+            (void)ctrl->activeScrollbackLine(line, text);
+            return text;
+        }
+        const int fr = line - sbNow;
+        if (fr < 0 || fr >= s->frame.rows || s->frame.cells.empty() || s->frame.cols <= 0) {
+            return text;
+        }
+        return rowSliceText(&s->frame.cells[static_cast<size_t>(fr) * s->frame.cols],
+                            s->frame.cols, 0, s->frame.cols);
+    };
+
+    // M2 Task 2：选区文本 → 剪贴板（Ctrl+C 与「选即复制」共用同一换算口径）
+    auto copySelection = [this, ctrl, onCopyText, layout]() -> bool {
+        Session* s = ctrl->active();
+        if (!input_.hasSelection() || s == nullptr) return false;
+        const int sbNow = ctrl->activeScrollbackCount();
+        const int totalNow = sbNow + s->frame.rows;
+        const int startLine =
+            std::max(0, totalNow - layout.rows - s->scrollOffset);
+        const int fR0 = input_.anchor().row + startLine - sbNow;
+        const int fR1 = input_.head().row + startLine - sbNow;
+        std::string sel;
+        if (fR0 >= 0 && fR1 >= 0 &&
+            ctrl->activeSelectionText(fR0, input_.anchor().col, fR1, input_.head().col,
+                                      sel)) {
+            onCopyText(sel);
+            return true;
+        }
+        return false;
+    };
+
+    // 层 2：交互层（IBeam 文本光标，bug243 现象 1；拖选/滚轮/键盘/IME）
             ui.rect("term.input")
                 .size(screen.width, bodyH)
                 .margin(0.0f, gridTop, 0.0f, 0.0f)
                 // IME 锚位（bug363）：挂获焦元素本尊，见上方层 4 前置注释
                 .imeRect(imeAnchorX, imeAnchorY, cellW, cellH)
                 .color(Color{0, 0, 0, 0.01f})
-                .onPress([this, toPage, rowOf, colOf](const eui::PointerEvent& e,
-                                                     const eui::Rect&) {
+                .onPress([this, toPage, rowOf, colOf, copySelection, layout,
+                          lineTextAtVisibleRow](const eui::PointerEvent& e, const eui::Rect&) {
                     auto [lx, ly] = toPage(e);
-                    input_.press({rowOf(ly), colOf(lx)});
+                    const CellPos hit{rowOf(ly), colOf(lx)};
+                    const auto now = std::chrono::steady_clock::now();
+                    const double dt =
+                        std::chrono::duration<double>(now - lastClickAt_).count();
+                    const bool sameCell =
+                        hit.row == lastClickPos_.row && hit.col == lastClickPos_.col;
+                    clickStreak_ = (sameCell && dt < 0.4)
+                                       ? std::min(3, clickStreak_ + 1)
+                                       : 1;
+                    lastClickAt_ = now;
+                    lastClickPos_ = hit;
+                    // Shift+点击：有选区时把头部延伸到点击处（终端惯例）
+                    if (e.modifiers.shift && input_.hasSelection()) {
+                        input_.dragTo(hit);
+                        (void)copySelection();
+                        return;
+                    }
+                    // 三击整行 / 双击选词（选完即复制，与「选即复制」一致）
+                    if (clickStreak_ >= 3) {
+                        input_.selectRange({hit.row, 0},
+                                           {hit.row, std::max(1, layout.cols) - 1});
+                        (void)copySelection();
+                        return;
+                    }
+                    if (clickStreak_ == 2) {
+                        const std::string text = lineTextAtVisibleRow(hit.row);
+                        const auto bounds = wordBoundsAt(text, hit.col);
+                        input_.selectRange({hit.row, bounds.first},
+                                           {hit.row, std::max(bounds.first, bounds.second - 1)});
+                        (void)copySelection();
+                        return;
+                    }
+                    input_.press(hit);
                 })
                 .onMove([this, toPage, rowOf, colOf](const eui::PointerEvent& e, const eui::Rect&) {
                     if (!input_.pressing()) return false;
@@ -534,11 +623,22 @@ GridLayout TerminalPage::compose(
                     input_.dragTo({rowOf(ly), colOf(lx)});
                     return true;
                 })
-                .onRelease([this, toPage, rowOf, colOf](const eui::PointerEvent& e,
-                                                        const eui::Rect&) {
+                .onRelease([this, toPage, rowOf, colOf, copySelection](
+                               const eui::PointerEvent& e, const eui::Rect&) {
                     if (!input_.pressing()) return;
                     auto [lx, ly] = toPage(e);
                     input_.release({rowOf(ly), colOf(lx)});
+                    // M2 Task 2：选即复制（默认开，不加设置项）——拖选结束即写剪贴板
+                    if (input_.hasSelection()) (void)copySelection();
+                })
+                .onContextMenu([this](const eui::PointerEvent& ev, const eui::Rect&) {
+                    const ::core::Router* router = ::core::appRouter();
+                    const core::MenuAnchor a = core::menuAnchorForPointer(
+                        static_cast<float>(ev.x), static_cast<float>(ev.y),
+                        router ? router->pageOriginX() : 0.0f, 0.0f, 1.0f);
+                    ctxMenuX_ = a.x;
+                    ctxMenuY_ = a.y;
+                    ctxMenuOpen_ = true;
                 })
                 .onScroll([this, ctrl](const core::ScrollEvent& e) {
                     Session* s = ctrl->active();
@@ -551,6 +651,43 @@ GridLayout TerminalPage::compose(
                 .onKeyEvent([this, ctrl, onKeyBytes, onCopyText,
                              layout](const eui::KeyEvent& e) {
                     if (!e.isDown()) return false;
+                    // M2 Task 2：字号快捷缩放 Cmd/Ctrl + = / - / 0（0=恢复默认）
+                    if (e.modifiers.shortcut() && !e.modifiers.alt) {
+                        if (e.key == eui::InputKey::Equal ||
+                            e.key == eui::InputKey::NumpadAdd) {
+                            if (onFontSize_) onFontSize_(1);
+                            return true;
+                        }
+                        if (e.key == eui::InputKey::Minus ||
+                            e.key == eui::InputKey::NumpadSubtract) {
+                            if (onFontSize_) onFontSize_(-1);
+                            return true;
+                        }
+                        if (e.key == eui::InputKey::Digit0 ||
+                            e.key == eui::InputKey::Numpad0) {
+                            if (onFontSize_) onFontSize_(0);
+                            return true;
+                        }
+                    }
+                    // M2 Task 2：Shift+PageUp/PageDown 回看一页（终端惯例）
+                    if (e.modifiers.shift &&
+                        (e.key == eui::InputKey::PageUp ||
+                         e.key == eui::InputKey::PageDown)) {
+                        Session* s = ctrl->active();
+                        if (s == nullptr) return false;
+                        const int page = std::max(1, layout.rows > 1 ? layout.rows - 1 : layout.rows);
+                        const int delta = e.key == eui::InputKey::PageUp ? page : -page;
+                        s->scrollOffset = std::clamp(s->scrollOffset + delta, 0,
+                                                     ctrl->activeScrollbackCount());
+                        input_.clear();
+                        return true;
+                    }
+                    // M2 Task 2：Cmd/Ctrl+F 开搜索条（页面在模块之前收到键；开着的面板里
+                    // 不抢 F——输入框自己有文本编辑语义）
+                    if (e.modifiers.shortcut() && !e.modifiers.alt && e.key == eui::InputKey::F) {
+                        search_.open = true;
+                        return true;
+                    }
                     // Ctrl+C 二象性（技术卡 v2 决策 4/§5）：win 惯例且选区非空 → 复制并吞
                     // 事件；无选区/mac 惯例 → keyencoder 语义（\x03 中断）
                     if (e.modifiers.control && e.key == eui::InputKey::C) {
@@ -675,6 +812,38 @@ GridLayout TerminalPage::compose(
                         .color(Color{t.colors.primary.r, t.colors.primary.g,
                                      t.colors.primary.b, t.isDark ? 0.22f : 0.14f})
                         .build();
+                }
+            }
+
+            // 层 3.7（M2 Task 2）：命中子串高亮——逐可视行找 needle 的列区间画底色块。
+            // 历史行无 cell 数组，按显示宽折算列（findMatchColumns 同一口径）。
+            if (search_.open && !search_.query.empty() && act != nullptr && layout.rows > 0) {
+                const int startLine = std::max(
+                    0, totalLines - layout.rows - act->scrollOffset);
+                std::string lineText;
+                for (int r = 0; r < layout.rows; ++r) {
+                    const int line = startLine + r;
+                    lineText.clear();
+                    if (line < sb) {
+                        (void)controller.activeScrollbackLine(line, lineText);
+                    } else {
+                        const int frameRow = line - sb;
+                        if (frameRow < 0 || frameRow >= frame.rows || frame.cells.empty()) continue;
+                        lineText = rowSliceText(
+                            &frame.cells[static_cast<size_t>(frameRow) * frame.cols],
+                            frame.cols, 0, frame.cols);
+                    }
+                    const auto spans = findMatchColumns(lineText, search_.query);
+                    for (size_t k = 0; k < spans.size(); ++k) {
+                        const float x = static_cast<float>(spans[k].colBegin) * cellW;
+                        const float w =
+                            static_cast<float>(spans[k].colEnd - spans[k].colBegin) * cellW;
+                        ui.rect("term.search.m" + std::to_string(r) + "_" + std::to_string(k))
+                            .position(x, gridTop + static_cast<float>(r) * cellH)
+                            .size(w, cellH)
+                            .color(Color{t.colors.warning.r, t.colors.warning.g,
+                                         t.colors.warning.b, t.isDark ? 0.34f : 0.24f});
+                    }
                 }
             }
 
@@ -1135,6 +1304,40 @@ GridLayout TerminalPage::compose(
                                       search_.searched = false;
                                       search_.pendingStep = false;
                                   });
+
+            // 层 8.6（M2 Task 2）：右键菜单——复制 / 清屏 / 搜索
+            // 粘贴不做：EUI 已在 Cmd/Ctrl+V 灌 pasteText（input_state.h:235），
+            // 菜单再复制一条需窗口句柄，收益低（Ruling 记入 M2 ledger）。
+            if (ctxMenuOpen_) {
+                const std::vector<components::ContextMenuItem> items = {
+                    {"复制"}, {"清屏"}, {"搜索"}};
+                components::contextMenu(ui, "term.ctx")
+                    .open(ctxMenuOpen_)
+                    .screen(screen.width, screen.height)
+                    .position(ctxMenuX_, ctxMenuY_)
+                    .autoWidth()
+                    .items(items)
+                    .theme(core::theme::componentTokens(t))
+                    .onSelect([this, ctrl, copySelection](int index) {
+                        ctxMenuOpen_ = false;
+                        switch (index) {
+                            case 0:
+                                (void)copySelection();
+                                break;
+                            case 1:
+                                ctrl->writeToActive(
+                                    reinterpret_cast<const uint8_t*>(""), 1);
+                                break;
+                            case 2:
+                                search_.open = true;
+                                break;
+                            default:
+                                break;
+                        }
+                    })
+                    .onOpenChange([this](bool v) { ctxMenuOpen_ = v; })
+                    .build();
+            }
 
             // 层 9：终端设置面板（need250 页内模态；设计 §2/§4）。scrim α0.35 盖整页面区
             // 含 TAB 栏；点 scrim 不关（无 onClick = 纯 hit 隔离）；关闭通道 Esc（module

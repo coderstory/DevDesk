@@ -4,6 +4,7 @@
 #include "doctest.h"
 #include "module_terminal/module_terminal.h"
 #include "module_terminal/terminal_search.h"
+#include "module_terminal/terminal_text_util.h"
 #include "module_terminal/terminal_session_controller.h"
 
 #include <algorithm>
@@ -582,5 +583,65 @@ REGISTER_TEST(terminalStartingKeepsFrameFlow,
     DOCTEST_CHECK(terminal::needsStartingFrameTick(false, false, true) == false);
     DOCTEST_CHECK(terminal::needsStartingFrameTick(false, false, false) == false);
     DOCTEST_CHECK(terminal::needsStartingFrameTick(false, true, true) == true);
+    return true;
+})
+
+REGISTER_TEST(terminalSearchMatchColumns,
+              "terminal search: 子串命中列区间（ASCII 多命中 / 大小写 / CJK 宽字 / 无命中）", {
+    using terminal::findMatchColumns;
+    // ASCII：两处命中，列区间升序
+    auto ascii = findMatchColumns("abc ABC xabc", "abc");
+    DOCTEST_CHECK_EQ(ascii.size(), 3u);
+    if (ascii.size() == 3u) {
+        DOCTEST_CHECK_EQ(ascii[0].colBegin, 0);
+        DOCTEST_CHECK_EQ(ascii[0].colEnd, 3);
+        DOCTEST_CHECK_EQ(ascii[1].colBegin, 4);
+        DOCTEST_CHECK_EQ(ascii[1].colEnd, 7);
+        DOCTEST_CHECK_EQ(ascii[2].colBegin, 9);
+        DOCTEST_CHECK_EQ(ascii[2].colEnd, 12);
+    }
+    // CJK：宽字按 2 列计——"杭州" 占 4 列
+    auto cjk = findMatchColumns("x杭州杭州", "杭州");
+    DOCTEST_CHECK_EQ(cjk.size(), 2u);
+    if (cjk.size() == 2u) {
+        DOCTEST_CHECK_EQ(cjk[0].colBegin, 1);
+        DOCTEST_CHECK_EQ(cjk[0].colEnd, 5);
+        DOCTEST_CHECK_EQ(cjk[1].colBegin, 5);
+        DOCTEST_CHECK_EQ(cjk[1].colEnd, 9);
+    }
+    // 空查询 / 无命中 / 查询比行还长
+    DOCTEST_CHECK_TRUE(findMatchColumns("abc", "").empty());
+    DOCTEST_CHECK_TRUE(findMatchColumns("abc", "zzz").empty());
+    DOCTEST_CHECK_TRUE(findMatchColumns("ab", "abc").empty());
+    return true;
+})
+
+REGISTER_TEST(terminalTextWordBounds,
+              "terminal text util: 双击选词列区间（ASCII 词/CJK/标点/空白）", {
+    using terminal::textDisplayColumns;
+    using terminal::wordBoundsAt;
+    // "foo bar(x)"：foo=0..3、bar=4..7、(=7
+    auto w1 = wordBoundsAt("foo bar(x)", 1);
+    DOCTEST_CHECK_EQ(w1.first, 0);
+    DOCTEST_CHECK_EQ(w1.second, 3);
+    auto w2 = wordBoundsAt("foo bar(x)", 5);
+    DOCTEST_CHECK_EQ(w2.first, 4);
+    DOCTEST_CHECK_EQ(w2.second, 7);
+    // 标点处按单列
+    auto w3 = wordBoundsAt("foo bar(x)", 7);
+    DOCTEST_CHECK_EQ(w3.first, 7);
+    DOCTEST_CHECK_EQ(w3.second, 8);
+    // CJK：宽字每字 2 列，"杭州" = 0..4；第二列落在同一字
+    DOCTEST_CHECK_EQ(textDisplayColumns("杭x"), 3);
+    auto w4 = wordBoundsAt("杭州 x", 2);
+    DOCTEST_CHECK_EQ(w4.first, 0);
+    DOCTEST_CHECK_EQ(w4.second, 4);
+    auto w5 = wordBoundsAt("杭州 x", 5);
+    DOCTEST_CHECK_EQ(w5.first, 5);
+    DOCTEST_CHECK_EQ(w5.second, 6);
+    // 空串/越界
+    auto w6 = wordBoundsAt("", 3);
+    DOCTEST_CHECK_EQ(w6.first, 3);
+    DOCTEST_CHECK_EQ(w6.second, 4);
     return true;
 })

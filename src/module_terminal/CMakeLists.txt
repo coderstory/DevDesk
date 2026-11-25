@@ -7,6 +7,7 @@ add_library(devdesk_module_terminal STATIC
     terminal_input_router.cpp
     terminal_metrics.cpp
     terminal_search.cpp
+    terminal_text_util.cpp
     terminal_settings.cpp
 )
 
