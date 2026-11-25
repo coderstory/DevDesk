@@ -191,7 +191,6 @@ bool AgentModule::ensureNotifyWorker() {
     }
     if (g_notifyWorkerSpawnFailInject.load(std::memory_order_relaxed) > 0) {
         g_notifyWorkerSpawnFailInject.fetch_sub(1, std::memory_order_relaxed);
-        { std::lock_guard<std::mutex> redProbe(notifyQueueMu_); notifyQueue_.clear(); }   // RED-PROBE 临时：模拟旧行为静默丢弃
         if (!std::exchange(notifySpawnErrorLogged_, true)) {
             LOG_ERROR("Agent: 系统通知 worker 线程创建失败（测试注入），队列保留待下一帧重试");
         }
