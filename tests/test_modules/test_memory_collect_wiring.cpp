@@ -541,6 +541,47 @@ REGISTER_TEST(memory_config_scroll_tail_group_reachable_when_expanded,
     return true;
 })
 
+// ── need:436：配置 tab 滚动两边界（默认窗矮内容不出滚动 / 展开后尾件可达）──
+// 无滚动缺陷已由 need:335（ae96cb3a）修复（contentKey 折叠态签名 +
+// contentHeightProvider 渲染真值供高）。本用例锁另一半验收口径——「内容不足
+// 不出滚动」，并覆盖 need:335 回归锁未包含的组 4（安装镜像源，bug476 新增）
+// 展开后的尾部可达性：供高若只到旧尾组，组 4 末行会滚不到。
+REGISTER_TEST(memory_config_scroll_folded_fits_and_last_group_reachable,
+              "memory need:436: 配置 tab 默认窗全折叠内容不足不出滚动；组 4 展开后末行滚到底可达", {
+    module::memory::MemoryModule mod;
+    mod.setActiveViewForTest(module::memory::kViewConfig);
+
+    // 边界 1：默认窗（1600×1000）全折叠内容不足视口——不出滚动
+    eui::Ui uiFolded;
+    composeConfigFrame(mod, uiFolded, 1600.0f, 1000.0f);
+    const auto* rootF = uiFolded.find("memory.config.scroll");
+    DOCTEST_REQUIRE(rootF != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        rootF->scrollMaxOffset == 0.0f,
+        "全折叠内容未超视口仍出滚动 maxOffset=" +
+            std::to_string(rootF->scrollMaxOffset) + "（矮内容应零滚动）");
+
+    // 边界 2：组 0 + 组 4 展开后内容超视口，组 4 末行（镜像说明）滚到底可达
+    mod.setConfigGroupOpenForTest(0, true);
+    mod.setConfigGroupOpenForTest(4, true);
+    eui::Ui uiOpen;
+    composeConfigFrame(mod, uiOpen, 1600.0f, 1000.0f);
+    const auto* rootO = uiOpen.find("memory.config.scroll");
+    const auto* contentO = uiOpen.find("memory.config.scroll.content");
+    const auto* note = uiOpen.find("memory.cfg.mirror.note");
+    DOCTEST_REQUIRE(rootO != nullptr);
+    DOCTEST_REQUIRE(contentO != nullptr);
+    DOCTEST_REQUIRE(note != nullptr);
+    const float relBottom =
+        note->frame.y + note->frame.height - contentO->frame.y;
+    DOCTEST_CHECK_MESSAGE(
+        rootO->scrollMaxOffset >= relBottom - rootO->frame.height,
+        "组 4 末行相对底 " + std::to_string(relBottom) + " 超出 maxOffset " +
+            std::to_string(rootO->scrollMaxOffset) + " + 视口 " +
+            std::to_string(rootO->frame.height) + "（尾部不可达）");
+    return true;
+})
+
 // ── F-06 L2 段级洗（need333 记忆波 1，判据=scheme-card §1 P3/P4 + 实测形态扩）──
 
 REGISTER_TEST(memory_collect_f06_wash_redteam_and_control,
