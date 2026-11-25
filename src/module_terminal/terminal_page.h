@@ -57,6 +57,13 @@ public:
     void requestQuitConfirm();
     void requestCloseConfirm(int index);
     bool confirmOpen() const { return confirmKind_ != ConfirmKind::None; }
+    // #383：新建标签的目录选择（常用列表来自模块，空列表=默认目录直开）
+    void setRecentDirsProvider(std::function<std::vector<std::string>()> h) {
+        recentDirsProvider_ = std::move(h);
+    }
+    void setNewTabInHandler(std::function<void(const std::string&)> h) {
+        onNewTabIn_ = std::move(h);
+    }
     // 关标签请求转交模块裁定（Running 才弹确认）
     void setCloseTabHandler(std::function<void(int)> h) { onCloseTab_ = std::move(h); }
 
@@ -118,6 +125,10 @@ private:
     int confirmIndex_ = -1;
     ConfirmHandler onConfirm_;
     std::function<void(int)> onCloseTab_;
+    std::function<std::vector<std::string>()> recentDirsProvider_;
+    std::function<void(const std::string&)> onNewTabIn_;
+    bool newTabMenuOpen_ = false;
+    std::vector<std::string> newTabDirs_;
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 池#365：终端历史搜索态（成员级存活——搜索条闭包跨帧引用）
     TerminalSearchState search_;

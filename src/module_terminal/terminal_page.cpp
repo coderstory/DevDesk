@@ -963,7 +963,16 @@ GridLayout TerminalPage::compose(
                         .size(newBtnW, kTabH)
                         .radius(6.0f)
                         .states(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                        .onClick([ctrl]() { ctrl->startSession(); });
+                        .onClick([this, ctrl]() {
+                            // #383：有常用目录 → 先弹目录菜单；否则默认目录直开
+                            newTabDirs_ = recentDirsProvider_ ? recentDirsProvider_()
+                                                              : std::vector<std::string>{};
+                            if (newTabDirs_.empty()) {
+                                ctrl->startSessionAsync();
+                                return;
+                            }
+                            newTabMenuOpen_ = true;
+                        });
                     if (narrowWindow) {
                         ui.text(bgId + ".icon")
                             .position(newX, kTabY)
@@ -1386,6 +1395,47 @@ GridLayout TerminalPage::compose(
                                       search_.searched = false;
                                       search_.pendingStep = false;
                                   });
+
+            // 层 8.5（#383）：新建标签的常用目录菜单
+            if (newTabMenuOpen_) {
+                std::vector<components::ContextMenuItem> items;
+                for (const auto& d : newTabDirs_) {
+                    const auto slash = d.find_last_of('/');
+                    const std::string name =
+                        (slash == std::string::npos || slash + 1 >= d.size())
+                            ? d
+                            : d.substr(slash + 1);
+                    items.push_back({name});
+                }
+                items.push_back({"选择目录…"});
+                const float menuX = std::max(12.0f, screen.width - 300.0f);
+                const float menuY = gridTop + 8.0f;
+                components::contextMenu(ui, "term.newtab.ctx")
+                    .open(newTabMenuOpen_)
+                    .screen(screen.width, screen.height)
+                    .position(menuX, menuY)
+                    .autoWidth()
+                    .items(items)
+                    .theme(core::theme::componentTokens(t))
+                    .onSelect([this](int index) {
+                        if (index < 0) return;
+                        const int dirCount = static_cast<int>(newTabDirs_.size());
+                        if (index < dirCount) {
+                            const std::string dir = newTabDirs_[static_cast<size_t>(index)];
+                            newTabMenuOpen_ = false;
+                            if (onNewTabIn_) onNewTabIn_(dir);
+                            return;
+                        }
+                        // 选择目录…
+                        newTabMenuOpen_ = false;
+                        auto picked = platform::folderpicker::pickFolder("选择启动目录", "");
+                        if (picked.isOk() && !picked.value().empty() && onNewTabIn_) {
+                            onNewTabIn_(picked.value());
+                        }
+                    })
+                    .onOpenChange([this](bool v) { newTabMenuOpen_ = v; })
+                    .build();
+            }
 
             // 层 8.55（M2 Task 4）：标签右键菜单——重命名 / 关闭其他 / 关闭右侧
             if (ctxTabMenuOpen_) {

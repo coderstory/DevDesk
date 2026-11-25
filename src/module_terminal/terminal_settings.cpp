@@ -21,6 +21,7 @@ constexpr const char* kKeyColorPalette = "colorPalette";
 constexpr const char* kKeyShell = "shell";
 // PRD P-14：新键 startupDir；旧 workDir 键不读（C-4 已砍时的历史残留不复活）。
 constexpr const char* kKeyStartupDir = "startupDir";
+constexpr const char* kKeyRecentDirs = "recentStartupDirs"; // #383
 constexpr const char* kKeyWebPort = "webPort";
 constexpr int kWebPortMin = 1024;
 constexpr int kWebPortMax = 65535;
@@ -35,6 +36,45 @@ bool contains(const std::vector<std::string>& values, const std::string& v) {
 }
 
 } // namespace
+
+std::string serializeRecentDirs(const std::vector<std::string>& dirs) {
+    std::string out;
+    for (const auto& d : dirs) {
+        if (d.empty()) continue;
+        if (!out.empty()) out.push_back('\n');
+        out += d;
+    }
+    return out;
+}
+
+std::vector<std::string> parseRecentDirs(const std::string& packed) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : packed) {
+        if (c == '\n') {
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+void pushRecentDir(std::vector<std::string>& dirs, const std::string& dir) {
+    if (dir.empty()) return;
+    for (auto it = dirs.begin(); it != dirs.end(); ++it) {
+        if (*it == dir) {
+            dirs.erase(it);
+            break;
+        }
+    }
+    dirs.insert(dirs.begin(), dir);
+    if (static_cast<int>(dirs.size()) > TerminalSettings::kRecentDirLimit) {
+        dirs.resize(static_cast<size_t>(TerminalSettings::kRecentDirLimit));
+    }
+}
 
 int clampedFontSize(int value) {
     return std::clamp(value, kFontSizeMin, kFontSizeMax);
@@ -64,6 +104,7 @@ TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings) {
     out.fontFamily = font;
     out.shell = shell;
     out.startupDir = settings.startupDir;  // 有效性在 writeSettings 入口校验，非 sanitize 职责
+    out.recentStartupDirs = settings.recentStartupDirs;  // #383（去重/上限由 pushRecentDir 保证）
     out.fontSize = clampedFontSize(settings.fontSize);
     out.colorMode = settings.colorMode;
     out.colorPalette = settings.colorPalette;
@@ -101,6 +142,8 @@ TerminalSettings loadTerminalSettings(core::data::SqliteDb* db) {
         s.shell = *v;
     if (auto v = platform::json::getIfString(obj, kKeyStartupDir))
         s.startupDir = *v;
+    if (auto v = platform::json::getIfString(obj, kKeyRecentDirs))
+        s.recentStartupDirs = parseRecentDirs(*v);
     if (auto v = platform::json::getIfInt(obj, kKeyWebPort))
         s.webPort = static_cast<int>(*v);
     // C-4（need380）：workDir/scrollback/cursorStyle/cursorBlink 旧键不再读取
@@ -128,6 +171,7 @@ core::Result<void> saveTerminalSettings(core::data::SqliteDb* db,
                                                                                : kPaletteLight));
     obj.set(kKeyShell, platform::json::makeString(s.shell));
     obj.set(kKeyStartupDir, platform::json::makeString(s.startupDir));
+    obj.set(kKeyRecentDirs, platform::json::makeString(serializeRecentDirs(s.recentStartupDirs)));
     if (s.webPort > 0) obj.set(kKeyWebPort, platform::json::makeInt(s.webPort));
     auto text = platform::json::stringify(platform::json::JsonValue(obj), /*pretty=*/false);
     if (text.isFail()) {

@@ -59,6 +59,14 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
             controller_.closeSession(index);
         }
     });
+    // #383：常用启动目录列表——新建标签先点选目录；选中即记入列表并落库
+    page_.setRecentDirsProvider([this]() { return settings_.recentStartupDirs; });
+    page_.setNewTabInHandler([this](const std::string& dir) {
+        pushRecentDir(settings_.recentStartupDirs, dir);
+        (void)writeSettings(settings_);
+        controller_.startSessionAsyncIn(dir);
+        core::platform::requestUiUpdate();
+    });
     page_.setFontSizeHandler([this](int delta) {
         const int next = delta == 0 ? kFontSizeDefault : settings_.fontSize + delta;
         settings_.fontSize = clampedFontSize(next);

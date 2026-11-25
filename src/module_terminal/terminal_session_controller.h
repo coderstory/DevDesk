@@ -90,6 +90,8 @@ public:
     // 结果由 pollAll 收割（成功转 Running，失败转 Failed 带 error）。进页帧不被
     // ConPTY 创建阻塞（实测 14.4ms）。
     int startSessionAsync();
+    // #383：指定启动目录开新会话（空串 = 默认 newSessionWorkDir_）
+    int startSessionAsyncIn(const std::string& workDir);
     // 关闭第 i 个会话（终止进程，无确认；语义=终止）。激活右邻优先，无右邻则左邻；
     // 关最后一个 → activeIndex=-1（空态）。
     void closeSession(int index);

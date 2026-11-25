@@ -40,11 +40,20 @@ struct TerminalSettings {
     // 新会话启动目录（PRD P-14）；"" = 用户主目录。保存前须过 workDirUsableForSpawn，
     // spawn 时非空不可用 → 启动失败（不静默回退）。
     std::string startupDir = "";
+    // #383：常用启动目录（点选开新标签；最多 kRecentDirLimit 条，去重、最近在前）
+    static constexpr int kRecentDirLimit = 8;
+    std::vector<std::string> recentStartupDirs;
 };
 
 // ---- 纯函数（doctest 直测） ----
 
 int clampedFontSize(int value);
+
+// #383：常用目录列表纯函数（持久化用 '\n' 连接的单串；路径不含换行）
+std::string serializeRecentDirs(const std::vector<std::string>& dirs);
+std::vector<std::string> parseRecentDirs(const std::string& packed);
+// 放入队首（去重、空值忽略、上限 kRecentDirLimit）
+void pushRecentDir(std::vector<std::string>& dirs, const std::string& dir);
 
 // 网格 ANSI 表取哪套：跟随应用=随主题；独立=锁所选色板。供 grid compose 的
 // darkTheme 参数（ansiIndexedColor 双表选择），渲染零新面。
