@@ -306,11 +306,12 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 // 纱」两层串联叠加（UAT2 B 批 0.60/0.90→0.80/0.85；UAT3 C1 0.82；UAT6 真机两连
 // 0.82→0.85、标题栏拉平 0.85），用户仍报「半透/磨砂看不见桌面」——bug274 定案根因 =
 // macOS NSWindow backgroundColor 恒叠在 GL 之下，两层把透出压到 0.15×0.15≈2%。本批
-// 砍掉第二层（winbg 退役，见 windowEffectTitleBarAlpha），clearColor 成单层，半透档按
-// 定标桌面透出 25~30% → α=0.72（透出 28%）。对比度护栏复算（test_settings
-// settings_window_effect_contrast_guard）：两主题正文/次要文字最紧 5.79:1 ≥ 4.5。
+// 砍掉第二层（winbg 退役，见 windowEffectTitleBarAlpha），clearColor 成单层；
+// bug468 产品标「桌面透出 20%」→ α=0.80（半透档回归校准：0.72=28% 透出 → 20%）。
+// 对比度护栏复算（test_settings settings_window_effect_contrast_guard）：更不透明
+// 只会抬高对比度，两主题正文/次要文字仍 ≥ 4.5。
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.72f;
+    if (mode == kWindowEffectTranslucent) return 0.80f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
