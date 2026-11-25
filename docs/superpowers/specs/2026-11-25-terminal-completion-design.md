@@ -62,7 +62,9 @@
 | OSC 0/2 标题 / OSC 52 远程复制未消费 | **真** | `settermpropCbImpl` 只处理 `VTERM_PROP_ALTSCREEN`（`terminal_vterm_core.cpp:271-273`）；全仓无 OSC 52 处理 |
 | 中文间字距「宽字不读实际字形宽」 | **部分（按设计）** | `cellXOf` 前缀宽和恒按 `width × cellW`，注释明确「不读字形 advance，只影响字形间隙」（`terminal_grid_widget.cpp:366-372`，bug244/clue103）。属设计取舍，不是缺陷 → 移出缺陷清单 |
 | #383 启动目录单值 | **真** | `terminal_settings.h:28-29`：C-4 已砍相关 UI，仅 `workDir` 单值 + shell 可配 |
-| need490 未完成项清单 | **部分** | 池卡 detail 列 7 项开放决策（QR 编码器、TOTP HMAC、密钥存储、连接指示、关 tab 语义、重连全量刷新、cookie 过期）；代码侧 E2E 待 Task 5 实跑确认 |
+| need490 未完成项清单 | **部分** | 池卡 detail 列 7 项开放决策（QR 编码器、TOTP HMAC、密钥存储、连接指示、关 tab 语义、重连全量刷新、cookie 过期）；代码侧 E2E 已实跑（见下） |
+
+**网页 E2E 实测（2026-11-25，M1 Task 5）**：`DEVDESK_E2E_SKIP_INSTALL=1 bash tests/e2e/run-e2e.sh` → `E2E_OK server-up -> assets-embedded -> handshake+loopback-login -> grid-frame -> echo-hi -> auto-reconnect -> resync-frame`；Edge/Chromium 手机视口（390×844，isMobile+hasTouch）；截图落 `evidence/need490-w7/`。→ **#497 回显判定为已修，可关闭；#499 CSP 单一源已落地。**
 
 ---
 
