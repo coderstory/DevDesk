@@ -139,6 +139,12 @@ inline components::MarkdownStyle scaledPreviewStyle(
     return style;
 }
 
+// need550：预览选区文本构建（整篇显示码点域切片；need345 notepadPreviewSelText
+// 同式）。拖选松手自动复制 / Ctrl+C / 测试直驱共用本函数。cp 归一化后取显示
+// 文本字节区间；空选区/越界 → 空串。
+std::string mdPreviewSelectionText(const std::string& source, size_t anchorCp,
+                                   size_t focusCp);
+
 // 单行树条目：整行包一层 stack —— position() 只在 stack 内生效，流式子元素会被静默忽略。
 // S2.5：选中态 = primarySoftBg 底 + 行左缘 3px 绿竖线 + primary 文字 / 图标。
 // 搜索命中时高亮关键词（§3.2.4 补充项）。
@@ -1010,6 +1016,21 @@ private:
                                 const core::theme::Tokens& t,
                                 const components::theme::ThemeColorTokens& componentTheme) ;
 
+    // need550 预览拖选（移植 need345 记事本选区）：坐标 = 块包裹局部（x 自块左缘、
+    // y 自块顶），y 经 syncMap_.blockTopY 抬到文档系后走 displayCpForPoint 反查
+    // 整篇显示码点。高亮 = hitRectsForDisplayRangeDoc 文档系矩形逐块裁剪绘制。
+    // Preview / Split 同一条通路（Live 不注册，编辑区行为零变化）；press 清旧选区
+    // 落锚、drag 扩焦实时高亮、release 保留高亮并选中即复制。
+    void previewSelPress(size_t blockIndex, const components::MouseEvent& ev) ;
+    void previewSelDrag(size_t blockIndex, const components::MouseEvent& ev) ;
+    void previewSelRelease(size_t blockIndex, const components::MouseEvent& ev) ;
+    size_t previewSelHitCp(size_t blockIndex,
+                           const components::MouseEvent& ev) const ;
+    std::string previewSelText() const ;
+    // 预览复制单点（右键菜单 / 拖选松手 / Ctrl+C 共用剪贴板路径：写剪贴板 +
+    // 日志 + toast）。
+    void copyPreviewText(const std::string& text, const std::string& what) ;
+
     // H27：目录行右键菜单（重命名 / 删除）。坐标复用 ctxMenuX_/Y_（与笔记菜单互斥打开）。
     void openDirContextMenu(const std::string& relPath, const eui::PointerEvent& ev) ;
 
@@ -1137,6 +1158,16 @@ private:
     float previewCtxX_ = 0.0f;
     float previewCtxY_ = 0.0f;
     std::string previewCtxText_;      // 右键块源文快照（菜单选择时复制）
+    // need550 预览拖选：整篇显示码点域（同 notepad need345）。style/width = compose
+    // 帧快照（指针回调帧间派发，反查须与渲染帧同源）；rev = 选区所属文本修订——
+    // Split 可编辑，文本变了旧码点即失效（不显示、不复制）。
+    bool previewSelDragging_ = false;
+    bool previewSelHasText_ = false;
+    size_t previewSelAnchorCp_ = 0;
+    size_t previewSelFocusCp_ = 0;
+    uint64_t previewSelRev_ = 0;
+    components::MarkdownStyle previewSelStyle_{};
+    float previewSelWidth_ = 0.0f;
     bool deleteConfirmOpen_ = false;
     std::string deleteTargetPath_;   // 待删笔记（确认弹窗展示 + 删除目标）
     bool renameOpen_ = false;

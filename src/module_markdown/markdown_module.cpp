@@ -627,6 +627,16 @@ bool MarkdownModule::onKeyEvent(const eui::KeyEvent& key)  {
         LOG_INFO("Ctrl+N：打开新建笔记弹窗");
         return true;
     }
+    // need550 预览选区 Ctrl+C（兼容通道，与拖选松手自动复制同一构建/复制路径）。
+    // 仅纯预览态拦：双栏下编辑区 input 聚焦时 Ctrl+C 归编辑器选区语义（不改既有
+    // 行为），双栏侧复制由松手自动复制承担。
+    if (key.isDown() && key.modifiers.shortcut() && !key.modifiers.shift &&
+        !key.modifiers.alt && key.key == eui::InputKey::C &&
+        mode_ == ViewMode::Preview && previewSelHasText_ &&
+        previewSelRev_ == editorTextRev_) {
+        copyPreviewText(previewSelText(), "预览选区文本");
+        return true;
+    }
     return false;
 }
 

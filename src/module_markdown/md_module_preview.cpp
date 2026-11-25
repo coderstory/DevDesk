@@ -5,10 +5,35 @@
 
 #include "markdown_module_internal.h"
 
+#include <algorithm>  // std::clamp / std::min（need550 选区反查与矩形裁剪）
 #include <cmath>    // std::floor（区间→rect 行切分）
 #include <utility>  // std::move（check-std-includes：不靠传递包含）
 
 namespace module::markdown {
+
+namespace {
+
+// need550：显示码点 → 字节偏移（UTF-8 lead byte 步进 + 钳位串尾；
+// notepadSelCpToByte 同式）。码点切片天然不产 CJK/emoji 半字。
+size_t mdSelCpToByte(const std::string& text, size_t cp) {
+    size_t i = 0;
+    for (size_t done = 0; done < cp && i < text.size(); ++done) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        i += std::min<size_t>(c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                              text.size() - i);
+    }
+    return i;
+}
+
+// 阅读序归一 [cp0, cp1)；空选区（锚 = 焦）返回 false。
+bool mdSelNormalized(size_t anchorCp, size_t focusCp, size_t* cp0, size_t* cp1) {
+    if (anchorCp == focusCp) return false;
+    *cp0 = std::min(anchorCp, focusCp);
+    *cp1 = std::max(anchorCp, focusCp);
+    return true;
+}
+
+}  // namespace
 
 void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
                       const eui::Screen& screen,
@@ -261,6 +286,59 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
                     [this](size_t k, const components::MouseEvent& ev) {
                         openPreviewContextMenu(k, ev);
                     };
+                // need550：拖选三件（Preview/Split 同通路；Live 不注册，编辑区
+                // 行为零变化）。坐标 = 块包裹局部；反查快照取本帧渲染同源值。
+                previewSelStyle_ = style;
+                previewSelWidth_ = contentWidth;
+                hooks.onBlockPress =
+                    [this](size_t k, const components::MouseEvent& ev) {
+                        previewSelPress(k, ev);
+                    };
+                hooks.onBlockDrag =
+                    [this](size_t k, const components::MouseEvent& ev) {
+                        previewSelDrag(k, ev);
+                    };
+                hooks.onBlockRelease =
+                    [this](size_t k, const components::MouseEvent& ev) {
+                        previewSelRelease(k, ev);
+                    };
+                // 选区高亮：文档系矩形（与渲染同源的整篇显示码点域）先按本帧一次
+                // 算出，再在 afterHitOverlay 里按块裁剪成块局部坐标绘制——半透明
+                // 叠在文字上，不消费命中。rev 不符（Split 编辑过）即视为无选区。
+                std::vector<MdHitRect> selRects;
+                size_t selCp0 = 0, selCp1 = 0;
+                if (previewSelHasText_ && previewSelRev_ == editorTextRev_ &&
+                    mdSelNormalized(previewSelAnchorCp_, previewSelFocusCp_,
+                                    &selCp0, &selCp1)) {
+                    for (const auto& hr :
+                         components::MarkdownBuilder::
+                             hitRectsForDisplayRangeDoc(editorText_, contentWidth,
+                                                        style, selCp0, selCp1)) {
+                        selRects.push_back(MdHitRect{hr.x, hr.y, hr.w, hr.h});
+                    }
+                }
+                if (!selRects.empty()) {
+                    const auto& th = core::theme::current();
+                    const eui::Color selFill = components::theme::withAlpha(
+                        th.colors.info, th.isDark ? 0.22f : 0.16f);
+                    hooks.afterHitOverlay = [this, &selRects, selFill](
+                                                eui::Ui& inner, size_t k,
+                                                const std::string& hitId) {
+                        const float top = syncMap_.blockTopY(k);
+                        const float bottom = top + syncMap_.blockHeight(k);
+                        size_t i = 0;
+                        for (const MdHitRect& r : selRects) {
+                            const float y0 = std::max(r.y, top);
+                            const float y1 = std::min(r.y + r.h, bottom);
+                            if (y1 <= y0 || r.w <= 0.0f) continue;
+                            inner.rect(hitId + ".sel." + std::to_string(i++))
+                                .position(r.x, y0 - top)
+                                .size(r.w, y1 - y0)
+                                .color(selFill)
+                                .build();
+                        }
+                    };
+                }
                 // 逐块渲染与实时态共用 drawBlockFlow；点击定位要写模块 Ui，
                 // 故闭包捕获外层 ui。裁剪注入点见上（blockVisible）。
                 drawBlockFlow(inner, contentWidth, t, style, "md.preview",
@@ -277,6 +355,69 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
             ui.setScrollOffset("md.preview.scroll", scrollOffset);
         }
     }).build();
+}
+
+// ─── need550 预览拖选（移植 need345 记事本选区）────────────────────────
+std::string mdPreviewSelectionText(const std::string& source, size_t anchorCp,
+                                   size_t focusCp) {
+    size_t cp0 = 0, cp1 = 0;
+    if (!mdSelNormalized(anchorCp, focusCp, &cp0, &cp1)) return {};
+    const std::string display = components::MarkdownBuilder::displayTextOf(source);
+    const size_t begin = mdSelCpToByte(display, cp0);
+    const size_t end = mdSelCpToByte(display, cp1);
+    if (begin >= end) return {};
+    return display.substr(begin, end - begin);
+}
+
+// 指针（块包裹局部）→ 整篇显示码点：y 抬到文档系（syncMap_ 块顶几何与逐块
+// 渲染同源）——负 y 不钳：拖过块顶 = 向上跨块扩焦，显示域按最近块兜底；
+// x 钳渲染宽（notepadSelHitCp 同式，横向出界即行首/行尾）。
+size_t MarkdownModule::previewSelHitCp(size_t blockIndex,
+                                       const components::MouseEvent& ev) const {
+    if (previewSelWidth_ <= 1.0f) return 0;
+    const auto hit = components::MarkdownBuilder::displayCpForPoint(
+        editorText_, previewSelWidth_, previewSelStyle_,
+        std::clamp(ev.x, 0.0f, previewSelWidth_),
+        syncMap_.blockTopY(blockIndex) + ev.y);
+    return hit.ok ? hit.cp : 0;
+}
+
+// 按下：清旧选区并落锚点（简单点击 = 空选区；Split 下 onTap 跳编辑区不受影响——
+// 拖动超过阈值后 mouseArea 抑制 click）。
+void MarkdownModule::previewSelPress(size_t blockIndex,
+                                     const components::MouseEvent& ev) {
+    previewSelDragging_ = true;
+    previewSelHasText_ = false;
+    previewSelRev_ = editorTextRev_;
+    previewSelAnchorCp_ = previewSelFocusCp_ = previewSelHitCp(blockIndex, ev);
+}
+
+// 拖动：焦点实时跟随（非空即实时高亮；矩形层 compose 每帧按选区态画）。
+void MarkdownModule::previewSelDrag(size_t blockIndex,
+                                    const components::MouseEvent& ev) {
+    if (!previewSelDragging_) return;
+    previewSelFocusCp_ = previewSelHitCp(blockIndex, ev);
+    previewSelHasText_ = previewSelAnchorCp_ != previewSelFocusCp_ &&
+                         previewSelRev_ == editorTextRev_;
+}
+
+// 抬起：非空选区 = 保留高亮 + 选中即复制（记事本口径）；空选区只清零不写剪贴板。
+// Split 下编辑区聚焦时 Ctrl+C 归编辑器，自动复制是双栏侧唯一的复制通道。
+void MarkdownModule::previewSelRelease(size_t blockIndex,
+                                       const components::MouseEvent& ev) {
+    if (!previewSelDragging_) return;  // 无在途按压的释放（异常时序）不动作
+    previewSelDragging_ = false;
+    previewSelFocusCp_ = previewSelHitCp(blockIndex, ev);
+    previewSelHasText_ = previewSelAnchorCp_ != previewSelFocusCp_ &&
+                         previewSelRev_ == editorTextRev_;
+    if (previewSelHasText_) {
+        copyPreviewText(previewSelText(), "预览选区文本");
+    }
+}
+
+std::string MarkdownModule::previewSelText() const {
+    return mdPreviewSelectionText(editorText_, previewSelAnchorCp_,
+                                  previewSelFocusCp_);
 }
 
 void MarkdownModule::drawBlockFlow(eui::Ui& ui,

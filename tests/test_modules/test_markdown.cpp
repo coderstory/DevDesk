@@ -5685,6 +5685,116 @@ REGISTER_TEST(md_layout_hard_break_rects_and_cp_round12,
     return true;
 })
 
+// need550：预览拖选（移植 need345 记事本选区）纯逻辑断言。
+// 防的事故：①块局部 y 抬文档系时漏加块顶几何 → 跨块拖选码点整体错位；
+// ②选区矩形与拖拽输入不同源 → 高亮画在别的行（点 A 亮 B）；
+// ③显示域切片按字节切 → CJK 半字 / 反序选区不归一；④选区复制与右键块源文
+// 复制混成同一语义（一套该带 markdown 标记、一套不该带）。
+REGISTER_TEST(md_preview_drag_selection_mapping,
+              "markdown: need550 预览拖选——displayCpForPoint 跨块映射 + 高亮矩形与"
+              "拖拽输入一致 + 显示域切片 + 与右键源文复制语义并存", {
+    constexpr float kWidth = 480.0f;
+    const components::MarkdownStyle style;
+    // 两个纯文本段（无标题/标记符，块切分 = 空行；显示文本 = 源文）
+    const std::string doc = "alpha beta gamma\n\nsecond line here\n";
+    const std::string display =
+        components::MarkdownBuilder::displayTextOf(doc);
+    DOCTEST_REQUIRE(display.find("alpha") != std::string::npos);
+
+    // ① 块顶 y 取自几何估计（预览渲染核 yAcc = 块高 + blockGap 同式）：
+    // 第二块首行内的点必须反查到第一块显示域之后的码点。
+    const float block2Top = components::MarkdownBuilder::estimateHeight(
+                                "alpha beta gamma\n", kWidth, style) +
+                            style.blockGap;
+    const auto hitFirst = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, 0.0f, 0.0f);
+    const auto hitSecond = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, 0.0f, block2Top + 5.0f);
+    DOCTEST_REQUIRE(hitFirst.ok);
+    DOCTEST_REQUIRE(hitSecond.ok);
+    DOCTEST_CHECK_EQ(hitFirst.cp, static_cast<std::size_t>(0));
+    DOCTEST_CHECK_MESSAGE(hitSecond.cp > hitFirst.cp,
+                          "跨块反查未前进：cp=" + std::to_string(hitSecond.cp));
+    DOCTEST_CHECK(hitSecond.cp <= display.size());
+    // 同行 x 单调（拖选向右扩焦）：x 增大码点不回退
+    const auto hitRight = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, 200.0f, 0.0f);
+    DOCTEST_REQUIRE(hitRight.ok);
+    DOCTEST_CHECK(hitRight.cp >= hitFirst.cp);
+
+    // ② 高亮矩形与拖拽输入同源：取第 6 个显示码点的矩形中心作为拖拽终点输入，
+    // 反查回的 cp 必落在该码点域，且 [0, cp) 的矩形覆盖该输入点所在行。
+    const auto unit = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+        doc, kWidth, style, 5, 6);
+    DOCTEST_REQUIRE_MESSAGE(!unit.empty(), "第 6 码点无文档系矩形");
+    const float probeX = unit.front().x + unit.front().w * 0.5f;
+    const float probeY = unit.front().y + unit.front().h * 0.5f;
+    const auto probeHit = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, probeX, probeY);
+    DOCTEST_REQUIRE(probeHit.ok);
+    DOCTEST_CHECK_MESSAGE(probeHit.cp >= 5 && probeHit.cp <= 6,
+                          "矩形中心反查越出所在码点：cp=" +
+                              std::to_string(probeHit.cp));
+    const auto prefixRects =
+        components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+            doc, kWidth, style, 0, probeHit.cp);
+    DOCTEST_REQUIRE_MESSAGE(!prefixRects.empty(), "[0,cp) 选区无高亮矩形");
+    bool rowCovered = false;
+    for (const auto& r : prefixRects) {
+        if (r.y - 0.5f <= probeY && probeY < r.y + r.h + 0.5f) rowCovered = true;
+    }
+    DOCTEST_CHECK_MESSAGE(rowCovered, "拖拽输入点所在行未被高亮矩形覆盖");
+
+    // ③ 选区文本切片（显示域码点，归一化防反序；CJK/整档一致性）
+    DOCTEST_CHECK(module::markdown::mdPreviewSelectionText(doc, 0, 0).empty());
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(doc, 0, 10),
+                     std::string("alpha beta"));
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(doc, 10, 0),
+                     module::markdown::mdPreviewSelectionText(doc, 0, 10));
+    const auto cpCount = [](const std::string& text) {
+        std::size_t cps = 0, i = 0;
+        while (i < text.size()) {
+            const unsigned char c = static_cast<unsigned char>(text[i]);
+            i += std::min<std::size_t>(
+                c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                text.size() - i);
+            ++cps;
+        }
+        return cps;
+    };
+    DOCTEST_CHECK_EQ(
+        module::markdown::mdPreviewSelectionText(doc, 0, cpCount(display)),
+        display);  // 全选 = 整篇显示文本
+    const std::string cjk = "中文选区\n";
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(cjk, 0, 2),
+                     std::string("中文"));  // 码点切片不产半字
+    // 矩形纵向落在文档高度域内（与 estimateHeight 排布同式）
+    const auto allRects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+        doc, kWidth, style, 0, cpCount(display));
+    const float docH =
+        components::MarkdownBuilder::estimateHeight(doc, kWidth, style);
+    for (const auto& r : allRects) {
+        DOCTEST_CHECK(r.y >= -0.5f);
+        DOCTEST_CHECK(r.y + r.h <= docH + style.blockGap + 1.0f);
+    }
+
+    // ④ 与右键「复制本段」语义并存：源文含标记符、选区文本是显示态（无标记）
+    const std::string marked = "正文 **粗** 体\n";
+    const std::string markedDisplay =
+        components::MarkdownBuilder::displayTextOf(marked);
+    DOCTEST_CHECK(markedDisplay.find("**") == std::string::npos);
+    DOCTEST_CHECK(marked.find("**") != std::string::npos);  // 右键复制块源文
+    const auto blocks = module::markdown::segmentMarkdownBlocks(marked);
+    DOCTEST_REQUIRE(!blocks.empty());
+    const std::string blockSrc =
+        marked.substr(blocks.front().start, blocks.front().end - blocks.front().start);
+    DOCTEST_CHECK(blockSrc.find("**") != std::string::npos);
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(
+                         marked, 0, cpCount(markedDisplay)),
+                     markedDisplay);
+    return true;
+})
+
 // 源码守卫（只读断言）
 // 与 tests/test_core/test_result.cpp 的源码护栏同款：靠 cwd 上溯定位仓库根，**不**用
 // __FILE__（ccache 会把绝对路径相对化）；定位 / 取体失败一律大声失败，不静默绿。

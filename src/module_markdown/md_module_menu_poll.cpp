@@ -504,6 +504,16 @@ void MarkdownModule::drawEditorContextMenu(eui::Ui& ui,
         .build();
 }
 
+// need550：预览复制单点（右键菜单 / 拖选松手 / Ctrl+C 共用本路径）。
+// setClipboardText 无返回值 → 留痕（回读校验空口，notepad 先例）。
+void MarkdownModule::copyPreviewText(const std::string& text,
+                                     const std::string& what) {
+    if (text.empty()) return;
+    core::window::setClipboardText(text);
+    LOG_INFO("预览复制: " + what + " " + std::to_string(text.size()) + " 字节");
+    showToast("已复制到剪贴板", what, false);
+}
+
 // bug547：预览区渲染文本无选区 API（框架 selection 面仅 components::input），
 // 复制契约 = 块右键菜单（本段 / 全文 Markdown 源文）。右键块源文在开菜单时
 // 快照，菜单选择复制快照（开菜单期间文档可能被外部重载，快照语义更稳）。
@@ -543,15 +553,8 @@ void MarkdownModule::drawPreviewContextMenu(
         .onSelect([this](int index) {
             const std::string text =
                 index == 0 ? previewCtxText_ : editorText_;
-            if (text.empty()) return;
-            core::window::setClipboardText(text);
-            // setClipboardText 无返回值 → 留痕（回读校验空口，notepad 先例）
-            LOG_INFO("预览复制: " + std::string(index == 0 ? "本段" : "全文") +
-                     " " + std::to_string(text.size()) + " 字节");
-            showToast("已复制到剪贴板",
-                      index == 0 ? "本段 Markdown 源文"
-                                 : "全文 Markdown 源文",
-                      false);
+            copyPreviewText(text, index == 0 ? "本段 Markdown 源文"
+                                             : "全文 Markdown 源文");
         })
         .onOpenChange([this](bool v) { previewCtxOpen_ = v; })
         .build();
