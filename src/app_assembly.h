@@ -126,10 +126,10 @@ bool secondInstancePathsNeedMainWindow(const std::vector<std::string>& paths);
 // 测试缝：清队列 + 摘漏斗（用例间隔离）
 void resetSecondInstanceFilesForTest();
 
-// OS 打开漏斗（need:273 记事本改造）：清单扩展名 → 独立记事本窗（查重聚焦/新窗
-// 在 session 层内收）；未注册 → navigateTo(Home)。notesDir 参数保留 = 签名不变
-//（OS 双击不再拷贝进笔记目录，captureFileIntoNotesDir 语义废止；应用内笔记
-// "open:" 通道不经漏斗、零影响）
+// OS 打开漏斗（need:273 记事本改造）：清单扩展名（含 .md/.markdown，bug:544 回
+// 记事本窗）→ 独立记事本窗（查重聚焦/新窗在 session 层内收）；未注册 →
+// navigateTo(Home)。notesDir 参数保留 = 签名不变，当前实现不用（OS 双击不拷贝进
+// 笔记目录；应用内笔记 "open:" 通道不经漏斗、零影响）
 void dispatchFileOpen(::core::Router* router, const std::string& path,
                       const std::filesystem::path& notesDir);
 
