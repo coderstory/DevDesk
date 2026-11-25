@@ -7,6 +7,7 @@ add_library(devdesk_module_terminal STATIC
     terminal_metrics.cpp
     terminal_search.cpp
     terminal_settings.cpp
+    terminal_dir_menu.cpp
 )
 
 # need#490 网页终端源清单独立成文件：该清单在 W1–W7 多波并行改动中反复制造
