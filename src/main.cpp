@@ -36,6 +36,7 @@
 #include "module_release/release_schedule_source.h"
 #include "module_release/release_store.h"
 #include "module_schedule/channel_registry.h"
+#include "module_schedule/db_backup_watcher.h"
 #include "module_schedule/schedule_module.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_wallpaper/wallpaper_module.h"
@@ -472,6 +473,8 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
         app::toggle::setReminderPopupHandler(&module::release::setReminderAutoPopup);
         // 第四桥：会话内拨「调度全屏弹窗」开关 → schedule 渠道开关即时生效
         app::toggle::setFullscreenPopupHandler(&module::schedule::setFullscreenPopupEnabled);
+        // 第五桥：会话内拨「数据库自动备份」开关 → schedule 侧小时备份开关即时生效
+        app::toggle::setHourlyBackupHandler(&module::schedule::setHourlyDbBackupEnabled);
         // M-3：frosted 降级门控的 active 档回查缝（surfaceAlpha 读，桥见上）
         core::window_effect_state::setActiveTierProvider(&activeWindowEffectTier);
         // 托盘壁纸桥：handler 捕获-less 直引本函数静态 wallpaper（moduleForPage 同款
@@ -1259,6 +1262,8 @@ const DslAppConfig& dslAppConfig() {
         // 写入进程级状态，release 引擎首 tick 即按开关行事
         module::release::setReminderAutoPopup(settingsCfg.releaseReminderPopup);
         module::schedule::setFullscreenPopupEnabled(settingsCfg.fullscreenPopup);
+        // 数据库每小时自动备份开关（need455，默认开）：schedule 模块 onStart 前注入
+        module::schedule::setHourlyDbBackupEnabled(settingsCfg.hourlyBackupEnabled);
         app::setSidebarCollapsed(settingsCfg.sidebarCollapsed, false);
         getRouter();
         // 桌宠模块已于 2026-10-13 整模块摘除（分支 feat/remove-pet-module）

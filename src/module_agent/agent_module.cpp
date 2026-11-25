@@ -317,10 +317,8 @@ AgentModule::~AgentModule() {
         if (draftJob_->thread.joinable()) draftJob_->thread.join();
         draftJob_.reset();
     }
-    // OS 通知发送线程同口径收尾（onStop 漏调时的兜底，同款 terminate 风险）
-    for (auto& item : notifySends_) {
-        if (item->thread.joinable()) item->thread.join();
-    }
+    // OS 通知常驻 worker 同口径收尾（onStop 漏调时的兜底，同款 terminate 风险）
+    stopNotifyWorker();
 }
 
 void AgentModule::onStart() {
@@ -435,18 +433,9 @@ void AgentModule::onStop() {
         if (draftJob_->thread.joinable()) draftJob_->thread.join();
         draftJob_.reset();
     }
-    // OS 通知发送线程收尾：等在飞的 send 结束（一次性，最坏 ≈ 后端阻塞上限），
-    // 不留线程越过本函数——unique_ptr 析构遇 joinable thread 会 terminate
-    {
-        std::vector<std::unique_ptr<NotifySend>> pending;
-        {
-            std::lock_guard<std::mutex> lock(notifySendsMu_);
-            pending.swap(notifySends_);
-        }
-        for (auto& item : pending) {
-            if (item->thread.joinable()) item->thread.join();
-        }
-    }
+    // OS 通知常驻 worker 收尾：置停止 + join（在飞的一条至多等到 send 返回），剩余
+    // 队列项直接丢弃——退出期 best-effort，不留线程越过本函数（joinable thread 析构会 terminate）
+    stopNotifyWorker();
     draftDialogOpen_ = false;
     draftPhase_ = DraftPhase::Idle;
     draftInput_.clear();

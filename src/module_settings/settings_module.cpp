@@ -156,6 +156,11 @@ const CardSpec kCardSpecs[] = {
      0.0f, false, /*half=*/true, &drawNotepadAssocCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
+    // 数据库自动备份卡（need455）：固定高、单开关行；日志 tab 的查看卡是
+    // FillRemainder，本卡只压缩查看区、不产生页级滚动（通用/模块 tab 已贴预算上限）。
+    {kTabLog, "settings.card.backup", nullptr, CardHeightKind::Fixed,
+     kDatabaseBackupCardHeight, false, /*half=*/false, &drawDatabaseBackupCard,
+     nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
      0.0f, false, /*half=*/false, &drawLogViewCard, nullptr},
     {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::GithubSync,
@@ -488,6 +493,18 @@ public:
         LOG_INFO("Settings: fullscreenPopup → " +
                  std::string(on ? "true" : "false"));
         app::toggle::notifyFullscreenPopupSetting(on);
+    }
+
+    // 「数据库自动备份」开关（need455，默认开）：落库后经第五桥转发 schedule 侧
+    // 进程级开关，会话内即时生效（桥未装配 = 启动早期/测试环境，落库为主、无转发）。
+    void applyHourlyBackup(bool on) {
+        cfg_.hourlyBackupEnabled = on;
+        persist();
+        setStatus(on ? "数据库自动备份已开启（即时生效）"
+                     : "数据库自动备份已关闭（即时生效）");
+        LOG_INFO("Settings: hourlyBackupEnabled → " +
+                 std::string(on ? "true" : "false"));
+        app::toggle::notifyHourlyBackupSetting(on);
     }
 
     // 「开机自启动」开关（UAT6）：先写平台注册项（Windows HKCU Run / macOS
@@ -1768,6 +1785,7 @@ private:
         a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
         a.applyReminderPopup = [this](bool on) { applyReminderPopup(on); };
         a.applyFullscreenPopup = [this](bool on) { applyFullscreenPopup(on); };
+        a.applyHourlyBackup = [this](bool on) { applyHourlyBackup(on); };
         a.applyProxyPort = [this] { applyProxyPort(); };
         a.setProxyPortDraft = [this](const std::string& v) {
             setProxyPortDraft(v);

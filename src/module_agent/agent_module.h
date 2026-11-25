@@ -5,8 +5,10 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <ctime>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -28,6 +30,8 @@
 #include "module_agent/task_draft.h"
 #include "module_agent/task_draft_job.h"
 #include "module_agent/tool_info.h"
+
+#include "platform/notification.h"
 
 #include <components/theme.h>
 #include <ui_kit/toast.h>
@@ -72,6 +76,13 @@ std::vector<int64_t> detectRunEndNotifications(
 // 不会再被观测到（快照只取最近 N 条 run，更老的 run 回不来），剔除不改通知语义。
 void pruneNotifiedRunIds(const std::map<int64_t, std::string>& window,
                          std::set<int64_t>& notifiedRunIds);
+
+// 测试缝（debt541）：让接下来 count 次通知 worker 线程创建失败（模拟 MinGW CreateThread
+// 资源耗尽）；队列保留、pollRunEnd 下一帧重试。生产路径零调用
+void failNextNotifyWorkerSpawnsForTest(int count);
+// 测试缝（debt541）：让接下来 count 次通知发送直接返回 Result::fail（facade 正常内容
+// 不可达的失败分支）；worker 回队重试。生产路径零调用
+void failNextNotifySendsForTest(int count);
 
 // 时长秒 → 紧凑中文 / 状态中文 / 各时间格式化已迁 module_agent/agent_time_text.h
 //（详情弹窗 P2，spec §11；本头文件不再声明时间文案 helper）。
@@ -135,6 +146,8 @@ public:
     void setDialogIterDraft(int iter);
     // 测试缝：兜底轻查询已执行次数（节流断言用——同窗口多帧只允许一次轻查询）
     int64_t runFallbackChecksForTest() const { return runFallbackChecks_; }
+    // 测试缝（debt541）：通知队列待发条数——worker 线程创建失败时断言「留队不丢」
+    size_t pendingNotifyCountForTest();
     // 测试缝：refreshData 已执行次数（常规轮询节流 / 双刷收敛断言用）
     int64_t refreshCountForTest() const { return refreshCount_; }
     // 测试缝：直接置页内轮询态（无头环境起不了 in-app run，双刷收敛路径需显式构造）
@@ -311,25 +324,41 @@ private:
     // runs_（erase 即亡），裸指针逃出 runsMu_ 后再解引用就是 use-after-free——
     // 停止/查询面一律「锁内找到、锁内用完」，不把 ActiveRun* 带出锁边界
     bool hasActiveRun(int64_t taskId);
-    // 收割已完成的 OS 通知发送线程（M2）：只收 done 的（join 立即返回，不堵帧）；
-    // 在飞的留下帧再收。仅主线程调用（pollRunEnd 每帧；onStop/析构走全量 drain join）
-    void reapNotifySends();
+    // 通知出站队列每帧服务（debt541）：排空投递记账（worker → notifiedRunIds_）+
+    // 队列非空且 worker 不在时补建（线程创建失败不丢通知，下一帧重试）。仅主线程调用
+    void serviceNotifyQueue();
+    // 懒建常驻 worker（队列非空才起）；创建失败返回 false，调用方留队下帧重试
+    bool ensureNotifyWorker();
+    // worker 主循环：FIFO 逐条消费；发送失败回队首重试（单条上限 kMaxNotifySendAttempts）
+    void notifyWorkerLoop();
+    // 停 worker（onStop/析构）：置停止、唤醒、join；剩余队列项直接丢弃（退出期 best-effort）
+    void stopNotifyWorker();
+    // 终态迁移入队（refreshData 检测侧）：有界队列（超限丢最旧），入队后立即尝试起 worker
+    void enqueueRunEndNotification(int64_t runId, std::string title, std::string body);
     // run 线程表：主线程写；mutex 为纵深防御（现调用点全在主线程）
     std::mutex runsMu_;
     std::vector<std::unique_ptr<ActiveRun>> runs_;
     // 收尾写库失败的 runId（FinishFailureFn 回报，run 线程写）；判停必须排除，与 runs_ 同用 runsMu_
     std::set<int64_t> orphanedRunIds_;
 
-    // 一次 OS 系统通知的后台发送（M2）：send 的授权检查在 macOS 未决期可阻塞 ≤1s，
-    // 不得在 UI 主线程直调。worker 只摸值拷贝的 Notification 与自己的 done 原子，
-    // 不碰任何模块成员；join 纪律同 T7b DraftJob——reap 只收 done 的，onStop/析构
-    // 全量 join（先于成员析构，不用 detach，不留退出期悬垂线程）
-    struct NotifySend {
-        std::thread thread;
-        std::atomic<bool> done{false};
+    // 一次 OS 系统通知的待发项（debt541）：常驻单 worker 消费，不再按条新建线程——
+    // MinGW CreateThread 资源紧张时线程创建失败曾导致通知静默丢弃。send 的授权检查
+    // 在 macOS 未决期可阻塞 ≤1s，只在 worker 线程调用，不占 UI 主线程。
+    // Notification 是值拷贝；attempts 只在 worker 侧（持有队内元素期间）读写
+    struct NotifyJob {
+        int64_t runId = 0;
+        platform::notify::Notification notification;
+        int attempts = 0;
     };
-    std::mutex notifySendsMu_;
-    std::vector<std::unique_ptr<NotifySend>> notifySends_;
+    std::mutex notifyQueueMu_;   // 保护下面队列与投递记账（主线程 + worker 共享）
+    std::condition_variable notifyQueueCv_;
+    std::deque<NotifyJob> notifyQueue_;
+    // worker → 主线程的投递记账：成功投递（或重试耗尽）才入此表，主线程
+    // serviceNotifyQueue 排空进 notifiedRunIds_——去重账只在投递有结论后记，失败项留队重试
+    std::vector<int64_t> notifyDeliveredRunIds_;
+    std::thread notifyWorker_;                  // 常驻单 worker（懒建；onStop/析构 join）
+    bool notifyWorkerStop_ = false;             // 停止请求（持 notifyQueueMu_ 读写）
+    bool notifySpawnErrorLogged_ = false;       // 持续创建失败只首条 ERROR，防帧驱动刷日志
 
     // compose 数据缓存（仅主线程读写）
     std::vector<AgentTaskRow> tasks_;

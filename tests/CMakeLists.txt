@@ -256,6 +256,8 @@ add_executable(devdesk_tests
     test_modules/test_schedule_ui_list.cpp
     # need453 待办到期提醒：到期投递/同截止去重/完成归档排除/节流/单轮上限下轮补投
     test_modules/test_todo_due_watcher.cpp
+    # need455 每小时整点数据库备份：跨点触发/不足一小时不备/保留份数裁剪/开关/失败路径
+    test_modules/test_db_backup_watcher.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp

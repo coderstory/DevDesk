@@ -8,7 +8,9 @@
 #include "core/logging.h"
 #include "core/theme.h"
 #include "core/time.h"
+#include "core/paths.h"
 #include "module_schedule/channel_registry.h"
+#include "module_schedule/db_backup_watcher.h"
 #include "module_schedule/schedule_engine.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
@@ -30,8 +32,9 @@ struct ScheduleModule::Impl {
     std::shared_ptr<::core::ITool> runsTool_;
     std::unique_ptr<ChannelRegistry> channels;
     std::unique_ptr<ScheduleProviderRegistry> providers;
-    // 引擎 tick 钩子指向它 → 必须先于引擎析构
+    // 引擎 tick 钩子指向它们 → 必须先于引擎析构
     std::unique_ptr<TodoDueWatcher> dueWatcher;
+    std::unique_ptr<DbBackupWatcher> dbBackupWatcher;
     // 引擎持有 store 的 DB 连接与 channels 的引用，声明放最后 = 最先析构；
     // listUi 持有 engine->taskRegistry() 指针（编辑弹窗 run_task 下拉用），
     // 必须先于引擎析构 → 声明在 engine 之后。
@@ -78,8 +81,14 @@ void ScheduleModule::onStart() {
     impl_->engine = std::make_unique<ScheduleEngine>(*db, *impl_->channels);
     // 待办到期扫描挂同一 1Hz 泵（引擎 tick 末、渠道 flush 前）
     impl_->dueWatcher = std::make_unique<TodoDueWatcher>(*db, *impl_->channels);
-    impl_->engine->setTickHook(
-        [watcher = impl_->dueWatcher.get()](int64_t now) { watcher->tick(now); });
+    // 小时备份挂同一泵（need455）：复用在线的 createBackup，失败只记日志
+    impl_->dbBackupWatcher =
+        std::make_unique<DbBackupWatcher>(::core::paths::sqliteDbFile());
+    impl_->engine->setTickHook([due = impl_->dueWatcher.get(),
+                                backup = impl_->dbBackupWatcher.get()](int64_t now) {
+        due->tick(now);
+        backup->tick(now);
+    });
     impl_->listUi =
         std::make_unique<ScheduleListUi>(*impl_->store, *impl_->providers,
                                          &impl_->engine->taskRegistry(),
@@ -102,6 +111,7 @@ void ScheduleModule::onStop() {
     impl_->engine->stop();
     impl_->engine.reset();
     impl_->dueWatcher.reset();
+    impl_->dbBackupWatcher.reset();
     impl_->listUi.reset();
     impl_->channels.reset();
     impl_->store.reset();

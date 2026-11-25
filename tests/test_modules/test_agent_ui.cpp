@@ -156,12 +156,15 @@ struct OsNotifySpy : platform::notify::Backend {
     std::string lastBody;
     int lastLevel = -1;
     std::thread::id senderId{};
+    // 全部发送 id（按发送顺序）：debt541 队列保序断言用；写同样在 fetch_add 之前
+    std::vector<std::string> ids;
     core::Result<platform::notify::Status> send(
         const platform::notify::Notification& n) override {
         lastId = n.id;
         lastBody = n.body;
         lastLevel = static_cast<int>(n.level);
         senderId = std::this_thread::get_id();
+        ids.push_back(n.id);
         sendCalls.fetch_add(1, std::memory_order_release);
         return core::Result<platform::notify::Status>::ok(
             platform::notify::Status::Accepted);
@@ -3580,15 +3583,10 @@ REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
               "agent_ui: run 失败 → OS 系统通知恰一次（id 前缀 agent-run-、正文含任务名、level=Error）", {
     // bug207 授权前置探测：同 agent_ui_run_completed_silent_no_toast——真实通道
     // 不可用（macOS 裸二进制恒 Unknown / 未决 / 被拒）诚实 skip，可用则断言原样。
-    // bug214 补第二维度：MinGW runner std::thread 间歇创建失败（std::system_error）
-    // → NotifySend 后台发送线程创建失败即静默丢弃（agent_module_schedule.cpp 通知
-    // best-effort 口径，无重试），「OS 恰一次」断言依赖后台线程必然落地，在 runner
-    // 上不可靠 → 与 stop-flow 用例同口径诚实 skip。守卫放行时断言原样，语义不变。
-    if (!platform::notify::channelUsableForTest() ||
-        !agentThreadCreationReliableUnderMinGW()) {
-        DOCTEST_SKIP("OS 通知通道不可用（macOS 裸二进制无法查询授权/未决/被拒），"
-                     "或 MinGW runner std::thread 间歇创建失败 → 后台 OS 发送线程可能被丢弃，"
-                     "恰一次断言不可靠");
+    // debt541 撤 MinGW 线程守卫：发送已改常驻 worker + 队列，线程创建失败留队并由
+    // 等待循环里的 pollRunEnd 下一帧重试，「恰一次」断言不再依赖首次创建必成功。
+    if (!platform::notify::channelUsableForTest()) {
+        DOCTEST_SKIP("OS 通知通道不可用（macOS 裸二进制无法查询授权/未决/被拒）");
     }
     test_support::TestDb tdb("agentui", "sysnotify");
     test_support::FakeProfileSource profile;
@@ -3640,6 +3638,8 @@ REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
     // 窗口 1500 迭代（CI 慢化 2-10×，池203：8375ms 耗尽 500 预算的 flake 实证）
     bool osSent = false;
     for (int i = 0; i < 1500 && !osSent; ++i) {
+        // debt541：驱动装配层每帧路径——worker 创建失败时下一帧补建重试
+        mod.pollRunEnd();
         osSent = spy.sendCalls.load(std::memory_order_acquire) >= 1;
         if (!osSent) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -3922,6 +3922,9 @@ REGISTER_TEST(agent_run_end_fallback_cold_start,
     mod.pollRunEnd();
     bool osSent = false;
     for (int i = 0; i < 500 && !osSent; ++i) {
+        // debt541：装配层每帧路径照跑——通知 worker 线程创建失败时下一帧补建并投递，
+        // 断言不再依赖「后台线程首次创建必成功」的运气（原窄等窗口保留，确定性由重试给出）
+        mod.pollRunEnd();
         osSent = spy.sendCalls.load(std::memory_order_acquire) >= 1;
         if (!osSent) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -3932,6 +3935,199 @@ REGISTER_TEST(agent_run_end_fallback_cold_start,
     platform::notify::setBackendForTest(nullptr);
     platform::notify::resetForTest();
 
+    mod.onStop();
+    return true;
+})
+
+// debt541 C 案：通知发送改「常驻单 worker + 队列」——worker 线程创建失败不再静默丢通知：
+// 待发项留队，pollRunEnd 下一帧 serviceNotifyQueue 补建 worker 并投递。注入 seam 模拟
+// MinGW CreateThread 资源耗尽（bug473 的 CI flake 根因链）。
+REGISTER_TEST(agent_notify_worker_spawn_failure_retries,
+              "agent_ui: 通知 worker 线程创建失败 → 留队不丢，下一帧重试投递恰一次", {
+    test_support::TestDb tdb("agentui", "notifyretry");
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("重试任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    int64_t clockSec = 5000;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.schedulerNow = [&clockSec] { return clockSec; };
+    module::agent::AgentModule mod(deps);
+    platform::notify::resetForTest();
+    OsNotifySpy spy;
+    platform::notify::setBackendForTest(&spy);
+    mod.onStart();
+    mod.pollRunEnd();   // 排干 onStart 的 tasksDirty_
+
+    auto runId = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(runId.isOk());
+    mod.pollRunEnd();   // 兜底轻查询命中 → 捕获 running
+    DOCTEST_REQUIRE(store.finishRun(runId.value(), "failed", 1,
+                                    std::optional<int64_t>{},
+                                    std::optional<int64_t>{}, "spawn probe").isOk());
+
+    // 注入 1 次线程创建失败：迁移帧入队后起 worker 失败 → 通知必须仍在队列（不静默丢）
+    module::agent::failNextNotifyWorkerSpawnsForTest(1);
+    clockSec += 1;      // 跨过常规轮询 1s 闸
+    mod.pollRunEnd();
+    DOCTEST_CHECK_EQ(mod.pendingNotifyCountForTest(), static_cast<size_t>(1));
+    DOCTEST_CHECK_MESSAGE(spy.sendCalls.load(std::memory_order_acquire) == 0,
+                          "worker 创建失败帧不应有发送");
+
+    // 下一帧：serviceNotifyQueue 补建 worker → 后台投递落地恰一次
+    clockSec += 1;
+    mod.pollRunEnd();
+    bool osSent = false;
+    for (int i = 0; i < 300 && !osSent; ++i) {
+        osSent = spy.sendCalls.load(std::memory_order_acquire) >= 1;
+        if (!osSent) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(osSent, "线程创建失败后下一帧重试仍未投递（通知被静默丢弃）");
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);
+    DOCTEST_CHECK_MESSAGE(spy.senderId != std::this_thread::get_id(),
+                          "通知发送落在 UI 主线程（后台化失效）");
+    DOCTEST_CHECK_EQ(spy.lastId, "agent-run-" + std::to_string(runId.value()));
+    DOCTEST_CHECK_EQ(mod.pendingNotifyCountForTest(), static_cast<size_t>(0));
+
+    platform::notify::setBackendForTest(nullptr);
+    platform::notify::resetForTest();
+    mod.onStop();
+    return true;
+})
+
+// debt541：队列多通知按迁移检测序（runId 升序）逐条投递；failed/limited 必响、
+// completed 静默、同一 runId 恰一次——用户可见语义与旧实现一致
+REGISTER_TEST(agent_notify_queue_order_and_silent_completed,
+              "agent_ui: 通知队列保序投递（failed/limited 响、completed 静默、同 runId 恰一次）", {
+    test_support::TestDb tdb("agentui", "notifyorder");
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskA = store.createTask("失败任务甲", "直接回复完成，不调用任何工具",
+                                   "manual", "default", 10, false);
+    auto taskB = store.createTask("受限任务乙", "直接回复完成，不调用任何工具",
+                                   "manual", "default", 10, false);
+    auto taskC = store.createTask("成功任务丙", "直接回复完成，不调用任何工具",
+                                   "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskA.isOk() && taskB.isOk() && taskC.isOk());
+
+    int64_t clockSec = 5000;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.schedulerNow = [&clockSec] { return clockSec; };
+    module::agent::AgentModule mod(deps);
+    platform::notify::resetForTest();
+    OsNotifySpy spy;
+    platform::notify::setBackendForTest(&spy);
+    mod.onStart();
+    mod.pollRunEnd();   // 排干 onStart 的 tasksDirty_
+
+    // runId 升序 = 起跑顺序：甲 failed、乙 limited、丙 completed
+    auto runA = store.startRun(taskA.value());
+    auto runB = store.startRun(taskB.value());
+    auto runC = store.startRun(taskC.value());
+    DOCTEST_REQUIRE(runA.isOk() && runB.isOk() && runC.isOk());
+    mod.pollRunEnd();   // 兜底轻查询命中 → 捕获三条 running
+    DOCTEST_REQUIRE(store.finishRun(runA.value(), "failed", 1,
+                                    std::optional<int64_t>{},
+                                    std::optional<int64_t>{}, "order probe").isOk());
+    DOCTEST_REQUIRE(store.finishRun(runB.value(), "limited", 1,
+                                    std::optional<int64_t>{},
+                                    std::optional<int64_t>{}, "order probe").isOk());
+    DOCTEST_REQUIRE(store.finishRun(runC.value(), "completed", 1,
+                                    std::optional<int64_t>{},
+                                    std::optional<int64_t>{}, "order probe").isOk());
+
+    clockSec += 1;
+    mod.pollRunEnd();   // 迁移帧：甲/乙 入队（升序），丙静默
+    bool done = false;
+    for (int i = 0; i < 300 && !done; ++i) {
+        done = spy.sendCalls.load(std::memory_order_acquire) >= 2;
+        if (!done) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(done, "两条终态通知未在窗口内投递");
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 2);
+    DOCTEST_CHECK_MESSAGE(spy.ids.size() == 2 &&
+                              spy.ids[0] == "agent-run-" + std::to_string(runA.value()) &&
+                              spy.ids[1] == "agent-run-" + std::to_string(runB.value()),
+                          "队列未按 runId 升序投递（实测第 1/2 条: " +
+                              (spy.ids.size() > 0 ? spy.ids[0] : std::string("<无>")) + " / " +
+                              (spy.ids.size() > 1 ? spy.ids[1] : std::string("<无>")) + ")");
+    DOCTEST_CHECK_MESSAGE(spy.lastBody.find("受限任务乙") != std::string::npos,
+                          "limited 通知正文不含任务名，实测: " + spy.lastBody);
+    DOCTEST_CHECK_EQ(spy.lastLevel,
+                     static_cast<int>(platform::notify::Level::Error));
+
+    // 后续轮询不回弹：同 runId 恰一次（completed 从未发送）
+    clockSec += 1;
+    mod.pollRunEnd();
+    clockSec += 1;
+    mod.pollRunEnd();
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 2);
+    DOCTEST_CHECK_MESSAGE(!mod.takeRunEndNotice().has_value(),
+                          "终态迁移不得入应用内队列（bug161 去双重）");
+
+    platform::notify::setBackendForTest(nullptr);
+    platform::notify::resetForTest();
+    mod.onStop();
+    return true;
+})
+
+// debt541：发送 Result::fail（facade 失败分支）→ 回队首重试，最终投递成功且不重复
+REGISTER_TEST(agent_notify_send_failure_retries,
+              "agent_ui: 通知发送失败 → 回队重试后投递成功（不丢、不重复）", {
+    test_support::TestDb tdb("agentui", "notifysendfail");
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("发送失败任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    int64_t clockSec = 5000;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.schedulerNow = [&clockSec] { return clockSec; };
+    module::agent::AgentModule mod(deps);
+    platform::notify::resetForTest();
+    OsNotifySpy spy;
+    platform::notify::setBackendForTest(&spy);
+    mod.onStart();
+    mod.pollRunEnd();   // 排干 onStart 的 tasksDirty_
+
+    auto runId = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(runId.isOk());
+    mod.pollRunEnd();   // 捕获 running
+    DOCTEST_REQUIRE(store.finishRun(runId.value(), "failed", 1,
+                                    std::optional<int64_t>{},
+                                    std::optional<int64_t>{}, "send probe").isOk());
+
+    module::agent::failNextNotifySendsForTest(1);   // 首发失败 → 回队首重试
+    clockSec += 1;
+    mod.pollRunEnd();
+    bool osSent = false;
+    for (int i = 0; i < 300 && !osSent; ++i) {
+        osSent = spy.sendCalls.load(std::memory_order_acquire) >= 1;
+        if (!osSent) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(osSent, "发送失败后重试仍未投递（通知被丢弃）");
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);
+    DOCTEST_CHECK_EQ(spy.lastId, "agent-run-" + std::to_string(runId.value()));
+    DOCTEST_CHECK_EQ(mod.pendingNotifyCountForTest(), static_cast<size_t>(0));
+
+    clockSec += 1;
+    mod.pollRunEnd();
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);   // 重试成功不回弹
+
+    platform::notify::setBackendForTest(nullptr);
+    platform::notify::resetForTest();
     mod.onStop();
     return true;
 })

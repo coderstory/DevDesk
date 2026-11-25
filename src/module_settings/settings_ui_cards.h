@@ -1,5 +1,5 @@
 // src/module_settings/settings_ui_cards.h
-// settings 模块 6 张卡的绘制单元（+ GitHub Sync 卡在 github_sync_card.h，共 7 卡），
+// settings 模块 7 张卡的绘制单元（+ GitHub Sync 卡在 github_sync_card.h，共 8 卡），
 // 全部是自由函数：吃只读入参（SettingsCardsIn）与回调（SettingsCardActions），
 // 不捕获 this、不写模块成员。
 // 回调约定：卡片在元素回调里按值捕获用到的 std::function（`[f = a.xxx]`），不捕获
@@ -118,6 +118,7 @@ struct SettingsCardActions {
     std::function<void(bool)> applyAutostartEnabled;          // 开机自启动开关（UAT6）
     std::function<void(bool)> applyReminderPopup;             // 上线提醒弹窗开关（默认关）
     std::function<void(bool)> applyFullscreenPopup;           // 调度全屏弹窗开关（默认关）
+    std::function<void(bool)> applyHourlyBackup;              // 数据库每小时自动备份开关（need455，默认开）
     std::function<void(bool)> applyFluidBackgroundEnabled;   // 动态背景开关（UAT6 活体流质）
     std::function<void(bool)> applyHomeAnimEnabled;           // need506 留白动画开关
     std::function<void(bool)> applyNotepadAssocEnabled;      // 记事本文件关联开关（F-18）
@@ -185,5 +186,6 @@ void drawMcpCard(const CardDrawArgs& args);          // 通用：MCP 服务（kM
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别
 void drawLogViewCard(const CardDrawArgs& args);      // 日志：tail 查看
 void drawReminderCard(const CardDrawArgs& args);     // 模块：上线提醒弹窗开关（默认关）
+void drawDatabaseBackupCard(const CardDrawArgs& args);  // 日志：每小时数据库自动备份开关（need455）
 
 } // namespace module::settings

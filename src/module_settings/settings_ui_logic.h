@@ -134,6 +134,8 @@ inline bool settingsCardsNarrow(float contentW) {
     return contentW < kHalfPairStackBreakpoint;
 }
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
+// 数据库备份卡（日志 tab，need455；单开关行）：标题 16-38 / 说明 40-56 / 行 64-92 + 16 下边距
+inline constexpr float kDatabaseBackupCardHeight = 108.0f;
 // GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + H28 间距令牌恢复）：
 // 卡高由最坏行序决定——H28 后（100% 档，设计系统 v1.0 令牌 4/8/12/16）：
 // 头部（上留白 16 + 标题 20 + 4 + 摘要 16 + 8 + 启用行 24 + 8 + 自动推送行 24

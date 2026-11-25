@@ -3881,6 +3881,7 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
         const std::vector<std::string> wantLog = {
             "settings.card.log",
+            "settings.card.backup",
             "settings.tab.log"};
         const auto t2 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t2 == wantLog, "日志 tab 实测：" + join(t2));

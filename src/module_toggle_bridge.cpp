@@ -63,6 +63,21 @@ void notifyFullscreenPopupSetting(bool on) {
     g_fullscreenPopupHandler(on);
 }
 
+// 第五桥：数据库自动备份开关缝，形态与第四桥同款。
+namespace { HourlyBackupHandler g_hourlyBackupHandler = nullptr; }
+
+void setHourlyBackupHandler(HourlyBackupHandler handler) {
+    g_hourlyBackupHandler = handler;
+}
+
+void notifyHourlyBackupSetting(bool on) {
+    if (g_hourlyBackupHandler == nullptr) {
+        LOG_WARN("数据库自动备份桥未装配（启动早期/测试环境），跳过");
+        return;
+    }
+    g_hourlyBackupHandler(on);
+}
+
 }  // namespace app::toggle
 
 // 动态背景桥（UAT6 主窗活体流质）：settings_module.cpp 前置声明 ::app::setFluidBackgroundEnabled，
