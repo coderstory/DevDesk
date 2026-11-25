@@ -5,8 +5,11 @@
 
 #include "core/database.h"
 #include "core/logging.h"
+#include "core/router.h"  // home_anim::pumpWanted：当前页==Home 判定
 #include "core/theme.h"
 #include "core/window_effect_state.h"  // bug274：晕层 alpha 按窗口效果档位
+#include "home_anim_bridge.h"          // need506：首页动画配置缝实现 TU
+#include "platform/reduced_motion.h"   // home_anim::reducedMotion 平台查询
 #include "platform/window_visibility.h"  // 主窗可见态（平台接口隔离，业务层零 Win32）
 #include "settings_config.h"
 
@@ -64,7 +67,8 @@ constexpr int kFluidPumpPeriodMs = 50;  // 20fps（老板定值）
 struct FluidPump {
     std::mutex m;
     std::condition_variable cv;
-    std::atomic<bool> active{false};  // atomic：compose 线程写、泵线程判读，跨线程语义不走侥幸
+    std::atomic<bool> active{false};      // compose 线程写、泵线程判读
+    std::atomic<bool> homeActive{false};  // need506：首页动画第二帧源（与流质共用同一泵线程）
     std::atomic<bool> stop{false};
     std::thread t;
     FluidPump() : t([this] { run(); }) {}
@@ -76,13 +80,13 @@ struct FluidPump {
     void run() {
         std::unique_lock<std::mutex> lk(m);
         while (!stop.load(std::memory_order_relaxed)) {
-            if (!active.load(std::memory_order_relaxed)) {
-                cv.wait(lk, [this] { return active.load(std::memory_order_relaxed) || stop.load(); });
+            if (!anySource()) {
+                cv.wait(lk, [this] { return anySource() || stop.load(); });
                 continue;
             }
             if (cv.wait_for(lk, std::chrono::milliseconds(kFluidPumpPeriodMs)) ==
                 std::cv_status::timeout) {
-                if (active.load(std::memory_order_relaxed) && !stop.load()) {
+                if (anySource() && !stop.load()) {
                     // requestUiUpdate（claude 后台任务同款唤醒出口，生产验证过）：
                     // 置 ui+frame 双请求旗标并 postEmptyEvent——单 requestFrame 的
                     // 唤醒在本机 GLFW/Cocoa 上实测不生效（2026-11-07 bug#194）
@@ -92,16 +96,25 @@ struct FluidPump {
         }
     }
     void setActive(bool a) {
-        if (active.exchange(a) == a) return;  // compose 每帧都调：值不变零 notify
-        ::core::platform::setFramePacerActive(a);  // EUI 主循环空闲限时等待的开关（见 glfw_app_main）
+        if (active.exchange(a) == a && homeActive.load() == homeActive.load()) return;
+        ::core::platform::setFramePacerActive(anySource());  // EUI 主循环空闲限时等待的开关（见 glfw_app_main）
         cv.notify_all();
     }
+    // 首页档帧源旗标：compose 每帧经 drawFluidBackground 转推 home_anim::pumpWanted()
+    void setHomeActive(bool a) {
+        if (homeActive.exchange(a) == a) return;  // 值不变零 notify（热路径零成本）
+        ::core::platform::setFramePacerActive(anySource());
+        cv.notify_all();
+    }
+    bool anySource() const { return active.load() || homeActive.load(); }
     bool isActive() const { return active.load(std::memory_order_relaxed); }
+    bool isHomeActive() const { return homeActive.load(std::memory_order_relaxed); }
 };
 FluidPump& fluidPump() {
     static FluidPump p;
     return p;
 }
+
 
 // 浅色档三色轮替（同族不同明度）：流质晕专用（need172 §2.3「kLightHalo 同款三色
 // 口径」，自 drawFluidBackground 上提）。v2（§10.3）起侧栏收缩按钮粒子不再共用此
@@ -122,7 +135,24 @@ bool fluidWindowVisible() {
     return ::platform::window_visibility::mainWindowVisible();
 }
 
-} // namespace
+
+}  // namespace（匿名空间闭）
+
+}  // namespace app（暂闭：home_anim 是全局命名空间，桥头文件 home_anim_bridge.h 在全局域）
+
+
+
+namespace app {  // 重开：下方公共函数域
+
+// 测试缝：泵首页档源旗标 / 双源全关 / 回厂（app_sidebar.h 声明；external linkage，
+// DevDesk 与 devdesk_tests 双 TU 编译 app_fluid.cpp 均无 unused 告警）
+bool fluidPumpHomeSourceForTests() { return fluidPump().isHomeActive(); }
+bool fluidPumpIdleForTests() { return !fluidPump().anySource(); }
+void resetFluidPumpSourcesForTests() {
+    fluidPump().setActive(false);
+    fluidPump().setHomeActive(false);
+}
+
 
 // ---- 动态背景（UAT6 主窗活体流质）----
 
@@ -181,6 +211,9 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
         LOG_INFO(pumpActive ? "流质帧泵恢复（开关开 + 窗可见）"
                             : "流质帧泵挂起（开关关或窗不可见/最小化/遮挡）");
     }
+    // need506 泵合流：首页档第二帧源，每帧转推（值不变零 notify；切页/窗不可见/
+    // 档位关/减动效下一帧即停，门控常新无跨帧陈旧旗标）
+    fluidPump().setHomeActive(home_anim::pumpWanted());
     fluidPump().setActive(pumpActive);
     if (!pumpActive) return;
     const auto fpsT0 = std::chrono::steady_clock::now();  // bug#194 单帧耗时口径

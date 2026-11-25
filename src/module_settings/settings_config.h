@@ -114,6 +114,9 @@ struct SettingsConfig {
     // 关闭是给省电/静音偏好的出口（关闭 = 主窗恢复静态背景、帧泵零成本）。
     // 运行时镜像在 app 侧（app_sidebar 持有，设置页经 setFluidBackgroundEnabled 写）。
     bool fluidBackgroundEnabled = true;
+    // need506 定稿：首页留白动画组合（点阵波纹 × 打字机）开关，默认开。
+    // 运行时镜像在 home_anim 缝（home_anim_impl.cpp），设置页经 applyHomeAnimEnabled 写。
+    bool homeAnimEnabled = true;
     // Claude 代理监听端口：非法值回落默认 8888；运行中改端口自动 stop→start 重启。
     int proxyPort = kDefaultProxyPort;
     // MCP 服务监听端口：非法值回落默认 8931（与 proxyPort 同口径，不钳边界）；

@@ -104,7 +104,7 @@ inline constexpr float kAppearanceCardHeight = 226.0f;  // 外观卡（通用 | 
 // kAppearanceCardHeight 注释。
 // 85% 档卡高 156（自启动行底 139，下边距 17）/130% 档 239（行底 211，下边距 28），
 // 下边距全档 ≥16（卡内边距契约）。历史：UAT5 时 144（hint 行底 126+16）。
-inline constexpr float kEditorFontCardHeight = 184.0f;
+inline constexpr float kEditorFontCardHeight = 222.0f;  // need506 +38：通用卡增行3（首页动画 dropdown）+分隔 spacing
 // 模块插拔卡（模块 | 全宽卡内开关格，UAT4 按用户拍板撑满）：schedule 加入后
 // 开关格恒 7（markdown/todo/定时/claude/agent/memory/release）→ 4 行；
 // 2026-10-27 用户真机拍板：壁纸开关收进本卡作末格（第 8 格，废除独立全宽壁纸卡），

@@ -397,6 +397,14 @@ if(APPLE)
                 ${CORTA_GEN_DIR}/corta-exec ${CMAKE_BINARY_DIR}/corta-exec)
 endif()
 
+# need506 首页动画配置缝实现库：小 TU 独立链接——DevDesk / devdesk_tests / 探针
+#（全链 devdesk_module_home）一次到位，不把 app_fluid.cpp（带泵线程）拖进每个探针
+add_library(devdesk_home_anim STATIC src/home_anim_impl.cpp)
+target_include_directories(devdesk_home_anim PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/module_settings)
+target_link_libraries(devdesk_home_anim PUBLIC devdesk_core devdesk_platform)
+
 add_subdirectory(tests)
 
 # 主程序（app_sidebar.cpp = 侧边栏 + 根布局，app_assembly.cpp = 装配层，
@@ -445,6 +453,7 @@ eui_neo_configure_app(DevDesk KEEP_EXCEPTIONS_RTTI)
 # 上游已加豁免开关：此处传 KEEP_EXCEPTIONS_RTTI 保留宿主语言能力。**EUI-NEO 自己的
 # target 仍带 -fno-exceptions/-fno-rtti，策略未放宽**（只停止外溢给消费者）。
 target_link_libraries(DevDesk PRIVATE
+    devdesk_home_anim
     devdesk_core
     devdesk_platform
     devdesk_ui_kit

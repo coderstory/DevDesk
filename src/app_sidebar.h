@@ -82,6 +82,11 @@ void resetFluidBackgroundForTests();
 // 旧 onFrame 驱动元素已退役，树内无泵元素可断言）
 bool fluidPumpActiveForTests();
 
+// need506 首页动画（实现见 app_fluid.cpp）：泵首页档源旗标 / 双源全关查询 / 回厂
+bool fluidPumpHomeSourceForTests();
+bool fluidPumpIdleForTests();
+void resetFluidPumpSourcesForTests();
+
 // 当前侧边栏宽度 / 模块内容区宽度（compose 布局与单测共用同一真值）
 float sidebarWidth();
 float pageContentWidth(float windowWidth);

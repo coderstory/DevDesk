@@ -32,6 +32,8 @@ constexpr const char* kKeyReleaseReminderPopup = "releaseReminderPopup";
 constexpr const char* kKeyFullscreenPopup = "fullscreenPopup";
 // 动态背景（UAT6 主窗活体流质）：bool 直存；键缺失（存量库/旧版本升级）→ 默认开
 constexpr const char* kKeyFluidBackground = "fluidBackgroundEnabled";
+// need506 定稿：首页留白动画组合开关 bool 直存；键缺失（存量库）→ 默认开
+constexpr const char* kKeyHomeAnimEnabled = "homeAnimEnabled";
 constexpr const char* kKeyProxyPort = "claudeProxyPort";
 constexpr const char* kKeyMcpPort = "mcpPort";
 constexpr const char* kKeyWindowEffect = "windowEffect";
@@ -549,6 +551,13 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.fluidBackgroundEnabled = v.value().asBool();
     }
+    // need506 定稿：首页留白动画开关；缺键 → 默认开。
+    if (auto raw = readRow(kKeyHomeAnimEnabled); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyHomeAnimEnabled), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.homeAnimEnabled = v.value().asBool();
+    }
     if (auto raw = readRow(kKeyProxyPort); raw.isOk()) {
         auto v = parseRow(configKey(kKeyProxyPort), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -731,6 +740,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
          platform::json::makeBool(cfg.releaseReminderPopup)},
         {kKeyFullscreenPopup, platform::json::makeBool(cfg.fullscreenPopup)},
         {kKeyFluidBackground, platform::json::makeBool(cfg.fluidBackgroundEnabled)},
+        {kKeyHomeAnimEnabled, platform::json::makeBool(cfg.homeAnimEnabled)},
         {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
         {kKeyMcpPort, platform::json::makeInt(cfg.mcpPort)},
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},

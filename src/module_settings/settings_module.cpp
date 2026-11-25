@@ -35,7 +35,8 @@
 #include "core/tool.h"
 #include "core/component_theme.h"
 #include "platform/github_api.h"     // platform::github::ApiLogEntry（弹窗日志源；GithubApi 由同步引擎持有）
-#include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
+#include <core/platform/platform.h>
+#include "home_anim_bridge.h"  // need506：档位写运行时镜像   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/autostart.h"      // platform::autostart（开机自启动注册态回读/写入，UAT6）
 #include "platform/system_theme.h"
@@ -528,6 +529,17 @@ public:
                      : "动态背景已关闭（恢复静态背景）");
         LOG_INFO("Settings: fluidBackgroundEnabled → " +
                  std::string(on ? "true" : "false"));
+    }
+
+    // need506 定稿：留白动画开关——写运行时镜像（home_anim 缝）+ 落库 + 唤醒 compose。
+    // 即时生效：下一帧首页重画/移除；泵随 pumpWanted 自动挂/撤。
+    void applyHomeAnimEnabled(bool on) {
+        cfg_.homeAnimEnabled = on;
+        ::home_anim::setEnabled(on);
+        core::platform::requestUiUpdate();  // 唤醒下一帧 compose（撤层/恢复）
+        persist();
+        setStatus(on ? "留白动画已开启（点阵波纹 × 打字机）" : "留白动画已关闭");
+        LOG_INFO("Settings: homeAnimEnabled → " + std::string(on ? "true" : "false"));
     }
 
     // 应用代理端口（need155：反馈位在卡内说明列，机制=MCP 端口行同款；setStatus
@@ -1774,6 +1786,7 @@ private:
         a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
         a.applyAutostartEnabled = [this](bool on) { applyAutostartEnabled(on); };
         a.applyFluidBackgroundEnabled = [this](bool on) { applyFluidBackgroundEnabled(on); };
+        a.applyHomeAnimEnabled = [this](bool on) { applyHomeAnimEnabled(on); };
         a.applyNotepadAssocEnabled = [this](bool on) { applyNotepadAssocEnabled(on); };
         a.requestLogTailReload = [this] { logTailDirty_ = true; };
         a.logViewScrolled = [this](float v) { logViewScrollOffset_ = v; };

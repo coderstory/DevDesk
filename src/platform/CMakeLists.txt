@@ -14,6 +14,7 @@ add_library(devdesk_platform STATIC
     process_host.h                      # 常驻子进程托管抽象：拉起/树杀/探活（memcpp S2），实现按平台拆
     wallpaper_capability.h              # 壁纸宿主能力抽象：实现按平台拆（Windows true / 其余 false）
     window_visibility.h                 # 主窗可见态抽象：接口平台无关，实现按平台拆（_win/_macos）
+    reduced_motion.h                    # 系统减动效查询：接口平台无关，实现按平台拆（_win/_macos）
     file_open_common.cpp
     terminal_launch_common.cpp          # 跨平台纯函数（三支之外，无条件编译）
     git/git_libgit2.cpp                 # libgit2 RAII 作用域 + 错误码映射（need:8 批次一）
@@ -41,6 +42,7 @@ if(WIN32)
         process_host_win.cpp            # 常驻子进程托管：CreateProcessW + taskkill 树杀（memcpp S2）
         wallpaper_capability_win.cpp    # 壁纸宿主能力：WorkerW/mpv 路线可用（true）
         window_visibility_win.cpp       # 主窗可见态：EnumWindows 捕获 HWND + IsIconic/IsWindowVisible
+        reduced_motion_win.cpp          # 系统减动效：SPI_GETCLIENTAREAANIMATION
         terminal/terminal_backend_win.cpp  # 终端会话后端（v1 缺口补挂：此前从未进任何 WIN32 目标，
                                            # need:127 Phase 1 本 TU 换 ConPTY 真实现）。
                                            # ⚠ 路径含 terminal/ 子目录（相对 src/platform）：
@@ -72,6 +74,7 @@ elseif(APPLE)
         process_host_posix.cpp          # 常驻子进程托管：fork/setsid + 组杀（memcpp S2）
         wallpaper_capability_macos.cpp  # 壁纸宿主能力：AVFoundation + 桌面层窗口，恒 true
         window_visibility_macos.cpp     # 主窗可见态：当前 GLFW 上下文窗口的 ICONIFIED/VISIBLE（无句柄 fail-open）
+        reduced_motion_macos.cpp        # 系统减动效：NSWorkspace accessibilityDisplayShouldReduceMotion（objc C API）
         file_association_macos.mm      # .md 文件关联：LS/NSWorkspace 双路径（F-09，版本分支收敛单文件；ObjC++ 落点偏差见文件头）
         open_settings_macos.cpp         # 无按类型默认页直达：恒 false，UI 走文字指引（F-10）
         file_trash_macos.mm             # 移入废纸篓：NSFileManager trashItemAtURL:（need356，ARC）
@@ -99,6 +102,7 @@ else()
         # 查询 API；SDL2 后端经 EUI_WINDOW_BACKEND_SDL2 编译期走 fail-open true），
         # 保持 POSIX/UNIX 构建链路可链接。
         window_visibility_macos.cpp
+        reduced_motion_macos.cpp        # POSIX 兜底：objc 缺失 → 恒 false（不减动效）
         open_settings_posix.cpp         # POSIX 兜底：恒不支持（F-10）
         file_trash_posix.cpp            # 移入废纸篓兜底：诚实 TrashUnavailable，不直删（need356）
     )

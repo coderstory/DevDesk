@@ -12,6 +12,8 @@
 #include "core/theme.h"
 #include "home_service.h"
 #include "toast_notice_bridge.h"  // need270：点已关停模块卡片时投递应用级提示
+#include "home_anim_bridge.h"     // need506：档位/减动效态查询
+#include <ui_kit/home_anim.h>     // need506：三档绘制
 #include <ui_kit/card.h>
 #include <ui_kit/jelly.h>  // need301③ 统计卡果冻时间线（手写缝）
 
@@ -24,6 +26,8 @@
 #include <components/theme.h>
 
 #include <algorithm>
+#include <chrono>
+#include <optional>
 #include <cmath>
 #include <unordered_set>
 #include <functional>
@@ -688,42 +692,53 @@ public:
 
                 // 快捷操作按钮组（S3.1#3/#6）：新建笔记=Filled 44px / 新建任务=Outline 44px。
                 if (actCount > 0) {
-                const float actGap = t.sizes.spacingLarge; // 16
                 ui.row("home.actions")
                     .size(contentW, 44.0f)
                     // 底部留白防贴边（8px 网格）；EUI flow 布局下末子块 margin 计入列内容高。
                     .margin(0.0f, 0.0f, 0.0f, kHomeActionsBottomMargin)
-                    .gap(actGap)
+                    .gap(16.0f)  // demo .btn 行 gap 16（UAT 第⑧件：紧凑左排，非撑满半行）
                     .content([&] {
                         for (const auto& btn : kActionButtons) {
                             if (!moduleRegistered(btn.module)) continue;
+                            // 自适应宽（demo .btn padding 0 22px）：文本实测宽 + 图标位
+                            const float labelW = core::TextPrimitive::measureTextWidth(
+                                btn.label, {}, 14.5f, 600.0f);
                             const float actW =
-                                (contentW -
-                                 actGap * static_cast<float>(actCount - 1)) /
-                                static_cast<float>(actCount);
+                                std::max(96.0f, 22.0f * 2.0f + labelW +
+                                                     (btn.iconCodepoint != 0 ? 22.0f
+                                                                             : 0.0f));
                             auto builder = components::button(
                                 ui, actionButtonElementId(btn.kind));
-                            builder.size(actW, 44.0f)
+                            builder.size(actW, 42.0f)  // demo .btn height:42
                                 .text(btn.label)
-                                .fontSize(t.sizes.fontSizeBody)
-                                .radius(t.sizes.radius);
+                                .fontSize(14.5f)  // demo .btn font-size:14.5
+                                .radius(10.0f);   // demo .btn border-radius:10
                             if (btn.kind == ActionKind::NewNote) {
-                                // Filled: primary bg + white text
+                                // Filled（demo .btn.main）：绿实底白字 + 绿阴影
+                                // （demo 135° 双色渐变 #36D399→#1FA974：components::button
+                                // 无渐变接口——组件近似=平涂 primary；阴影/上浮逐值）
                                 builder.colors(t.colors.primary,
                                                t.colors.primaryHover,
                                                t.colors.primaryPressed)
-                                    .textColor(t.colors.onPrimary);
+                                    .textColor(t.colors.onPrimary)
+                                    .shadow(14.0f, 0.0f, 4.0f,
+                                            components::theme::withOpacity(
+                                                t.colors.primary, 0.28f))  // demo 0 4px 14px rgba(54,211,153,.28)
+                                    .pressScale(0.97f);  // 按压反馈（hover 上浮无 state 绑定 API）
                             } else if (btn.kind == ActionKind::NewTodo) {
                                 // Outline: white bg + green border + green text
                                 builder.colors(t.colors.surface,
                                                t.colors.primarySoftBg,
                                                components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
-                                    .border(1.0f, t.colors.primary)
-                                    .textColor(t.colors.primary);
+                                    .border(1.0f, t.colors.borderDefault)  // demo .btn.ghost：--line #DDEBE3
+                                    .textColor(t.colors.primaryText);  // demo .btn.ghost：--deep #157E4E
                             }
                             if (btn.iconCodepoint != 0) {
+                                // 图标色随款：主钮白字白图标？demo 主钮无图标；ghost 图标=deep
                                 builder.icon(btn.iconCodepoint)
-                                    .iconColor(t.colors.primary);
+                                    .iconColor(btn.kind == ActionKind::NewNote
+                                                   ? t.colors.onPrimary
+                                                   : t.colors.primaryText);
                             }
                             const std::string payload = btn.navPayload;
                             builder
@@ -736,6 +751,52 @@ public:
                     })
                     .build();
                 }  // if (actCount > 0)
+
+                // need506 定稿：点阵波纹铺底（内容之下）+ 打字机垫板（居中）。
+                // 档位/减动效经 home_anim 缝；相位壁钟；入场 500ms ease-out 包络。
+                {
+                    const bool animOn = ::home_anim::enabled();
+                    const float leftoverH = extraH - statsGrowTotalH;
+                    if (!animOn || leftoverH < 220.0f) {
+                        animFadeStart_.reset();  // 隐藏即重置包络（复显重新入场）
+                    } else {
+                        const auto nowD = std::chrono::steady_clock::now().time_since_epoch();
+                        const double nowS = std::chrono::duration<double>(nowD).count();
+                        if (!animFadeStart_.has_value()) animFadeStart_ = nowS;
+                        const float layerOpacity = std::clamp(
+                            static_cast<float>((nowS - *animFadeStart_) / 0.5), 0.0f, 1.0f);
+                        const bool reduced = ::home_anim::reducedMotion();
+                        const float phaseS = static_cast<float>(::home_anim::phaseSeconds());
+                        // 打字机数据：最近打开前 4 条（截断 26 字），空 → 占位语直显
+                        animTyper_.items.clear();
+                        const size_t take = std::min<size_t>(stats_.recentNotes.size(), 4);
+                        for (size_t i = 0; i < take; ++i) {
+                            animTyper_.items.push_back(
+                                ui_kit::home_anim::truncateTitle(
+                                    stats_.recentNotes[i].title));
+                        }
+                        // 空库/单条 → 轮播内置文案池（need506 用户拍板，UAT 追加令）
+                        if (animTyper_.items.size() < 2) {
+                            for (const char* q : ui_kit::home_anim::kQuotePool) {
+                                animTyper_.items.emplace_back(q);
+                            }
+                        }
+                        if (!reduced) animTyper_.tick(::home_anim::phaseSeconds());
+                        const std::string subtitle =
+                            "今日新增笔记 " + std::to_string(stats_.todayNotes) + " 篇";
+                        ui.stack("home.anim.layer")
+                            .size(contentW, leftoverH)
+                            .content([&] {
+                                ui_kit::home_anim::drawDotGrid(
+                                    ui, 0.0f, 0.0f, contentW, leftoverH, phaseS,
+                                    layerOpacity, t);
+                                ui_kit::home_anim::drawTyper(
+                                    ui, contentW * 0.5f, leftoverH * 0.5f, contentW,
+                                    animTyper_, phaseS, subtitle, reduced, t);
+                            })
+                            .build();
+                    }
+                }
             })   // home.root 的 content
             .build();  // home.root
     })  // home.scroll 的 content（收尾多这一层）
@@ -767,6 +828,9 @@ private:
         router->navigateTo(page, payload);
     }
 
+    // need506：入场 500ms 包络时间戳 + 打字机状态 + 副语（今日数据）
+    std::optional<double> animFadeStart_;
+    ui_kit::home_anim::Typer animTyper_;
     std::unique_ptr<HomeService> service_;
     DashboardStats stats_;
     bool statsLoaded_ = false;

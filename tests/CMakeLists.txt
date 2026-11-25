@@ -268,6 +268,7 @@ add_executable(devdesk_tests
     test_modules/test_theme_hierarchy.cpp
     test_modules/test_editor_font.cpp
     test_modules/test_app_sidebar.cpp
+    test_modules/test_home_anim.cpp  # need506 首页动画：桥缝/泵合流/点阵/打字机
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
     # 全局 ticker（core 层）：注册/注销、firstAt/interval/expireAt 时间维度、
@@ -441,6 +442,9 @@ endif()
 # 终端 vterm 转译层 doctest（need:127 Phase 1）：平台中立目标。mac 上只进测试不进
 # mac app 链接面（F-06）；WIN32 上由 devdesk_platform 链接（terminal_backend_win）。
 target_link_libraries(devdesk_tests PRIVATE devdesk_terminal_vterm)
+
+# need506 首页动画配置缝实现（app_fluid.cpp 已不再承载 home_anim 实现体）
+target_link_libraries(devdesk_tests PRIVATE devdesk_home_anim)
 
 # ---- 版本真值注入（2026-09-29）----
 # test_settings.cpp 的 aboutVersionLine 断言必须与**被测量**同源：
@@ -680,6 +684,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         ${CMAKE_SOURCE_DIR}/src/module_wallpaper
     )
     target_link_libraries(${_probe_name} PRIVATE
+        devdesk_home_anim
         devdesk_module_home
         devdesk_module_markdown
         devdesk_module_notepad
@@ -874,6 +879,7 @@ target_include_directories(devdesk_ui_driver PRIVATE
     ${CMAKE_SOURCE_DIR}/src/module_wallpaper
 )
 target_link_libraries(devdesk_ui_driver PRIVATE
+    devdesk_home_anim
     devdesk_module_home
     devdesk_module_markdown
     devdesk_module_notepad

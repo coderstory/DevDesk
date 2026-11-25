@@ -119,6 +119,7 @@ struct SettingsCardActions {
     std::function<void(bool)> applyReminderPopup;             // 上线提醒弹窗开关（默认关）
     std::function<void(bool)> applyFullscreenPopup;           // 调度全屏弹窗开关（默认关）
     std::function<void(bool)> applyFluidBackgroundEnabled;   // 动态背景开关（UAT6 活体流质）
+    std::function<void(bool)> applyHomeAnimEnabled;           // need506 留白动画开关
     std::function<void(bool)> applyNotepadAssocEnabled;      // 记事本文件关联开关（F-18）
     std::function<void()> requestLogTailReload;               // 日志查看卡刷新
     std::function<void(float)> logViewScrolled;               // 日志查看卡内滚动
