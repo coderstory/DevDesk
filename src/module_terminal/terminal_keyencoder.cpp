@@ -98,7 +98,9 @@ bool encodeKey(eui::InputKey key, const eui::KeyModifiers& mods, std::string& by
     }
 
     // Ctrl+字母/符号 → C0 控制码（Ctrl+I/J/M 与 Tab/Enter/Return 同码，直出等价值）
-    if (mods.control && !mods.shift) {
+    // bug510：Ctrl+Shift+字母同样走本分支（Win 终端习惯键；C/V 的剪贴板分派在
+    // encodeCtrlC / EUI 粘贴通道先拦截，不会落到这里）
+    if (mods.control) {
         char base = 0;
         if (key >= IK::A && key <= IK::Z) base = 'A' + static_cast<char>(key) - static_cast<char>(IK::A);
         else if (key == IK::Space) base = '@';
@@ -124,7 +126,10 @@ bool encodeKey(eui::InputKey key, const eui::KeyModifiers& mods, std::string& by
 
 bool encodeCtrlC(const platform::TerminalKeyConventions& conv, bool hasSelection, bool shift,
                  std::string& bytes) {
-    if (conv.ctrlCIsCopy && hasSelection && !shift) return true; // 宿主走复制，不发字节
+    // bug510：win 惯例下 Ctrl+Shift+C 与 Ctrl+C 同分支（有选区即复制）；mac 惯例
+    // （conv.ctrlCIsCopy=false）不受 Shift 影响，Ctrl+Shift+C 仍恒 （P2-2 锚）
+    (void)shift;
+    if (conv.ctrlCIsCopy && hasSelection) return true; // 宿主走复制，不发字节
     bytes.assign(1, '\x03'); // ETX 中断（Ctrl+C / Ctrl+Shift+C 恒 keyencoder 语义，P2-2）
     return false;
 }

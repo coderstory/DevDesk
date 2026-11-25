@@ -146,10 +146,26 @@ REGISTER_TEST(keyencoderCtrlCDuality,
     DOCTEST_CHECK(terminal::encodeCtrlC(win, true, false, out));
     DOCTEST_CHECK(out == "\x03");
 
-    // ④ P2-2：Shift 恒中断（Ctrl+Shift+C 原终端语义，mac 零变化锚），选区不改变分派
-    DOCTEST_CHECK(!terminal::encodeCtrlC(win, true, true, out));
-    DOCTEST_CHECK(out == "\x03");
+    // ④ bug510：win 惯例下 Ctrl+Shift+C 有选区 → 复制（与 Ctrl+C 同分支）；
+    //    无选区仍 ；mac 惯例 Shift 不影响（恒中断，P2-2 零变化锚）
+    DOCTEST_CHECK(terminal::encodeCtrlC(win, true, true, out));
     DOCTEST_CHECK(!terminal::encodeCtrlC(win, false, true, out));
     DOCTEST_CHECK(out == "\x03");
+    DOCTEST_CHECK(!terminal::encodeCtrlC(mac, true, true, out));
+    DOCTEST_CHECK(out == "\x03");
+    return true;
+})
+
+REGISTER_TEST(keyencoderCtrlShiftC0,
+              "terminal keyencoder: Ctrl+Shift+字母 走 C0 分支（bug510）", {
+    std::string out;
+    DOCTEST_CHECK(terminal::encodeKey(eui::InputKey::A, mods(true, false, true), out));
+    DOCTEST_CHECK(out == "\x01");
+    out.clear();
+    DOCTEST_CHECK(terminal::encodeKey(eui::InputKey::Z, mods(true, false, true), out));
+    DOCTEST_CHECK(out == "\x1a");
+    out.clear();
+    DOCTEST_CHECK(terminal::encodeKey(eui::InputKey::Space, mods(true, false, true), out));
+    DOCTEST_CHECK(out.size() == 1 && out[0] == '\0');
     return true;
 })
