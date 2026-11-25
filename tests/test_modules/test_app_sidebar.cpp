@@ -354,25 +354,25 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(icon != nullptr);
     DOCTEST_CHECK(floatEq(icon->x, 22.0f));
 
-    // 折叠开关 need172 v2（§10.2）+ bug146 dd0f28db 三轮实测：正常档直径 40 正圆
-    //（radius=20）、常态 1px 圆框描边、56 预留区内 toggleY=H−56+4=H−52；折叠态
-    // 水平居中：(72-40)/2=16。热区 = 绘制区外扩 4px（§10.2）：48×48，交互回调所在
+    // 折叠开关 need172 v2（§10.2）+ 2026-11-25 面积 −25%：正常档直径 34.6 正圆
+    //（radius=17.3）、常态 1px 圆框描边、50.6 预留区内 toggleY=H−50.6+4=953.4；
+    // 折叠态水平居中：(72−34.6)/2=18.7。热区 = 绘制区外扩 4px：42.6×42.6
     const auto* toggle = ui.find("app.sidebar.toggle");
     DOCTEST_CHECK(toggle != nullptr);
-    DOCTEST_CHECK(floatEq(toggle->x, 16.0f));
-    DOCTEST_CHECK(floatEq(toggle->y, 948.0f));  // 1000 − 56 + 4
-    DOCTEST_CHECK(floatEq(toggle->width.value, 40.0f));
-    DOCTEST_CHECK(floatEq(toggle->height.value, 40.0f));
-    DOCTEST_CHECK(floatEq(toggle->radius, 20.0f));
+    DOCTEST_CHECK(floatEq(toggle->x, 18.7f));
+    DOCTEST_CHECK(floatEq(toggle->y, 953.4f));  // 1000 − 50.6 + 4
+    DOCTEST_CHECK(floatEq(toggle->width.value, 34.6f));
+    DOCTEST_CHECK(floatEq(toggle->height.value, 34.6f));
+    DOCTEST_CHECK(floatEq(toggle->radius, 17.3f));
     DOCTEST_CHECK(floatEq(toggle->border.width, 1.0f));
     DOCTEST_CHECK(floatEq(toggle->border.color.r,
                           ::core::theme::current().colors.borderDefault.r));
     const auto* hot = ui.find("app.sidebar.toggle.hot");
     DOCTEST_REQUIRE(hot != nullptr);
-    DOCTEST_CHECK(floatEq(hot->x, 12.0f));  // 16 − 4
-    DOCTEST_CHECK(floatEq(hot->y, 944.0f));  // 948 − 4
-    DOCTEST_CHECK(floatEq(hot->width.value, 48.0f));  // 40 + 8
-    DOCTEST_CHECK(floatEq(hot->height.value, 48.0f));
+    DOCTEST_CHECK(floatEq(hot->x, 14.7f));  // 18.7 − 4
+    DOCTEST_CHECK(floatEq(hot->y, 949.4f));  // 953.4 − 4
+    DOCTEST_CHECK(floatEq(hot->width.value, 42.6f));  // 34.6 + 8
+    DOCTEST_CHECK(floatEq(hot->height.value, 42.6f));
     DOCTEST_CHECK(hot->onClick != nullptr);  // 点击回调在热区（视觉缩小不损命中）
 
     // 模块内容区宽度跟随侧边栏实际占宽
