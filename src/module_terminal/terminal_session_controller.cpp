@@ -101,7 +101,9 @@ SessionController::~SessionController() {
     spawnOutcomes_.clear(); // 已 spawn 未接入的句柄：析构即 terminate
 }
 
-int SessionController::startSessionAsync() {
+int SessionController::startSessionAsync() { return startSessionAsyncAt(newSessionWorkDir_); }
+
+int SessionController::startSessionAsyncAt(const std::string& workDir) {
     Session s;
     s.titleNumber = nextTitleNumber_++;
     s.rows = count() > 0 ? sessions_.back().rows : 0;
@@ -110,7 +112,7 @@ int SessionController::startSessionAsync() {
     SpawnRequest req;
     req.titleNumber = s.titleNumber;
     req.shell = newSessionShell_;
-    req.workDir = newSessionWorkDir_;
+    req.workDir = workDir;
     req.rows = s.rows;
     req.cols = s.cols;
     // 先占位再派活：empty() 对 Starting 成立，ensureBackend 幂等保持

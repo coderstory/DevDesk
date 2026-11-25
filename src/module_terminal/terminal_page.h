@@ -20,8 +20,39 @@
 #include "terminal_search.h"
 #include "terminal_session_controller.h"
 #include "terminal_settings.h"
+#include "ui_kit/toast.h"
 
 namespace terminal {
+
+// ---- need#452 常用目录纯几何/展示函数（设计 §4.1/§4.3/§4.4，doctest 直测）----
+
+struct DirMenuGeometry {
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    bool flipped = false;
+};
+
+// 目录弹层总高：6+32+n×36+9+36+9+36+6 = 134+36n（§4.3）。
+float dirMenuHeight(int dirCount);
+
+// 工具栏锚定：右缘 = 锚点右缘（新建钮右缘），左右钳 [12, pageW−12−w]；下方可用
+// (pageH−50−12) 不足 → 上翻（底缘 = 工具栏顶 44−6），顶缘钳 ≥12。
+DirMenuGeometry dirMenuGeometry(float pageW, float pageH, float anchorRightX, float menuH);
+
+// 空态链接锚定：水平居中于链接中心、位于锚点上方 6（§5 空态行）。
+DirMenuGeometry dirMenuGeometryAbove(float pageW, float pageH, float anchorCenterX,
+                                     float anchorTopY, float menuH);
+
+// 设置面板「常用目录」区块高（组头之下）：空态 86（20+4+18+12+32）；
+// n 条 = 44n + 8(n−1) + 12 + 32（§4.1）。
+float startupDirsBlockHeight(int dirCount);
+
+// 长路径显示（§4.4）：主目录前缀替 `~`；仍超宽 → 首段 + … + 末 2 段；再超由控件
+// 尾部省略兜底。measure = 文本测宽（单测注入假度量）。
+std::string elidedPathForDisplay(const std::string& path, const std::string& homeDir,
+                                 float maxW,
+                                 const std::function<float(const std::string&)>& measure);
 
 class TerminalPage {
 public:
@@ -40,6 +71,10 @@ public:
     void openSettings() { settingsOpen_ = true; panelScroll_ = 0.0f; }
     void closeSettings() { settingsOpen_ = false; }
     bool settingsOpen() const { return settingsOpen_; }
+
+    // need#452：目录点选弹层开合（Esc/外点关闭；点行即建会话并关闭）
+    bool dirMenuOpen() const { return dirMenuOpen_; }
+    void closeDirMenu() { dirMenuOpen_ = false; }
 
     // bug278④：面板结果通道——完成=true（提交：落库+新会话参数生效）、×=false
     // （丢弃：回滚打开时刻快照）。未接线时回落旧行为（仅关闭）；装配方注入见
@@ -99,6 +134,9 @@ private:
     bool fullscreenInit_ = false;
     bool settingsOpen_ = false;      // need250 设置面板开合
     float panelScroll_ = 0.0f;       // 面板内容区滚动偏移（超高内滚）
+    bool pendingScrollToDirs_ = false; // need#452：管理入口跳转——下帧滚到「常用目录」组头
+    bool dirMenuOpen_ = false;       // need#452 目录点选弹层
+    ui_kit::ToastState toast_;       // need#452 删除/添加/失效反馈（单实例，既有能力）
     std::function<void(bool)> onPanelResult_;  // bug278④ 面板结果通道（完成/×）
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 池#365：终端历史搜索态（成员级存活——搜索条闭包跨帧引用）

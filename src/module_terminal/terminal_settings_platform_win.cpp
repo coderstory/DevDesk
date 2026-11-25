@@ -32,6 +32,15 @@ std::vector<std::string> terminalShellOptionValues() {
 
 std::string terminalDefaultShellName() { return "pwsh"; }
 
+// need#452：Windows 路径去重大小写不敏感（CompareStringOrdinal 语义比较，不做 locale 折叠）
+bool startupDirPathEqual(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    const std::wstring wa = utf8ToWide(a);
+    const std::wstring wb = utf8ToWide(b);
+    if (wa.empty() || wb.empty()) return false;
+    return CompareStringOrdinal(wa.c_str(), -1, wb.c_str(), -1, TRUE) == CSTR_EQUAL;
+}
+
 bool canEnterDirectory(const std::string& dir) {
     if (dir.empty()) return false;
     const std::wstring w = utf8ToWide(dir);

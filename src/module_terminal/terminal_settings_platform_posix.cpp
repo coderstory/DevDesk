@@ -18,6 +18,9 @@ std::vector<std::string> terminalShellOptionValues() {
 
 std::string terminalDefaultShellName() { return "zsh"; }
 
+// need#452：macOS/POSIX 路径大小写敏感（设计 §2.1 平台规则）
+bool startupDirPathEqual(const std::string& a, const std::string& b) { return a == b; }
+
 bool canEnterDirectory(const std::string& dir) {
     if (dir.empty()) return false;
     if (access(dir.c_str(), R_OK | X_OK) != 0) return false;

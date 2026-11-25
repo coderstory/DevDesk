@@ -152,6 +152,11 @@ bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
         finishSettingsPanel(false);  // bug278④：Esc=取消（丢弃草稿）
         return true;
     }
+    // need#452：目录弹层 Esc 关闭（面板优先于本层，见上；不改既有键序）
+    if (event.isDown() && event.key == eui::InputKey::Escape && page_.dirMenuOpen()) {
+        page_.closeDirMenu();
+        return true;
+    }
     if (event.isDown() && event.modifiers.super && event.key == eui::InputKey::C) {
         std::string text;
         // 行列=page 记录的拖选范围（视口系，Selection.text 同系）

@@ -21,6 +21,8 @@ constexpr const char* kKeyColorPalette = "colorPalette";
 constexpr const char* kKeyShell = "shell";
 // PRD P-14：新键 startupDir；旧 workDir 键不读（C-4 已砍时的历史残留不复活）。
 constexpr const char* kKeyStartupDir = "startupDir";
+// need#452：常用目录列表键；startupDir 复用为默认镜像（旧读取方零改动）。
+constexpr const char* kKeyStartupDirs = "startupDirs";
 constexpr const char* kKeyWebPort = "webPort";
 constexpr int kWebPortMin = 1024;
 constexpr int kWebPortMax = 65535;
@@ -32,6 +34,16 @@ constexpr const char* kPaletteDark = "dark";
 
 bool contains(const std::vector<std::string>& values, const std::string& v) {
     return std::find(values.begin(), values.end(), v) != values.end();
+}
+
+std::string trimCopy(const std::string& in) {
+    const auto isSpace = [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    };
+    size_t b = 0, e = in.size();
+    while (b < e && isSpace(static_cast<unsigned char>(in[b]))) b++;
+    while (e > b && isSpace(static_cast<unsigned char>(in[e - 1]))) e--;
+    return in.substr(b, e - b);
 }
 
 } // namespace
@@ -54,6 +66,42 @@ bool workDirUsableForSpawn(const std::string& dir) {
     return canEnterDirectory(dir);
 }
 
+StartupDirConvergence convergeStartupDirs(std::vector<std::string> dirs,
+                                          std::string defaultDir) {
+    StartupDirConvergence out;
+    out.defaultDir = trimCopy(defaultDir);
+    for (const std::string& raw : dirs) {
+        const std::string d = trimCopy(raw);
+        if (d.empty()) continue;
+        bool dup = false;
+        for (const std::string& e : out.dirs) {
+            if (startupDirPathEqual(e, d)) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) out.dirs.push_back(d);
+        if (static_cast<int>(out.dirs.size()) >= kStartupDirsMax) break;
+    }
+    if (!out.defaultDir.empty()) {
+        bool listed = false;
+        for (const std::string& e : out.dirs) {
+            if (startupDirPathEqual(e, out.defaultDir)) {
+                out.defaultDir = e;  // 镜像取列表内原写法（保 ∈ 列表字面值）
+                listed = true;
+                break;
+            }
+        }
+        if (!listed) {
+            out.dirs.insert(out.dirs.begin(), out.defaultDir);
+            if (static_cast<int>(out.dirs.size()) > kStartupDirsMax) out.dirs.pop_back();
+        }
+    } else if (!out.dirs.empty()) {
+        out.defaultDir = out.dirs.front();
+    }
+    return out;
+}
+
 TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings) {
     TerminalSettings out;
     // 枚举外字体/shell → 空 = 平台默认语义（设计 §4.3 约束列）
@@ -63,7 +111,11 @@ TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings) {
         contains(terminalShellOptionValues(), settings.shell) ? settings.shell : "";
     out.fontFamily = font;
     out.shell = shell;
-    out.startupDir = settings.startupDir;  // 有效性在 writeSettings 入口校验，非 sanitize 职责
+    // need#452：目录列表与默认镜像同一收敛点（迁移/旧值并入/网页设默认都走这里）
+    const StartupDirConvergence conv =
+        convergeStartupDirs(settings.startupDirs, settings.startupDir);
+    out.startupDirs = conv.dirs;
+    out.startupDir = conv.defaultDir;  // 有效性在启动时校验，非 sanitize 职责（设计 §9）
     out.fontSize = clampedFontSize(settings.fontSize);
     out.colorMode = settings.colorMode;
     out.colorPalette = settings.colorPalette;
@@ -101,6 +153,16 @@ TerminalSettings loadTerminalSettings(core::data::SqliteDb* db) {
         s.shell = *v;
     if (auto v = platform::json::getIfString(obj, kKeyStartupDir))
         s.startupDir = *v;
+    // need#452：列表缺失 = 旧结构（迁移交由 sanitize 用 startupDir 并入）
+    {
+        const platform::json::JsonValue arr = obj.get(kKeyStartupDirs);
+        if (arr.isArray()) {
+            for (int i = 0; i < arr.size(); i++) {
+                const platform::json::JsonValue item = arr[i];
+                if (item.isString()) s.startupDirs.push_back(item.asString());
+            }
+        }
+    }
     if (auto v = platform::json::getIfInt(obj, kKeyWebPort))
         s.webPort = static_cast<int>(*v);
     // C-4（need380）：workDir/scrollback/cursorStyle/cursorBlink 旧键不再读取
@@ -128,6 +190,7 @@ core::Result<void> saveTerminalSettings(core::data::SqliteDb* db,
                                                                                : kPaletteLight));
     obj.set(kKeyShell, platform::json::makeString(s.shell));
     obj.set(kKeyStartupDir, platform::json::makeString(s.startupDir));
+    obj.set(kKeyStartupDirs, platform::json::makeStringArray(s.startupDirs));
     if (s.webPort > 0) obj.set(kKeyWebPort, platform::json::makeInt(s.webPort));
     auto text = platform::json::stringify(platform::json::JsonValue(obj), /*pretty=*/false);
     if (text.isFail()) {
