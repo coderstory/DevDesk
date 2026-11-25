@@ -640,6 +640,9 @@ REGISTER_TEST(assembly_arm_tray_odoc_cold_start,
 
     // 3b. .md 温开送达（主窗已 compose）→ 不抢隐藏（门槛与扩展名无关）
     resetMinimizedFlagForTest();
+    // 温开前置必须显式落闩：resetMinimizedFlagForTest 会清 g_mainWindowComposed。
+    // bug:544 后 .md 已回归记事本清单（与其它扩展同路），漏这步会被冷启分支误 arm。
+    markMainWindowComposed();
     armTrayForNotepadAssociation("/tmp/note.md", "odoc");
     DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
 
