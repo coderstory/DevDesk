@@ -560,14 +560,36 @@ void MarkdownModule::drawNoteList(eui::Ui& ui,
         .build();
 }
 
+// bug548：修订号缓存（见 markdown_module_internal.h 成员注释）。折叠动画每帧 compose
+// 都过这里；输入未变时不再重建全量行的 set/map 与字符串。
+const std::vector<MdTreeRow>& MarkdownModule::treeRowsForCompose() {
+    if (treeRowsCacheListRev_ == treeRowsListRev_ &&
+        treeRowsCacheCollapsedRev_ == treeRowsCollapsedRev_) {
+        return treeRowsCache_;
+    }
+    treeRowsCache_ = buildTreeRows(notes_, allFolders_, collapsedDirs_);
+    treeRowsCacheListRev_ = treeRowsListRev_;
+    treeRowsCacheCollapsedRev_ = treeRowsCollapsedRev_;
+    ++treeRowsBuildCount_;  // 测试缝观测点（mdTreeRowsBuildCountForTest）
+    return treeRowsCache_;
+}
+
+// 测试缝实现（声明与理由见 markdown_module_test_seam.h）。static_cast 前提同
+// mdSetPollIntervalMsForTest：入口只来自 create_markdown_module()。
+int64_t mdTreeRowsBuildCountForTest(::core::Module* mod) {
+    if (mod == nullptr) return 0;
+    return static_cast<int64_t>(
+        static_cast<MarkdownModule*>(mod)->treeRowsBuildCount_);
+}
+
 void MarkdownModule::drawTreeList(eui::Ui& ui,
                   float listY,
                   float listH,
                   float sideW,
                   const core::theme::Tokens& t,
                   const components::theme::ThemeColorTokens& componentTheme) {
-    const std::vector<MdTreeRow> rows = buildTreeRows(notes_, allFolders_,
-                                                      collapsedDirs_);
+    // bug548：行模型走修订号缓存——输入未变时零重建（动画期逐帧 compose 亦然）。
+    const std::vector<MdTreeRow>& rows = treeRowsForCompose();
     const float rowW = sideW - 16.0f;
     constexpr float kRowGap = 4.0f;
     const float pitch = kTreeRowHeight + kRowGap;
@@ -645,6 +667,7 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
                                     } else {
                                         collapsedDirs_.insert(dir);
                                     }
+                                    ++treeRowsCollapsedRev_;  // 行模型缓存失效
                                     saveViewState();  // 目录折叠跨会话记忆
                                 })
                                 // 右键菜单也接在命中区上：44px 区覆盖箭头+图标，
@@ -719,6 +742,7 @@ void MarkdownModule::openNewNoteDialog() {
 }
 
 void MarkdownModule::refreshList() {
+    ++treeRowsListRev_;  // 行模型缓存失效（含下方所有早退路径）
     if (!service_) {
         notes_.clear();
         allFolders_.clear();
@@ -820,6 +844,7 @@ void MarkdownModule::loadViewState() {
         if (mode_ == ViewMode::Live) enterLiveState("启动恢复视图");
     }
     collapsedDirs_.insert(st.collapsedDirs.begin(), st.collapsedDirs.end());
+    ++treeRowsCollapsedRev_;  // 折叠集合变动 → 行模型缓存失效
     treePanelCollapsed_ = st.treePanelCollapsed;  // UAT2 F批：面板折叠态恢复
     // D-R3-3 c：启动即按折叠态把动画宽直接钉到目标（无起播动画，首帧即收敛）
     treePanelWidth_ = treePanelCollapsed_ ? 0.0f : kTreePanelWidth;

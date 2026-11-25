@@ -416,6 +416,7 @@ void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
             if (index == 0) {
                 // 新建子目录：弹窗的上级目录预置为右键的文件夹，并展开它
                 collapsedDirs_.erase(dirCtxPath_);
+                ++treeRowsCollapsedRev_;  // 行模型缓存失效（展开）
                 newFolderOpen_ = true;
                 newFolderName_.clear();
                 newFolderError_.clear();
@@ -424,6 +425,7 @@ void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
             } else if (index == 1) {
                 // 新建子笔记：新建落点改到右键的文件夹，并展开它
                 collapsedDirs_.erase(dirCtxPath_);
+                ++treeRowsCollapsedRev_;  // 行模型缓存失效（展开）
                 newItemTargetDir_ = dirCtxPath_;
                 selectDir(dirCtxPath_);
                 openNewNoteDialog();

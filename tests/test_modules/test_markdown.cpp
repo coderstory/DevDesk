@@ -1112,7 +1112,7 @@ REGISTER_TEST(md_tree_panel_collapse,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    // 收敛泵：0.18/帧 lerp 距目标 1px 内钉住，224↔0 全程约 28 帧；40 帧必收敛
+    // 收敛泵：kTreePanelAnimK=0.5 → 224·0.5^n < 1px 即钉住，224↔0 全程约 8 帧；12 帧必收敛
     auto settle = [&]() {
         for (int i = 0; i < 40; ++i) frame();
     };
@@ -1283,9 +1283,10 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_CHECK(w1 < 224.0f);
     DOCTEST_CHECK(w1 > 0.0f);
 
-    // 逐帧推进：单调向 0；把手仍在场
+    // 逐帧推进：单调向 0；把手仍在场。12 帧上限 = 动画速度回归锁
+    // （bug548：0.5 系数 8 帧收敛；回退旧 0.18 = 28 帧，本上限先红）
     float prev = w1;
-    for (int i = 0; i < 40 && treeW() > 0.0f; ++i) {
+    for (int i = 0; i < 12 && treeW() > 0.0f; ++i) {
         frame();
         const float w = treeW();
         DOCTEST_CHECK(w < prev);
@@ -1303,7 +1304,7 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_CHECK(g1 > 0.0f);
     DOCTEST_CHECK(g1 < 224.0f);
     prev = g1;
-    for (int i = 0; i < 40 && treeW() < 224.0f; ++i) {
+    for (int i = 0; i < 12 && treeW() < 224.0f; ++i) {
         frame();
         const float w = treeW();
         DOCTEST_CHECK(w > prev);
@@ -1355,6 +1356,78 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
         DOCTEST_CHECK_EQ(treeW(), 224.0f);
     }
+
+    mod->onStop();
+    return true;
+})
+
+// bug548：目录树行模型（buildTreeRows）修订号缓存。事故回退场景：去缓存 → 每帧
+// 重建，「跨帧零重建」断言先红；缓存漏失效（折叠不 bump 修订号）→ 折叠后子文件
+// 行仍在 / 节点数断言先红。列表重载失效（refreshList 内 bump）由既有 new-folder /
+// 搜索 / 轮询用例的「新行出现」断言兜住——它们同样走 refreshList。
+REGISTER_TEST(md_tree_rows_model_reuse,
+              "markdown_module: 目录树行模型跨帧零重建 + 折叠/展开各恰一次重建（折叠态与节点数不变量）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "rowscache", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "d" / "x.md", "# X\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    int n = 0;
+    auto frame = [&]() {
+        ui.begin("rowscache" + std::to_string(n++));
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto builds = [&]() {
+        return module::markdown::mdTreeRowsBuildCountForTest(mod.get());
+    };
+
+    // 首帧建一次；行为不变量：根组 + a.md + 目录 d + d/x.md（根组行序固定最前）
+    frame();
+    const int64_t b0 = builds();
+    DOCTEST_CHECK_EQ(b0, 1);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "根目录", true), 0);
+    DOCTEST_CHECK(treeRowIndex(ui, "a.md", false) >= 0);
+    const int folder = treeRowIndex(ui, "d", true);
+    DOCTEST_REQUIRE(folder >= 0);
+    DOCTEST_REQUIRE(treeRowIndex(ui, "x.md", false) >= 0);
+
+    // 增量路径存在性：输入不变的连续帧（= 折叠动画的逐帧 compose）零重建
+    for (int i = 0; i < 5; ++i) frame();
+    DOCTEST_CHECK_EQ(builds(), b0);
+
+    // 折叠 d：恰好重建一次；x.md 行消失、d 行仍在（折叠态正确）
+    const auto* foldToggle =
+        ui.find("md.tree.node." + std::to_string(folder) + ".toggle");
+    DOCTEST_REQUIRE(foldToggle != nullptr);
+    DOCTEST_REQUIRE(foldToggle->onClick != nullptr);
+    foldToggle->onClick();
+    frame();
+    DOCTEST_CHECK_EQ(builds(), b0 + 1);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "x.md", false), -1);
+    DOCTEST_CHECK(treeRowIndex(ui, "d", true) >= 0);
+    frame();
+    DOCTEST_CHECK_EQ(builds(), b0 + 1);  // 折叠后的后续帧复用缓存
+
+    // 展开往返：再恰好一次重建，节点数回到 4（不丢不重）
+    const int folderAgain = treeRowIndex(ui, "d", true);
+    DOCTEST_REQUIRE(folderAgain >= 0);
+    const auto* expandToggle =
+        ui.find("md.tree.node." + std::to_string(folderAgain) + ".toggle");
+    DOCTEST_REQUIRE(expandToggle != nullptr);
+    DOCTEST_REQUIRE(expandToggle->onClick != nullptr);
+    expandToggle->onClick();
+    frame();
+    DOCTEST_CHECK_EQ(builds(), b0 + 2);
+    DOCTEST_REQUIRE(treeRowIndex(ui, "x.md", false) >= 0);
 
     mod->onStop();
     return true;
