@@ -1552,14 +1552,15 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 两处 alpha 各自独立：clearColor（全窗唯一透出纱）off=1.0 / translucent=0.72 /
+    // 两处 alpha 各自独立：clearColor（全窗唯一透出纱）off=1.0 / translucent=0.80 /
     // frosted=0.15 / 未知→1.0；窗口背景色（bug274 起退役）1.0 / 0 / 0 / 未知→1.0。
     // bug274 定标：旧「winbg × clearColor」两层叠加把透出压到 ≈2%（历轮调参史
-    // UAT2/UAT3/UAT6 见 settings_config.cpp 注释），砍掉第二层后半透档单层 0.72 =
-    // 桌面透出 28%（定标带 25~30%）。自绘标题栏后 Windows 无系统标题栏，标题栏
-    // alpha 本就只作用于 macOS，退役后仅 off 档保 1.0 实色兜底。
+    // UAT2/UAT3/UAT6 见 settings_config.cpp 注释），砍掉第二层后半透档单层；
+    // bug468 产品标「桌面透出 20%」→ 0.80（旧 0.72 = 透出 28%）。自绘标题栏后
+    // Windows 无系统标题栏，标题栏 alpha 本就只作用于 macOS，退役后仅 off 档保
+    // 1.0 实色兜底。
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.72f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.80f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectOff) == 1.0f);
@@ -1602,13 +1603,14 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
                       ms::kWindowEffectTranslucent) == 0.72f);
     core::window_effect_state::setActiveTierProvider(nullptr);  // 尾态复位
 
-    // 半透档目标带 **176–184**（黑壁纸）：bug274 定标——winbg 退役后 themeOpacity
-    // = clearColor 单层，0.72 → 250×0.72 = 180.0，带宽 ±4（回旧值 0.85 = 212.5 即出
-    // 带红——两层叠加时代的带 242–246 随第二层退役一并作废；与对比度护栏互为双闸）。
+    // 半透档目标带 **196–204**（黑壁纸）：bug468 产品标——winbg 退役后 themeOpacity
+    // = clearColor 单层，0.80 → 250×0.80 = 200.0，带宽 ±4（回旧值 0.72 = 180 或
+    // 0.85 = 212.5 即出带红——两层叠加时代的带 242–246 随第二层退役一并作废；
+    // 与对比度护栏互为双闸）。
     const float translucentOverBlack =
         250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(translucentOverBlack >= 176.0f);
-    DOCTEST_CHECK(translucentOverBlack <= 184.0f);
+    DOCTEST_CHECK(translucentOverBlack >= 196.0f);
+    DOCTEST_CHECK(translucentOverBlack <= 204.0f);
     DOCTEST_CHECK(translucentOverBlack < 250.0f);
     // 关闭档：实色，黑壁纸下恒 250
     DOCTEST_CHECK(250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectOff) == 250.0f);
@@ -1628,7 +1630,9 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
 
     // backdrop 请求：off/translucent 显式关（None），frosted→Mica（UAT6：Acrylic→
     // Mica，主窗材质，DWMSBT_MAINWINDOW——「磨砂底色变灰」真机回归锚点，另见
-    // settings_window_effect_frosted_material 回归用例），未知→None
+    // settings_window_effect_frosted_material 回归用例），未知→None。磨砂档桌面
+    // 透出 20% 由框架侧材质叠加承担（EUI-NEO fa18776：Windows 均匀 80% LWA_ALPHA /
+    // macOS BehindWindow 材质 α0.80），DevDesk 侧映射不变：Mica 请求 + 内容纱 0.15。
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectTranslucent) == WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Mica);
@@ -1771,11 +1775,11 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.72（bug274 单层定标）+ backdrop 请求 None（显式关）；
-    // 档位单值同步写 core
+    // 半透档：clearColor alpha=0.80（bug468 产品标「桌面透出 20%」，单层定标）+
+    // backdrop 请求 None（显式关）；档位单值同步写 core
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.72f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.80f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
     // 标题栏底 alpha 随 winbg 退役传 0（显式 customColor 形态保留，避开 EUI-NEO
     // 按 clearColor 推导的兜底）
