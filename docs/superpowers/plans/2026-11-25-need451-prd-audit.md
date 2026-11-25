@@ -4,7 +4,7 @@
 - 审计日期：2026-11-25
 - 审计角色：product-manager（独立实例，非该 PRD 作者）
 - 审计面：需求覆盖与目标达意性（用户视角，非实操）
-- **结论：PASS_WITH_FIXES** —— 1 CRITICAL + 9 IMPORTANT + 6 NIT，全部文档内可修，不需推翻方案、不需新增功能点
+- **结论：PASS_WITH_FIXES** —— 1 CRITICAL + 9 IMPORTANT + 7 NIT（C1~C7 共 7 条），全部文档内可修，不需推翻方案、不需新增功能点
 
 ## 六维结论摘要
 
