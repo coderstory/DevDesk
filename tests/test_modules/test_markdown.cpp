@@ -3786,6 +3786,147 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     return true;
 })
 
+// bug546：双栏预览滚轮接管（用户手滚不被每帧同步回推）+ 编辑区滚动恢复跟随。
+// 修前红：Split 分支无 onChange（手滚通路为空）、且每帧 setScrollOffset 回推
+// computeSyncOffset → 手滚帧 declared 读数 = 同步目标 ≠ 手滚值。
+// 断言全走模块声明值读数（scrollOffset/scrollMaxOffset）+ 回调指针存在性，
+// 不复制实现公式。
+REGISTER_TEST(md_module_split_preview_manual_scroll,
+              "markdown_module: 双栏预览手滚接管/编辑区恢复跟随（headless，bug546）", {
+    std::string text;
+    for (int s = 0; s < 12; ++s) {
+        text += "# 节" + std::to_string(s) + "\n";
+        for (int l = 0; l < 12; ++l) {
+            text += "内容行 " + std::to_string(s) + "-" +
+                    std::to_string(l) + " 一二三四五六七八九十\n";
+        }
+        text += "\n";
+    }
+    test_support::MdHeadlessEnv env(kDirPrefix, "splitmanual", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "long.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
+    frame();
+    frame();
+
+    const auto* pvTop = ui.find("md.preview.scroll");
+    DOCTEST_REQUIRE(pvTop != nullptr);
+    // 滚动范围几何①：内容超视口才可滚，且可到底（maxOffset = 总高 − 视口）
+    DOCTEST_CHECK(pvTop->scrollMaxOffset > 100.0f);
+    const float maxOff = pvTop->scrollMaxOffset;
+    // 手滚通路注册（修前 Split 分支 onChange 为空 → 红）
+    DOCTEST_REQUIRE(pvTop->onScrollOffsetChanged != nullptr);
+
+    // 模拟滚轮到底（runtime 派发口径：onScrollOffsetChanged(v)）
+    pvTop->onScrollOffsetChanged(maxOff);
+    frame();
+    DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollOffset, maxOff);
+    frame();
+    DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollOffset, maxOff);
+
+    // 编辑区滚动（大纲跳深锚点 → 编辑视口跟随）→ 恢复跟随：
+    // 声明值回到 computeSyncOffset（≠ 手滚值）
+    const auto* toggle = ui.find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    frame();
+    const auto* row5 = ui.find("md.outline.item.5.row");
+    DOCTEST_REQUIRE(row5 != nullptr);
+    DOCTEST_REQUIRE(row5->onClick != nullptr);
+    row5->onClick();
+    frame();
+    frame();
+    const float resynced = ui.find("md.preview.scroll")->scrollOffset;
+    DOCTEST_CHECK(std::fabs(resynced - maxOff) > 1.0f);
+    DOCTEST_CHECK(resynced > 0.0f);
+
+    mod->onStop();
+    return true;
+})
+
+// bug547：预览块右键复制层存在性（框架无渲染文本选区 API，复制走菜单替代）+
+// 矮内容无滚动（bug546 几何另一半：内容未超视口时 maxOffset = 0，不出现假可滚）。
+// 修前红：修前预览块 hit 层不注册 onContextMenu（无任何复制入口）。
+REGISTER_TEST(md_preview_copy_seam_and_short_no_scroll,
+              "markdown_module: 预览复制层存在/矮内容无滚动（headless，bug547）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "shortcopy", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "short.md", "# 短\n一行内容\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
+    frame();
+    frame();
+
+    const auto* pvScroll = ui.find("md.preview.scroll");
+    DOCTEST_REQUIRE(pvScroll != nullptr);
+    // 滚动范围几何②：矮内容无滚动
+    DOCTEST_CHECK_EQ(pvScroll->scrollMaxOffset, 0.0f);
+
+    // 选择/复制层：任一预览块 hit 覆盖层挂右键回调（菜单入口）
+    bool hitFound = false;
+    bool menuFound = false;
+    std::function<void(const ::core::dsl::Element&)> visit =
+        [&](const ::core::dsl::Element& node) {
+            if (node.id.find(".blk.") != std::string::npos &&
+                node.id.size() >= 4 &&
+                node.id.compare(node.id.size() - 4, 4, ".hit") == 0) {
+                hitFound = true;
+                if (node.onContextMenu) menuFound = true;
+            }
+            for (const auto& child : node.children) {
+                if (child) visit(*child);
+            }
+        };
+    for (const auto& root : ui.roots()) {
+        if (root) visit(*root);
+    }
+    DOCTEST_CHECK(hitFound);
+    DOCTEST_CHECK(menuFound);
+
+    mod->onStop();
+    return true;
+})
+
 // 双栏同步滚动块模型精确锚（headless）
 // 标题锚 + 节内按行摊分在单节文档里步长恒定；块模型锚给出
 // 块级签名。全部断言从模块实时读数反推、不复制实现公式：
