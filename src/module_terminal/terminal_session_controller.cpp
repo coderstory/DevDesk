@@ -292,6 +292,12 @@ void SessionController::pollAll() {
         }
         s.lastGeneration = gen;
         s.frame = s.handle->poll();
+        // M2 Task 6：OSC 0/2 标题 → 标签名（空值/未接后端保持原名；改名代数触发页缓存重建）
+        const std::string oscTitle = s.handle->title();
+        if (!oscTitle.empty() && oscTitle != s.title) {
+            s.title = oscTitle;
+            ++titleRevision_;
+        }
         int32_t code = 0;
         if (s.handle->exited(&code)) {
             s.exitCode = code;

@@ -753,6 +753,9 @@ public:
         shared_->notify = std::move(notify);
     }
     bool supportsOutputNotify() const override { return true; }
+    // M2 Task 6：OSC 0/2 标题与 bell（libvterm 解析；vterm_ 终止后为空 → 空值）
+    std::string title() const override { return vterm_ ? vterm_->title() : std::string(); }
+    uint32_t bellCount() const override { return vterm_ ? vterm_->bellCount() : 0; }
 
     // bug305 根因：ConPTY 在子进程退出时**不保证**输出管道断裂（实测 pwsh `exit` 后
     // 25s+ 无 EOF，reader 永远阻塞在 ReadFile → exited 标志永不置真 → 会话卡 Running、

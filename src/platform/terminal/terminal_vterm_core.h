@@ -15,6 +15,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <cstdint>
+#include <functional>
 #include <string>
 
 #include "terminal_backend.h"
@@ -50,6 +52,13 @@ public:
     // 复制与 module 级 Cmd+C 兜底两条消费链。
     bool selectionText(int rowStart, int colStart, int rowEnd, int colEnd,
                        std::string& out) const;
+
+    // OSC 0/2 窗口标题（libvterm VTERM_PROP_TITLE；空 = 未设置）。UI 线程读，锁内拷贝。
+    std::string title() const;
+    // bell（\a）计数（单调递增；宿主据此提示）。M2 Task 6。
+    uint32_t bellCount() const;
+    // bell 回调（feed 线程内同步调用；实现方不得反向调用本类避免重入死锁）
+    void setBellHandler(std::function<void()> handler);
 
     // bracketed paste 模式（DECSET 2004 跟踪，feed 内平行小状态机——libvterm
     // 0.3.3 把该模式存在私有 state->mode.bracketpaste（state.c:861）不外露，

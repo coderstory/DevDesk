@@ -247,3 +247,25 @@ REGISTER_TEST(vtermSelectionTextCjkWide,
     DOCTEST_CHECK_EQ(out, "\xe4\xbd\xa0\xe5\xa5\xbdx");
     return true;
 })
+
+REGISTER_TEST(vtermOscTitleAndBell,
+              "terminal vterm: OSC 0/2 设标题、\\a 计 bell（M2 Task 6）", {
+    platform::VtermCore core(24, 80);
+    std::string reply;
+    DOCTEST_CHECK_EQ(core.title(), std::string());
+    DOCTEST_CHECK_EQ(core.bellCount(), 0u);
+    const std::string osc = std::string("\x1b]0;ssh host\x07");
+    core.feed(reinterpret_cast<const uint8_t*>(osc.data()),
+              static_cast<int32_t>(osc.size()), &reply);
+    DOCTEST_CHECK_EQ(core.title(), std::string("ssh host"));
+    const std::string osc2 = std::string("\x1b]2;vim README\x07");
+    core.feed(reinterpret_cast<const uint8_t*>(osc2.data()),
+              static_cast<int32_t>(osc2.size()), &reply);
+    DOCTEST_CHECK_EQ(core.title(), std::string("vim README"));
+    int bells = 0;
+    core.setBellHandler([&bells] { ++bells; });
+    core.feed(reinterpret_cast<const uint8_t*>("\a"), 1, &reply);
+    DOCTEST_CHECK_EQ(core.bellCount(), 1u);
+    DOCTEST_CHECK_EQ(bells, 1);
+    return true;
+})

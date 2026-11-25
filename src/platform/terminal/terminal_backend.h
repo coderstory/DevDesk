@@ -66,6 +66,9 @@ public:
     // 按需出帧唤醒（bug249/bug305）：后端在**非 UI 线程**产出新输出或子进程退出后
     // 调一次通知，宿主主循环据此只出这一帧——替代常驻 onFrame 泵（空闲零出帧）。
     // 默认空实现 = 该平台暂无通知路径（页面保留常驻泵兜底）。
+    // M2 Task 6：OSC 0/2 标题与 bell（默认空实现 = 该平台后端未接）
+    virtual std::string title() const { return {}; }
+    virtual uint32_t bellCount() const { return 0; }
     virtual void setOutputNotify(std::function<void()> notify) { (void)notify; }
     virtual bool supportsOutputNotify() const { return false; }
 };

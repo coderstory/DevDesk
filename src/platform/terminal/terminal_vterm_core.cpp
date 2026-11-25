@@ -19,6 +19,7 @@ namespace {
 int damageCbTramp(VTermRect rect, void* user);
 int movecursorScreenTramp(VTermPos pos, VTermPos old, int visible, void* user);
 int settermpropTramp(VTermProp prop, VTermValue* val, void* user);
+int bellScreenTramp(void* user);
 int screenResizeTramp(int rows, int cols, void* user);
 int pushlineTramp(int cols, const VTermScreenCell* cells, void* user);
 int poplineTramp(int cols, VTermScreenCell* cells, void* user);
@@ -107,6 +108,10 @@ struct VtermCore::Impl {
     int cursorCol = 0;
     int generation = 0;
     bool altscreen = false;
+    // M2 Task 6：OSC 0/2 标题 + bell（feed 锁内写，UI 线程锁内读）
+    std::string title;
+    uint32_t bellCount = 0;
+    std::function<void()> bellHandler;
     bool bracketedPaste = false;
     std::string* currentReply = nullptr;  // feed 期间非空（单 writer 线程内）
     // damage 合并矩形（end 端排他；dirty 才有效）
@@ -144,7 +149,7 @@ struct VtermCore::Impl {
             /* moverect    */ nullptr,
             /* movecursor  */ movecursorScreenTramp,
             /* settermprop */ settermpropTramp,
-            /* bell        */ nullptr,
+            /* bell        */ bellScreenTramp,
             /* resize      */ screenResizeTramp,
             /* sb_pushline */ pushlineTramp,
             /* sb_popline  */ poplineTramp,
@@ -270,6 +275,15 @@ struct VtermCore::Impl {
 
     void settermpropCbImpl(VTermProp prop, VTermValue* val) {
         if (prop == VTERM_PROP_ALTSCREEN && val) altscreen = val->boolean != 0;
+        // M2 Task 6：OSC 0/2 → 窗口标题（libvterm 已解析并转字符串）
+        if (prop == VTERM_PROP_TITLE && val && val->string.str != nullptr) {
+            title.assign(val->string.str, val->string.len);
+        }
+    }
+
+    void bellCbImpl() {
+        ++bellCount;
+        if (bellHandler) bellHandler();
     }
 
     int pushlineCbImpl(int c, const VTermScreenCell* lineCells) {
@@ -318,6 +332,11 @@ int movecursorScreenTramp(VTermPos pos, VTermPos old, int visible, void* user) {
     static_cast<VtermCore::Impl*>(user)->movecursorCbImpl(pos, old, visible);
     return 1;
 }
+int bellScreenTramp(void* user) {
+    static_cast<VtermCore::Impl*>(user)->bellCbImpl();
+    return 1;
+}
+
 int settermpropTramp(VTermProp prop, VTermValue* val, void* user) {
     static_cast<VtermCore::Impl*>(user)->settermpropCbImpl(prop, val);
     return 1;
@@ -439,6 +458,21 @@ bool VtermCore::selectionText(int rowStart, int colStart, int rowEnd, int colEnd
         out += line;
     }
     return true;
+}
+
+std::string VtermCore::title() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->title;
+}
+
+uint32_t VtermCore::bellCount() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->bellCount;
+}
+
+void VtermCore::setBellHandler(std::function<void()> handler) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->bellHandler = std::move(handler);
 }
 
 bool VtermCore::bracketedPasteEnabled() const {
