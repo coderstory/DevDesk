@@ -166,6 +166,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_proposals.cpp
     # 需-9 用量告警：纯判定（两档阈值 + 每档每日一次节流 + 跨档独立）+ 持久化往返
     test_modules/test_usage_alert.cpp
+    # bug476：安装镜像源设置的持久化往返（缺键旧文件 = 空；清空覆盖）
+    test_modules/test_memory_mirror_settings.cpp
     # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
     test_modules/test_memory_collect_wiring.cpp
     # 池3 G-1 控耗接线：infer 提炼闸（硬档恰等越线/每小时节流）+ 暂存队列 +

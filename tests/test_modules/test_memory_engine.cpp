@@ -342,7 +342,7 @@ REGISTER_TEST(memory_process_args_construction,
     DOCTEST_CHECK(venvArgs[1] == "-m");
     DOCTEST_CHECK(venvArgs[2] == "venv");
     // pip 首跑安装（IMP-114-3：钉版）
-    const auto pipArgs = buildPipInstallArgs(venv);
+    const auto pipArgs = buildPipInstallArgs(venv, nullptr, nullptr);
     DOCTEST_CHECK(contains(pipArgs, "-m"));
     DOCTEST_CHECK(contains(pipArgs, "pip"));
     DOCTEST_CHECK(contains(pipArgs, "telemem==1.10.1"));
@@ -417,6 +417,48 @@ REGISTER_TEST(memory_pip_mirror_flags,
     const auto emptyVal = buildPipInstallArgs(venv, "", "");
     DOCTEST_CHECK(!contains(emptyVal, "--index-url"));
     DOCTEST_CHECK(!contains(emptyVal, "--extra-index-url"));
+    return true;
+})
+
+// bug476：镜像注入优先级 UI > 环境变量 > 不传（resolver 纯函数，安装步同款调用）
+REGISTER_TEST(memory_pip_mirror_resolution_priority,
+              "bug476: 镜像优先级——UI 值优先；UI 空回退 env；双空不传；单项独立回退", {
+    const auto uiFirst = resolvePipMirror(
+        "https://ui.example/simple", "https://ui-extra.example/simple",
+        "https://env.example/simple", "https://env-extra.example/simple");
+    DOCTEST_CHECK_EQ(uiFirst.indexUrl, "https://ui.example/simple");
+    DOCTEST_CHECK_EQ(uiFirst.extraIndexUrl, "https://ui-extra.example/simple");
+    const auto envFallback = resolvePipMirror(
+        "", "", "https://env.example/simple", "https://env-extra.example/simple");
+    DOCTEST_CHECK_EQ(envFallback.indexUrl, "https://env.example/simple");
+    DOCTEST_CHECK_EQ(envFallback.extraIndexUrl, "https://env-extra.example/simple");
+    const auto none = resolvePipMirror("", "", nullptr, nullptr);
+    DOCTEST_CHECK(none.indexUrl.empty());
+    DOCTEST_CHECK(none.extraIndexUrl.empty());
+    // 单项混合：UI 主镜像 + env 备用镜像各自独立判定
+    const auto mixed = resolvePipMirror("https://ui.example/simple", "", nullptr,
+                                        "https://env-extra.example/simple");
+    DOCTEST_CHECK_EQ(mixed.indexUrl, "https://ui.example/simple");
+    DOCTEST_CHECK_EQ(mixed.extraIndexUrl, "https://env-extra.example/simple");
+    // resolver 输出落 pip argv：旗标与值成对
+    const auto args = buildPipInstallArgs(
+        "/memdata/venv", uiFirst.indexUrl.c_str(), uiFirst.extraIndexUrl.c_str());
+    DOCTEST_CHECK(contains(args, "--index-url"));
+    DOCTEST_CHECK(contains(args, "https://ui.example/simple"));
+    DOCTEST_CHECK(contains(args, "--extra-index-url"));
+    DOCTEST_CHECK(contains(args, "https://ui-extra.example/simple"));
+    const auto noneArgs = buildPipInstallArgs(
+        "/memdata/venv", none.indexUrl.c_str(), none.extraIndexUrl.c_str());
+    DOCTEST_CHECK(!contains(noneArgs, "--index-url"));
+    DOCTEST_CHECK(!contains(noneArgs, "--extra-index-url"));
+    return true;
+})
+
+REGISTER_TEST(memory_pip_failure_hint_points_to_settings_entry,
+              "bug476: pip 失败文案指向「设置 → 记忆 → 安装镜像源」新出口", {
+    const std::string hint = kPipFailureHint;
+    DOCTEST_CHECK(hint.find("安装镜像源") != std::string::npos);
+    DOCTEST_CHECK(hint.find("PIP_INDEX_URL") != std::string::npos);
     return true;
 })
 

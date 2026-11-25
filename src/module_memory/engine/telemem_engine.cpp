@@ -12,6 +12,7 @@
 #include "platform/process_runner.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <thread>
@@ -44,10 +45,9 @@ constexpr const char* kPythonMissingMessage =
     "macOS 可执行 brew install python@3.13 或 uv python install 3.13；"
     "Windows 可用 python.org 官网安装器或 uv python install 3.13。";
 
-// IMP-114-3：pip 失败文案固定尾缀（网络与镜像源指路；镜像经 PIP_INDEX_URL /
-// PIP_EXTRA_INDEX_URL 环境变量配置，安装命令已透传）
-constexpr const char* kPipFailureHint =
-    "请检查网络；可在环境变量 PIP_INDEX_URL 配置镜像源后重试";
+// IMP-114-3 / bug476：pip 失败文案固定尾缀（网络与镜像源指路；镜像经
+// 「设置 → 记忆 → 安装镜像源」或 PIP_INDEX_URL / PIP_EXTRA_INDEX_URL 配置，
+// 安装命令已透传）——常量在 telemem_process.h，单测同源锚定。
 
 std::filesystem::path venvDir() { return memoryDataDir() / "venv"; }
 std::filesystem::path configFilePath() {
@@ -189,6 +189,14 @@ void TelememEngine::stopAsync() {
     LOG_INFO("记忆引擎：已请求停止");
 }
 
+void TelememEngine::setPipMirror(const std::string& indexUrl,
+                                 const std::string& extraIndexUrl) {
+    std::lock_guard<std::mutex> lock(pipMu_);
+    if (pipIndexUrl_ == indexUrl && pipExtraIndexUrl_ == extraIndexUrl) return;
+    pipIndexUrl_ = indexUrl;
+    pipExtraIndexUrl_ = extraIndexUrl;
+}
+
 void TelememEngine::refreshEmbedProbe() {
     // 先在锁外做文件探测（几毫秒级 stat），出结果再进锁；非 idle 态直接不出锁覆写
     const auto dataDir = memoryDataDir();
@@ -297,7 +305,18 @@ void TelememEngine::runPipeline() {
                            30000);
         if (importRc != 0) {
             setState(State::Preparing, "安装 telemem（首次约几分钟，取决于网速）…");
-            const int rc = runInstallStep(buildPipInstallArgs(venv), kPipTimeoutMs);
+            // bug476：镜像注入优先级 UI 设置 > 环境变量 > 不传（resolver 纯函数）
+            PipMirror mirror;
+            {
+                std::lock_guard<std::mutex> lock(pipMu_);
+                mirror = resolvePipMirror(pipIndexUrl_, pipExtraIndexUrl_,
+                                          std::getenv("PIP_INDEX_URL"),
+                                          std::getenv("PIP_EXTRA_INDEX_URL"));
+            }
+            const int rc = runInstallStep(
+                buildPipInstallArgs(venv, mirror.indexUrl.c_str(),
+                                    mirror.extraIndexUrl.c_str()),
+                kPipTimeoutMs);
             if (rc != 0) {
                 setState(State::Failed, "pip 安装 telemem 失败（退出码 " +
                                             std::to_string(rc) + "）：" +

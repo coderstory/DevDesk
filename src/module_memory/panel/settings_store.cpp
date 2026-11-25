@@ -85,6 +85,8 @@ MemoryPanelSettings loadPanelSettings() {
         getInt64("usageHardBudgetTokens", kUsageHardBudgetTokensDefault),
         kLegacyUsageHardBudgetTokens, kUsageHardBudgetTokensDefault);
     s.inferHourlyLimit = getInt("inferHourlyLimit", 4);
+    s.pipIndexUrl = getStr("pipIndexUrl");
+    s.pipExtraIndexUrl = getStr("pipExtraIndexUrl");
     s.usageDayGate.armed = getBool("usageAlertDayArmed", true);
     s.usageDayGate.lastFireDay = getInt64("usageAlertDayLastDay", 0);
     s.usageSoftGate.armed = getBool("usageAlertSoftArmed", true);
@@ -116,6 +118,9 @@ core::Result<void> savePanelSettings(const MemoryPanelSettings& settings) {
             platform::json::JsonValue(settings.usageHardBudgetTokens));
     obj.set("inferHourlyLimit",
             platform::json::JsonValue(settings.inferHourlyLimit));
+    obj.set("pipIndexUrl", platform::json::JsonValue(settings.pipIndexUrl));
+    obj.set("pipExtraIndexUrl",
+            platform::json::JsonValue(settings.pipExtraIndexUrl));
     obj.set("usageAlertDayArmed",
             platform::json::JsonValue(settings.usageDayGate.armed));
     obj.set("usageAlertDayLastDay",

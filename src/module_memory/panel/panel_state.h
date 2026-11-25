@@ -100,6 +100,9 @@ public:
     void setTwoWordBaseline(int n);
     // need:380 B-5 用量告警单开关（阈值不再有 UI 入口，原键值继续生效）
     void setUsageAlertsEnabled(bool on);
+    // bug476：安装镜像源（trim 后落盘 + 同步安装引擎；空串 = 回退环境变量）
+    core::Result<void> setPipMirror(const std::string& indexUrl,
+                                    const std::string& extraIndexUrl);
     void markLlmImported(const std::string& profileName);
 
     // ── 审核操作（真接 ProposalStore；返回值供 toast）──

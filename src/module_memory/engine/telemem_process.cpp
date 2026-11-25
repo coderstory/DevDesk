@@ -40,9 +40,18 @@ std::vector<std::string> buildPipInstallArgs(
     return args;
 }
 
-std::vector<std::string> buildPipInstallArgs(const fs::path& venvDir) {
-    return buildPipInstallArgs(venvDir, std::getenv("PIP_INDEX_URL"),
-                               std::getenv("PIP_EXTRA_INDEX_URL"));
+// bug476：镜像优先级逐字段判定——UI 非空 > env 非空 > 空串（不传旗标）
+PipMirror resolvePipMirror(const std::string& uiIndexUrl,
+                           const std::string& uiExtraIndexUrl,
+                           const char* envIndexUrl,
+                           const char* envExtraIndexUrl) {
+    const auto pick = [](const std::string& ui, const char* env) {
+        if (!ui.empty()) return ui;
+        if (env != nullptr && *env != '\0') return std::string(env);
+        return std::string();
+    };
+    return {pick(uiIndexUrl, envIndexUrl),
+            pick(uiExtraIndexUrl, envExtraIndexUrl)};
 }
 
 std::vector<std::string> buildTelememServerArgs(const fs::path& venvDir,

@@ -101,6 +101,10 @@ private:
     void refreshLlmKeyState();
     void saveConfiguredLlmKey();
     void clearConfiguredLlmKey();
+    // bug476：安装镜像源配置卡（panel_settings.json 持久化；空 = 回退环境变量）
+    void refreshMirrorInputs();
+    void saveMirrorSettings();
+    void clearMirrorSettings();
 
     // 当前视图下标：0=主控台 1=记忆审核 2=配置
     int activeView_ = 0;
@@ -144,7 +148,9 @@ private:
     // need:181 三 TAB 分层状态：主控台「运行明细」折叠区（默认收起，L3）/
     // 引擎详情弹窗（L3）/ 配置页三折叠组（0 提炼端点 1 触发线 2 用量告警）
     bool engineDetailOpen_ = false;
-    std::array<bool, 3> cfgOpen_ = {};
+    // 折叠组展开态：0/1/2 = 三个折叠组；3 空闲（安全组常显、其 grp3.* 是既有
+    // 探针锚点，不重编号）；4 = 安装镜像源（bug476）
+    std::array<bool, 5> cfgOpen_ = {};
     // need:183：审核筛选同类收进下拉（类型/来源），开合态显式托管
     bool rvTypeDdOpen_ = false;
     bool rvSrcDdOpen_ = false;
@@ -163,6 +169,9 @@ private:
     std::string llmKeyMask_;      // 空 = 未配置；值形如 sk-****last4
     bool llmKeyEditing_ = false;  // 输入行显隐（已配置态点「修改」展开）
     std::string llmKeyInput_;     // 输入框草稿（onChange 同步）
+    // bug476：安装镜像源输入草稿（onStart/保存后回显落盘值）
+    std::string mirrorIndexInput_;
+    std::string mirrorExtraInput_;
 };
 
 } // namespace module::memory

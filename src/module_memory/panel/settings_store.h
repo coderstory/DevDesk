@@ -40,6 +40,9 @@ struct MemoryPanelSettings {
     // G-1 提炼节流（spec 控耗 2「每小时云端调用上限可配置，默认保守值」）：
     // 默认 4 次/小时（OQ-2 保守取值；独立于预算档，不随 bug490 阈值上调放大）
     int inferHourlyLimit = 4;                    // ≤0 = 关闭节流
+    // bug476：安装镜像源（pip 首跑安装用；空串 = 不传该旗标、回退环境变量）
+    std::string pipIndexUrl;        // --index-url
+    std::string pipExtraIndexUrl;   // --extra-index-url
     proposals::UsageAlertGate usageDayGate;
     proposals::UsageAlertGate usageSoftGate;
     proposals::UsageAlertGate usageHardGate;
