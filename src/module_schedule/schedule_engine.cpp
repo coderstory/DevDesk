@@ -168,7 +168,7 @@ void ScheduleEngine::tick(int64_t nowUnix) {
         // 时钟回拨/NTP（§4.8）：只更新 last_eval_at，不重放；下次按新时间重算。
         rollbackLastEval(nowUnix);
         lastTickNow_ = nowUnix;
-        channels_.flushAllToMainThread();
+        finishTick(nowUnix);
         return;
     }
     lastTickNow_ = nowUnix;
@@ -180,7 +180,7 @@ void ScheduleEngine::tick(int64_t nowUnix) {
     if (rules.isFail()) {
         LOG_ERROR("schedule.engine: 规则列表读取失败 " + rules.errorMessage());
         // 早退也必须 flush：本 tick 排进队列的全屏/toast 投递不能滞留。
-        channels_.flushAllToMainThread();
+        finishTick(nowUnix);
         return;
     }
     dueFires_.clear();
@@ -199,6 +199,16 @@ void ScheduleEngine::tick(int64_t nowUnix) {
     }
     dueFires_.clear();
     // 入队型渠道（全屏/toast）落 UI 的唯一时机（registry 契约：ticker onTick 每tick）。
+    finishTick(nowUnix);
+}
+
+void ScheduleEngine::setTickHook(std::function<void(std::int64_t)> hook) {
+    tickHook_ = std::move(hook);
+}
+
+void ScheduleEngine::finishTick(int64_t nowUnix) {
+    // 钩子（宿主装配的到期扫描）先于 flush：本轮入队的通知即刻可见
+    if (tickHook_) tickHook_(nowUnix);
     channels_.flushAllToMainThread();
 }
 

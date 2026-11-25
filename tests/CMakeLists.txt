@@ -252,6 +252,8 @@ add_executable(devdesk_tests
     test_modules/test_schedule_engine.cpp
     # 波 S7a 列表页/模块装配：装配排序/开关落库/归档折叠/系统段空注册表/注册表项完整
     test_modules/test_schedule_ui_list.cpp
+    # need453 待办到期提醒：到期投递/同截止去重/完成归档排除/节流/单轮上限下轮补投
+    test_modules/test_todo_due_watcher.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp

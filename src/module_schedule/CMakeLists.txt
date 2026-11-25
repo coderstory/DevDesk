@@ -15,6 +15,8 @@ add_library(devdesk_module_schedule STATIC
     channels/toast_channel.cpp
     channels/os_notification.cpp
     channels/silent_channel.cpp
+    # need453：待办到期扫描（挂在引擎 tick 钩子上，投递走渠道注册表）
+    todo_due_watcher.cpp
     # 波 S7a：系统定时只读来源接口 + 列表页 + 模块宿主
     schedule_provider.cpp
     schedule_ui_list.cpp

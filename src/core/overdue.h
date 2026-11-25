@@ -23,6 +23,15 @@ inline constexpr const char* kWhereSql =
     "due_at IS NOT NULL AND due_at < ? AND completed_at IS NULL "
     "AND column_id IN (SELECT id FROM todo_columns WHERE kind IN ('todo','doing'))";
 
+// 「到期即提醒」谓词（need453 待办到期提醒）：秒级口径——dueAt 已过即命中，
+// 与上方自然日「逾期」区分（逾期 = 过了截止日，本谓词 = 到了截止时刻）。
+// 列范围与 kWhereSql 一致：待办/进行中列；完成列自动置 completed_at、归档列
+// 已出范围，archived_at 显式排除属双保险。? = now（Unix 秒）。
+inline constexpr const char* kDueNowWhereSql =
+    "due_at IS NOT NULL AND due_at <= ? AND completed_at IS NULL "
+    "AND archived_at IS NULL "
+    "AND column_id IN (SELECT id FROM todo_columns WHERE kind IN ('todo','doing'))";
+
 // 与 kWhereSql 同口径的内存谓词（已取到行对象时用）；两形态语义必须同步。
 // 注意：这里不含列限定（行对象没有列 kind）——调用方必须由 SQL 先按
 // `column_id IN (... kind IN ('todo','doing'))` 过滤，再调用本谓词做第三只眼校验。
