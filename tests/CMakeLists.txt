@@ -230,7 +230,8 @@ add_executable(devdesk_tests
     test_modules/test_local_git_probe.cpp
     # F-18 记事本关联纯逻辑（接管退役 test_md_assoc_logic.cpp）
     test_modules/test_notepad_assoc.cpp
-    test_modules/test_settings.cpp    test_modules/test_terminal_keyencoder.cpp
+    test_modules/test_settings.cpp    test_modules/test_terminal_input_router.cpp
+    test_modules/test_terminal_keyencoder.cpp
     test_modules/test_terminal_controller.cpp
     test_modules/test_terminal_metrics.cpp
     test_modules/test_terminal_settings.cpp

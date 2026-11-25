@@ -234,9 +234,7 @@ GridLayout TerminalPage::compose(
         // 切换会话：选区行列锚在旧会话可视网格上，跨会话无效；滚动余量同理。
         // tabScroll_ 不清（P3-3）：TAB 栏横滚是栏视口态非会话态，切会话保位
         lastActiveIndex_ = controller.activeIndex();
-        selecting_ = false;
-        hasSelection_ = false;
-        scrollRemainder_ = 0.0f;
+        input_.reset();
         // 池#365：搜索命中行号锚在旧会话行号空间，切会话作废（查询保留续搜）
         search_.matchLine = -1;
         search_.matchOrdinal = 0;
@@ -528,45 +526,27 @@ GridLayout TerminalPage::compose(
                 .onPress([this, toPage, rowOf, colOf](const eui::PointerEvent& e,
                                                      const eui::Rect&) {
                     auto [lx, ly] = toPage(e);
-                    selecting_ = true;
-                    hasSelection_ = false;
-                    selARow_ = rowOf(ly);
-                    selACol_ = colOf(lx);
-                    selHRow_ = selARow_;
-                    selHCol_ = selACol_;
+                    input_.press({rowOf(ly), colOf(lx)});
                 })
                 .onMove([this, toPage, rowOf, colOf](const eui::PointerEvent& e, const eui::Rect&) {
-                    if (!selecting_) return false;
+                    if (!input_.pressing()) return false;
                     auto [lx, ly] = toPage(e);  // Move 已是逻辑，仅补页面原点（bug245）
-                    selHRow_ = rowOf(ly);
-                    selHCol_ = colOf(lx);
-                    hasSelection_ = true;
+                    input_.dragTo({rowOf(ly), colOf(lx)});
                     return true;
                 })
                 .onRelease([this, toPage, rowOf, colOf](const eui::PointerEvent& e,
                                                         const eui::Rect&) {
-                    if (!selecting_) return;
-                    selecting_ = false;
+                    if (!input_.pressing()) return;
                     auto [lx, ly] = toPage(e);
-                    selHRow_ = rowOf(ly);
-                    selHCol_ = colOf(lx);
-                    hasSelection_ = !(selARow_ == selHRow_ && selACol_ == selHCol_);
+                    input_.release({rowOf(ly), colOf(lx)});
                 })
                 .onScroll([this, ctrl](const core::ScrollEvent& e) {
                     Session* s = ctrl->active();
                     if (s == nullptr) return;
-                    // 池#364 根因：y 是档位不是像素。旧码按像素除 cellH（win 一档 1px、
-                    // ~cellH 档才滚 1 行=等效不可滚）且「offset -= lines」与 EUI-NEO 全仓
-                    // 口径（y>0=向上看更早）反向。档位累积换行、余数保留（触控板小数增量）。
-                    scrollRemainder_ += static_cast<float>(e.y) * kWheelLinesPerNotch;
-                    const int lines = static_cast<int>(scrollRemainder_);
-                    if (lines == 0) return;
-                    scrollRemainder_ -= static_cast<float>(lines);
-                    const int maxOffset = ctrl->activeScrollbackCount();
-                    s->scrollOffset = std::clamp(s->scrollOffset + lines, 0, maxOffset);
-                    // 滚动即清选区：选区行列锚在拖选时可视网格上（终端惯例）
-                    hasSelection_ = false;
-                    selecting_ = false;
+                    // 池#364 根因：y 是档位不是像素（滚轮换算/余数/清选区在路由组件内）
+                    s->scrollOffset =
+                        input_.scrollBy(static_cast<float>(e.y), s->scrollOffset,
+                                        ctrl->activeScrollbackCount());
                 })
                 .onKeyEvent([this, ctrl, onKeyBytes, onCopyText,
                              layout](const eui::KeyEvent& e) {
@@ -576,7 +556,7 @@ GridLayout TerminalPage::compose(
                     if (e.modifiers.control && e.key == eui::InputKey::C) {
                         std::string bytes;
                         if (terminal::encodeCtrlC(platform::terminalKeyConventions(),
-                                                  hasSelection_, e.modifiers.shift, bytes)) {
+                                                  input_.hasSelection(), e.modifiers.shift, bytes)) {
                             // P3-2：映射全用事件期现值——compose 捕获的 totalLines 在
                             // 新输出（scrollback push）后已过期，选区行号会被平移
                             Session* sNow = ctrl->active();
@@ -585,11 +565,11 @@ GridLayout TerminalPage::compose(
                             const int startLine =
                                 std::max(0, totalNow - layout.rows -
                                                 (sNow ? sNow->scrollOffset : 0));
-                            const int fR0 = selARow_ + startLine - sbNow;
-                            const int fR1 = selHRow_ + startLine - sbNow;
+                            const int fR0 = input_.anchor().row + startLine - sbNow;
+                            const int fR1 = input_.head().row + startLine - sbNow;
                             std::string sel;
                             if (fR0 >= 0 && fR1 >= 0 && fR1 < layout.rows &&
-                                ctrl->activeSelectionText(fR0, selACol_, fR1, selHCol_, sel)) {
+                                ctrl->activeSelectionText(fR0, input_.anchor().col, fR1, input_.head().col, sel)) {
                                 onCopyText(sel);
                                 return true;
                             }
@@ -619,15 +599,19 @@ GridLayout TerminalPage::compose(
                 .cursor(eui::CursorShape::IBeam);
 
             // 层 3：选区高亮 rects（primary α0.30 暗 / α0.18 亮；列→像素按 width 折算）
-            if (hasSelection_ && act != nullptr && !frame.cells.empty() && frame.cols > 0) {
-                const int top = std::min(selARow_, selHRow_);
-                const int bottom = std::max(selARow_, selHRow_);
+            if (input_.hasSelection() && act != nullptr && !frame.cells.empty() && frame.cols > 0) {
+                const int top = std::min(input_.anchor().row, input_.head().row);
+                const int bottom = std::max(input_.anchor().row, input_.head().row);
                 const float selAlpha = t.isDark ? 0.30f : 0.18f;
                 const int startLine = std::max(0, totalLines - layout.rows - act->scrollOffset);
                 for (int r = std::max(top, 0); r <= bottom && r < layout.rows; r++) {
-                    const int c0 = (r == top) ? std::min(selACol_, selHCol_) : 0;
+                    const int c0 = (r == top)
+                                       ? std::min(input_.anchor().col, input_.head().col)
+                                       : 0;
                     const int c1 =
-                        (r == bottom) ? std::max(selACol_, selHCol_) : std::max(1, layout.cols);
+                        (r == bottom)
+                            ? std::max(input_.anchor().col, input_.head().col)
+                            : std::max(1, layout.cols);
                     if (c1 <= c0) continue;
                     const int frameRow = r + startLine - sb;
                     if (frameRow < 0 || frameRow >= frame.rows) continue;
@@ -1077,7 +1061,7 @@ GridLayout TerminalPage::compose(
                                             .states(t.colors.primary, t.colors.primaryHover,
                                                     t.colors.primaryPressed)
                                             .onClick([this, ctrl, activeIdx]() {
-                                                scrollRemainder_ = 0.0f; // P3-1：重启=全新输出流
+                                                input_.reset(); // P3-1：重启=全新输出流
                                                 ctrl->restartSession(activeIdx);
                                             });
                                         ui.text("term.overlay.retry.label")

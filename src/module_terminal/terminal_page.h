@@ -16,6 +16,7 @@
 
 #include "terminal_fullscreen_bridge.h"
 #include "terminal_grid_widget.h"
+#include "terminal_input_router.h"
 #include "terminal_metrics.h"
 #include "terminal_search.h"
 #include "terminal_session_controller.h"
@@ -79,16 +80,15 @@ public:
         app::terminal_fullscreen::setCollapsed(fullscreen_);
     }
     // 拖选范围（module Cmd+C 经 controller.activeSelectionText 提取）
-    bool hasSelection() const { return hasSelection_; }
-    int selARow() const { return selARow_; }
-    int selACol() const { return selACol_; }
-    int selHRow() const { return selHRow_; }
-    int selHCol() const { return selHCol_; }
+    bool hasSelection() const { return input_.hasSelection(); }
+    int selARow() const { return input_.anchor().row; }
+    int selACol() const { return input_.anchor().col; }
+    int selHRow() const { return input_.head().row; }
+    int selHCol() const { return input_.head().col; }
 
 private:
     TerminalCellMetrics metrics_{};  // 每帧刷新（(fontFamily,fontSize) 复合键缓存）
     TerminalGridWidget grid_;
-    float scrollRemainder_ = 0.0f;
     int pendingRows_ = 0;
     int pendingCols_ = 0;
     std::chrono::steady_clock::time_point pendingSince_{}; // bug248：resize 去抖计时
@@ -103,10 +103,8 @@ private:
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 池#365：终端历史搜索态（成员级存活——搜索条闭包跨帧引用）
     TerminalSearchState search_;
-    // 拖选（可视网格行列）
-    bool selecting_ = false;
-    bool hasSelection_ = false;
-    int selARow_ = 0, selACol_ = 0, selHRow_ = 0, selHCol_ = 0;
+    // 拖选/滚轮输入路由（M2 Task 1：从 compose 抽出的纯状态机）
+    TerminalInputRouter input_;
     // TAB 栏交互态
     float tabScroll_ = 0.0f;         // TAB 区横滚偏移（溢出时 >0；栏视口态，切会话保位）
     int hoveredTabIndex_ = -1;       // 非激活 TAB hover（关闭钮淡入）
