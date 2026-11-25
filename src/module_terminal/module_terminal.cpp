@@ -1,5 +1,9 @@
 #include "module_terminal.h"
 
+#include <eui/app.h>
+
+#include "terminal_quit_guard.h"
+
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/service_locator.h"
@@ -9,6 +13,12 @@
 #include <core/platform/platform.h>  // core::platform::requestUiUpdate（bug249 输出唤醒出口）
 
 namespace terminal {
+
+namespace {
+// M2 Task 3：退出守卫需要一个「当前终端模块」入口（EUI quit guard 是无参回调，
+// 先例 = notepad detail::sessionRegistry）。
+TerminalModule* g_terminalModule = nullptr;
+} // namespace
 
 TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
     // 设置单一真源经桥收口：网页与桌面「完成」都走 bridge_.writeSettings；重绘用
@@ -30,6 +40,25 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
     // bug278④：面板结果通道装配（完成/× 由页面转发到 finishSettingsPanel）
     page_.setPanelResultHandler([this](bool commit) { finishSettingsPanel(commit); });
     // M2：Cmd/Ctrl + = / - / 0 字号快捷缩放——delta=0 回默认；改值即持久化并下发网页
+    g_terminalModule = this;
+    // M2 Task 3：关标签走模块裁定——Running 先弹确认，其余直关
+    page_.setCloseTabHandler([this](int index) {
+        const Session* s = controller_.at(index);
+        if (s != nullptr && stateNeedsCloseConfirm(s->state)) {
+            page_.requestCloseConfirm(index);
+        } else {
+            controller_.closeSession(index);
+        }
+    });
+    page_.setConfirmHandler([this](TerminalPage::ConfirmKind kind, int index, bool ok) {
+        if (!ok) return;
+        if (kind == TerminalPage::ConfirmKind::QuitAll) {
+            while (!controller_.empty()) controller_.closeSession(0);
+            app::requestExit();
+        } else if (kind == TerminalPage::ConfirmKind::CloseOne) {
+            controller_.closeSession(index);
+        }
+    });
     page_.setFontSizeHandler([this](int delta) {
         const int next = delta == 0 ? kFontSizeDefault : settings_.fontSize + delta;
         settings_.fontSize = clampedFontSize(next);
@@ -38,7 +67,24 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
     });
 }
 
-TerminalModule::~TerminalModule() { stopWebService(); }
+TerminalModule::~TerminalModule() {
+    stopWebService();
+    if (g_terminalModule == this) g_terminalModule = nullptr;
+}
+
+bool TerminalModule::needsQuitConfirm() const {
+    return anyRunningSession(controller_);
+}
+
+void TerminalModule::requestQuitConfirm() { page_.requestQuitConfirm(); }
+
+bool terminalQuitGuard() {
+    if (g_terminalModule == nullptr) return true;
+    if (!g_terminalModule->needsQuitConfirm()) return true;
+    // 有 Running 会话：弹页内确认并拦截本次退出；确认后关全部会话再 requestExit
+    g_terminalModule->requestQuitConfirm();
+    return false;
+}
 
 core::PageId TerminalModule::pageId() const { return core::PageId::Terminal; }
 std::string TerminalModule::displayName() const { return "终端"; }

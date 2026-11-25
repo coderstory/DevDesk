@@ -5,6 +5,7 @@
 #include "module_terminal/module_terminal.h"
 #include "module_terminal/terminal_search.h"
 #include "module_terminal/terminal_text_util.h"
+#include "module_terminal/terminal_quit_guard.h"
 #include "module_terminal/terminal_session_controller.h"
 
 #include <algorithm>
@@ -643,5 +644,16 @@ REGISTER_TEST(terminalTextWordBounds,
     auto w6 = wordBoundsAt("", 3);
     DOCTEST_CHECK_EQ(w6.first, 3);
     DOCTEST_CHECK_EQ(w6.second, 4);
+    return true;
+})
+
+REGISTER_TEST(terminalQuitConfirmDecision,
+              "terminal quit guard: 只有 Running 会话需要关闭/退出确认", {
+    using terminal::stateNeedsCloseConfirm;
+    DOCTEST_CHECK_TRUE(stateNeedsCloseConfirm(terminal::SessionState::Running));
+    DOCTEST_CHECK_FALSE(stateNeedsCloseConfirm(terminal::SessionState::Idle));
+    DOCTEST_CHECK_FALSE(stateNeedsCloseConfirm(terminal::SessionState::Starting));
+    DOCTEST_CHECK_FALSE(stateNeedsCloseConfirm(terminal::SessionState::Exited));
+    DOCTEST_CHECK_FALSE(stateNeedsCloseConfirm(terminal::SessionState::Failed));
     return true;
 })

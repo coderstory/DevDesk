@@ -190,6 +190,16 @@ IdleFrameTick& idleFrameTick() {
 }
 } // namespace
 
+void TerminalPage::requestQuitConfirm() {
+    confirmKind_ = ConfirmKind::QuitAll;
+    confirmIndex_ = -1;
+}
+
+void TerminalPage::requestCloseConfirm(int index) {
+    confirmKind_ = ConfirmKind::CloseOne;
+    confirmIndex_ = index;
+}
+
 GridLayout TerminalPage::compose(
     eui::Ui& ui, const eui::Screen& screen, SessionController& controller,
     const std::function<void(const uint8_t*, int32_t)>& onKeyBytes,
@@ -1111,7 +1121,10 @@ GridLayout TerminalPage::compose(
                                                 else if (hoveredCloseIndex_ == i)
                                                     hoveredCloseIndex_ = -1;
                                             })
-                                            .onClick([ctrl, i]() { ctrl->closeSession(i); });
+                                            .onClick([this, ctrl, i]() {
+                                                if (onCloseTab_) onCloseTab_(i);
+                                                else ctrl->closeSession(i);
+                                            });
                                     });
                             }
                             x += w + kTabGap;
@@ -1337,6 +1350,86 @@ GridLayout TerminalPage::compose(
                     })
                     .onOpenChange([this](bool v) { ctxMenuOpen_ = v; })
                     .build();
+            }
+
+            // 层 9.4（M2 Task 3）：会话关闭/退出确认卡（Running 才由模块置位）
+            if (confirmKind_ != ConfirmKind::None) {
+                const float cardW = 380.0f;
+                const float cardH = 168.0f;
+                const float cx = (screen.width - cardW) * 0.5f;
+                const float cy = (screen.height - cardH) * 0.5f;
+                ui.rect("term.confirm.scrim")
+                    .size(screen.width, screen.height)
+                    .color(Color{0.0f, 0.0f, 0.0f, 0.35f});
+                ui.stack("term.confirm.card")
+                    .position(cx, cy)
+                    .size(cardW, cardH)
+                    .content([&] {
+                        ui.rect("term.confirm.bg")
+                            .size(cardW, cardH)
+                            .color(ui_kit::cardSurface(t))
+                            .radius(t.sizes.radius)
+                            .border(1.0f, t.colors.borderDefault)
+                            .build();
+                        const bool quitAll = confirmKind_ == ConfirmKind::QuitAll;
+                        ui.text("term.confirm.title")
+                            .position(16.0f, 18.0f)
+                            .size(cardW - 32.0f, 28.0f)
+                            .text(quitAll ? "有终端会话正在运行" : "该标签的会话正在运行")
+                            .fontSize(core::theme::scaled(15.0f))
+                            .color(t.colors.textPrimary)
+                            .build();
+                        ui.text("term.confirm.body")
+                            .position(16.0f, 50.0f)
+                            .size(cardW - 32.0f, 22.0f)
+                            .text(quitAll ? "退出将终止全部会话，正在跑的命令与输出会丢失。"
+                                          : "关闭将终止该会话，正在跑的命令与输出会丢失。")
+                            .fontSize(core::theme::scaled(12.5f))
+                            .color(t.colors.textSecondary)
+                            .build();
+                        ui.rect("term.confirm.ok")
+                            .position(16.0f, cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .radius(8.0f)
+                            .states(t.colors.errorText, t.colors.errorText, t.colors.errorText)
+                            .onClick([this]() {
+                                const int idx = confirmIndex_;
+                                const ConfirmKind kind = confirmKind_;
+                                confirmKind_ = ConfirmKind::None;
+                                confirmIndex_ = -1;
+                                if (onConfirm_) onConfirm_(kind, idx, true);
+                            });
+                        ui.text("term.confirm.ok.label")
+                            .position(16.0f, cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .text(quitAll ? "关闭全部并退出" : "关闭标签")
+                            .fontSize(core::theme::scaled(13.0f))
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.onPrimary)
+                            .build();
+                        ui.rect("term.confirm.cancel")
+                            .position(16.0f + (cardW - 48.0f) * 0.5f + 16.0f,
+                                      cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .radius(8.0f)
+                            .states(t.colors.hover, t.colors.active, t.colors.hover)
+                            .onClick([this]() {
+                                confirmKind_ = ConfirmKind::None;
+                                confirmIndex_ = -1;
+                                if (onConfirm_) onConfirm_(ConfirmKind::None, -1, false);
+                            });
+                        ui.text("term.confirm.cancel.label")
+                            .position(16.0f + (cardW - 48.0f) * 0.5f + 16.0f,
+                                      cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .text("取消")
+                            .fontSize(core::theme::scaled(13.0f))
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textPrimary)
+                            .build();
+                    });
             }
 
             // 层 9：终端设置面板（need250 页内模态；设计 §2/§4）。scrim α0.35 盖整页面区

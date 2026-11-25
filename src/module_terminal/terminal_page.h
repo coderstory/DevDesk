@@ -50,6 +50,16 @@ public:
         onPanelResult_ = std::move(h);
     }
 
+    // M2 Task 3：会话关闭/退出确认（kind + 会话序号；ok=false 表示取消）
+    enum class ConfirmKind { None, QuitAll, CloseOne };
+    using ConfirmHandler = std::function<void(ConfirmKind, int, bool)>;
+    void setConfirmHandler(ConfirmHandler h) { onConfirm_ = std::move(h); }
+    void requestQuitConfirm();
+    void requestCloseConfirm(int index);
+    bool confirmOpen() const { return confirmKind_ != ConfirmKind::None; }
+    // 关标签请求转交模块裁定（Running 才弹确认）
+    void setCloseTabHandler(std::function<void(int)> h) { onCloseTab_ = std::move(h); }
+
     // M2 Task 2：字号快捷缩放通道（delta = +1/-1；0 = 恢复默认）。模块侧落库+下发网页。
     void setFontSizeHandler(std::function<void(int)> h) { onFontSize_ = std::move(h); }
 
@@ -104,6 +114,10 @@ private:
     float panelScroll_ = 0.0f;       // 面板内容区滚动偏移（超高内滚）
     std::function<void(bool)> onPanelResult_;  // bug278④ 面板结果通道（完成/×）
     std::function<void(int)> onFontSize_;      // M2：Cmd/Ctrl +/−/0 字号通道
+    ConfirmKind confirmKind_ = ConfirmKind::None;
+    int confirmIndex_ = -1;
+    ConfirmHandler onConfirm_;
+    std::function<void(int)> onCloseTab_;
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 池#365：终端历史搜索态（成员级存活——搜索条闭包跨帧引用）
     TerminalSearchState search_;

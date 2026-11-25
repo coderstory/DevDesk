@@ -1,6 +1,8 @@
 // 应用装配层实现，约定见 app_assembly.h
 #include "app_assembly.h"
 
+#include "module_terminal/terminal_quit_guard.h"
+
 #include "app_sidebar.h"
 #include "core/logging.h"
 #include "core/database.h"
@@ -97,7 +99,10 @@ std::vector<::core::PageId> assembleAndStart(
     // 未保存保护 quit guard（need263 批 4 F-05/D-3）：主循环消费退出请求时
     // 逐窗问 notepad 保护链（脏窗弹三选）；全干净/空注册表即放行，不拦
     // 无记事本窗的常规退出。实现 = module::notepad::notepadQuitGuard。
-    app::setQuitGuard(module::notepad::notepadQuitGuard);
+    // M2 Task 3：终端 Running 会话也进退出裁决——先问未保存（notepad），再问运行中终端。
+    app::setQuitGuard([]() {
+        return module::notepad::notepadQuitGuard() && terminal::terminalQuitGuard();
+    });
 
     armExitHook();
     return registered;

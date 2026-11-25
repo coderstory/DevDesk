@@ -37,6 +37,10 @@ public:
     // 模块级键盘兜底（Cmd+C 选区复制）
     bool onKeyEvent(const eui::KeyEvent& event) override;
 
+    // M2 Task 3：退出守卫（app::setQuitGuard 组合入口）
+    bool needsQuitConfirm() const;
+    void requestQuitConfirm();
+
     // 测试缝（bug247 doctest）：当前会话数（只读透传 controller）
     int sessionCount() const { return controller_.count(); }
     // 测试缝（bug406 doctest）：后台建会话结果要靠 pollAll 收割；生产走 compose → pollAll
