@@ -59,7 +59,7 @@ REGISTER_TEST(frameAnsiPalette,
     auto lightBlue = terminal::ansiIndexedColor(4, false);
     DOCTEST_CHECK(colorNear(lightBlue, 0x25 / 255.0f, 0x63 / 255.0f, 0xEB / 255.0f));
     // 越界回落 index7（暗套 #C9C5BD）
-    auto fallback = terminal::ansiIndexedColor(99, true);
+    auto fallback = terminal::ansiIndexedColor(256, true);
     DOCTEST_CHECK(colorNear(fallback, 0xC9 / 255.0f, 0xC5 / 255.0f, 0xBD / 255.0f));
     return true;
 })
@@ -79,5 +79,22 @@ REGISTER_TEST(frameEmptyRow,
     std::vector<platform::TerminalCell> row(8);
     auto runs = terminal::rowRuns(row.data(), 8, true);
     DOCTEST_CHECK(runs.empty());
+    return true;
+})
+
+REGISTER_TEST(frameIndexed256,
+              "terminal frame: 256 色索引表（色立方 + 24 级灰）", {
+    // 色立方：16→黑、196→纯红、231→纯白；灰阶：232→8、255→238
+    DOCTEST_CHECK(colorNear(terminal::ansiIndexedColor(16, true), 0.0f, 0.0f, 0.0f));
+    DOCTEST_CHECK(colorNear(terminal::ansiIndexedColor(196, true), 1.0f, 0.0f, 0.0f));
+    DOCTEST_CHECK(colorNear(terminal::ansiIndexedColor(231, true), 1.0f, 1.0f, 1.0f));
+    DOCTEST_CHECK(colorNear(terminal::ansiIndexedColor(232, true),
+                            8 / 255.0f, 8 / 255.0f, 8 / 255.0f));
+    DOCTEST_CHECK(colorNear(terminal::ansiIndexedColor(255, true),
+                            238 / 255.0f, 238 / 255.0f, 238 / 255.0f));
+    // 16–255 不随主题漂移（两套表只覆盖 0–15）
+    auto a = terminal::ansiIndexedColor(196, true);
+    auto b = terminal::ansiIndexedColor(196, false);
+    DOCTEST_CHECK(colorNear(a, b.r, b.g, b.b));
     return true;
 })

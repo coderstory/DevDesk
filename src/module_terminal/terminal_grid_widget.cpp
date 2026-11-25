@@ -245,8 +245,19 @@ core::Color ansiIndexedColor(int index, bool darkTheme) {
         hexRGB(0x6B7280), hexRGB(0xEF4444), hexRGB(0x22C55E), hexRGB(0xD97706),
         hexRGB(0x3B82F6), hexRGB(0xC026D3), hexRGB(0x0891B2), hexRGB(0x111827),
     };
-    if (index < 0 || index > 15) return darkTheme ? kDark[7] : kLight[7];
-    return darkTheme ? kDark[index] : kLight[index];
+    if (index < 0 || index > 255) return darkTheme ? kDark[7] : kLight[7];
+    if (index <= 15) return darkTheme ? kDark[index] : kLight[index];
+    // bug509：16–255 走 xterm 标准表，与主题无关（两套主题表只覆盖 0–15）。
+    // 16–231 = 6×6×6 色立方（各级 0/95/135/175/215/255），232–255 = 24 级灰（8 + 10n）。
+    if (index < 232) {
+        const int n = index - 16;
+        auto level = [](int v) { return static_cast<uint32_t>(v == 0 ? 0 : 55 + 40 * v); };
+        const uint32_t rgb = (level(n / 36) << 16) | (level((n % 36) / 6) << 8) |
+                             level(n % 6);
+        return hexRGB(rgb);
+    }
+    const uint32_t gray = static_cast<uint32_t>(8 + 10 * (index - 232));
+    return hexRGB((gray << 16) | (gray << 8) | gray);
 }
 
 namespace {
