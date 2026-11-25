@@ -688,7 +688,6 @@ foreach(_probe_source ${_devdesk_probe_sources})
         ${CMAKE_SOURCE_DIR}/src/module_wallpaper
     )
     target_link_libraries(${_probe_name} PRIVATE
-        devdesk_home_anim
         devdesk_module_home
         devdesk_module_markdown
         devdesk_module_notepad
@@ -703,6 +702,9 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_release
         devdesk_module_schedule
         devdesk_module_terminal
+        # 不能提前到 module_* 之前：静态库单趟解析，home/settings 模块引用
+        # home_anim::* 符号，提前列时链接必报 undefined reference。
+        devdesk_home_anim
     )
     if(TARGET devdesk_terminal_bridge)
         target_link_libraries(${_probe_name} PRIVATE devdesk_terminal_bridge)
