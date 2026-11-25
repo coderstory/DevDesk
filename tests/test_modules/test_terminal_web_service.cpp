@@ -334,17 +334,49 @@ REGISTER_TEST(web_origin_host_rejected, "web: 伪造 Host/Origin 被判定拒绝
     return true;
 })
 
-REGISTER_TEST(web_settings_startup_dir_validation, "web: 设置唯一入口校验启动目录可进入", {
+REGISTER_TEST(web_settings_startup_dir_save_unblocked,
+              "web: 保存不校验启动目录（不可用照存成功）+ 持久化失败回滚", {
     WebTerminalService service;
+    auto sub = service.bridgeForTest().subscribe([](const std::string& text) { return text; });
+    DOCTEST_CHECK(sub != nullptr);
+    auto lastSettingsEvent = [&]() {
+        std::lock_guard<std::mutex> lock(sub->mutex);
+        return sub->data.empty() ? std::string() : sub->data.back();
+    };
+
+    // need#452 契约（设计 §9）：保存不拦截——目录是快捷方式不是承诺，不存在/不可进入照存
+    // 成功，不报 ValidationError；可用性由启动侧严格校验（spawn 语义不变）。
     core::TerminalSettingsPatch bad;
     bad.startupDir = std::string("/definitely/not/a/dir/need490");
-    auto rejected = service.writeSettings(bad);
-    DOCTEST_CHECK(rejected.isFail());
-    DOCTEST_CHECK(rejected.errorCode() == core::ErrorCode::ValidationError);
+    auto saved = service.writeSettings(bad);
+    DOCTEST_CHECK(saved.isOk());
+    const auto firstEvent = platform::json::parse(lastSettingsEvent());
+    DOCTEST_CHECK(firstEvent.isOk());
+    const auto firstObj = firstEvent.value().asObject();
+    DOCTEST_CHECK_EQ(firstObj.get("ev").asString(), std::string("settings"));
+    DOCTEST_CHECK_EQ(firstObj.get("d").asObject().get("startupDir").asString(), bad.startupDir);
+
+    // 持久化失败：错误通道保留（FileWriteFailed），内存回滚到上一值。
+    service.setSettingsPersist([](const core::TerminalSettingsPatch&) {
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed, "persist failed");
+    });
+    core::TerminalSettingsPatch bad2;
+    bad2.startupDir = std::string("Z:/definitely/not/exist/need490b");
+    auto failed = service.writeSettings(bad2);
+    DOCTEST_CHECK(failed.isFail());
+    DOCTEST_CHECK(failed.errorCode() == core::ErrorCode::FileWriteFailed);
+
+    service.setSettingsPersist({});
+    DOCTEST_CHECK(service.writeSettings(core::TerminalSettingsPatch{}).isOk());
+    const auto rolledBack = platform::json::parse(lastSettingsEvent());
+    DOCTEST_CHECK(rolledBack.isOk());
+    DOCTEST_CHECK_EQ(rolledBack.value().asObject().get("d").asObject().get("startupDir").asString(),
+                     bad.startupDir);  // 失败的 bad2 未落内存
 
     core::TerminalSettingsPatch good;
     good.startupDir = std::filesystem::temp_directory_path().string();
     DOCTEST_CHECK(service.writeSettings(good).isOk());
+    service.bridgeForTest().unsubscribe(sub);
     return true;
 })
 
