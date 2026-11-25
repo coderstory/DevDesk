@@ -14,9 +14,26 @@
 namespace platform {
 
 namespace {
-// 与 Swift BridgeLimits.cellCapacity（200 列 × 60 行）镜像同值；两侧由 POC overflow 模式锁定。
-constexpr int32_t kCellCapacity = 200 * 60;
+// 与 Swift BridgeLimits（640 列 × 240 行）镜像同值（bug508）；改一侧必须同改另一侧。
+constexpr int32_t kMaxCols = 640;
+constexpr int32_t kMaxRows = 240;
+constexpr int32_t kCellCapacity = kMaxCols * kMaxRows;
 } // namespace
+
+GridSize clampGridSize(int32_t rows, int32_t cols) {
+    GridSize out{rows, cols, false};
+    if (out.rows > kMaxRows) {
+        out.rows = kMaxRows;
+        out.clamped = true;
+    }
+    if (out.cols > kMaxCols) {
+        out.cols = kMaxCols;
+        out.clamped = true;
+    }
+    if (out.rows < 1) out.rows = 1;
+    if (out.cols < 1) out.cols = 1;
+    return out;
+}
 
 struct SwiftBridgeSession::Impl {
     // Swift 互操作对象不可默认构造（Optional/类默认 ctor 私有），经移动赋值持有
@@ -25,6 +42,7 @@ struct SwiftBridgeSession::Impl {
     std::vector<CortaBridge::BridgeCell> cells =
         std::vector<CortaBridge::BridgeCell>(kCellCapacity, CortaBridge::BridgeCell::init());
     CortaBridge::BridgeCellMeta meta = CortaBridge::BridgeCellMeta::init();
+    bool resizeWarned = false;
 };
 
 SwiftBridgeSession::SwiftBridgeSession() = default;
@@ -48,8 +66,14 @@ std::unique_ptr<SwiftBridgeSession> SwiftBridgeSession::spawn(
     using OptString = swift::Optional<swift::String>;
     const OptString dirArg =
         dir.empty() ? OptString::none() : OptString::some(swift::String(dir));
+    // bug508：尺寸先钳制到镜像上限，避免 spawn 出超过快照容量的网格（否则整帧丢弃=白屏）
+    const GridSize grid = clampGridSize(rows, cols);
+    if (grid.clamped) {
+        LOG_WARN("Terminal bridge: spawn 尺寸超快照上限，已钳制到 " +
+                 std::to_string(grid.cols) + "x" + std::to_string(grid.rows));
+    }
     s->impl_ = std::make_unique<Impl>(
-        CortaBridge::CortaBridgeSession::spawnInteractive(shell, rows, cols, dirArg));
+        CortaBridge::CortaBridgeSession::spawnInteractive(shell, grid.rows, grid.cols, dirArg));
     if (s->impl_->session.isNone()) return nullptr;
     return s;
 }
@@ -67,14 +91,21 @@ bool SwiftBridgeSession::write(const uint8_t* bytes, int32_t count, bool paste) 
 
 void SwiftBridgeSession::resize(int32_t rows, int32_t cols) {
     if (impl_->session.isNone()) return;
-    impl_->session.getSome().resize(rows, cols);
+    // bug508：窗口拖到超过镜像上限时钳制并只告警一次（会话内布尔防刷屏）
+    const GridSize grid = clampGridSize(rows, cols);
+    if (grid.clamped && !impl_->resizeWarned) {
+        impl_->resizeWarned = true;
+        LOG_WARN("Terminal bridge: resize 尺寸超快照上限，已钳制到 " +
+                 std::to_string(grid.cols) + "x" + std::to_string(grid.rows));
+    }
+    impl_->session.getSome().resize(grid.rows, grid.cols);
 }
 
 bool SwiftBridgeSession::snapshotCells(int32_t* rows, int32_t* cols, int32_t* cursorRow,
                                        int32_t* cursorCol, std::vector<TerminalCell>& out) {
     if (impl_->session.isNone()) return false;
     if (!impl_->session.getSome().snapshotCells(&impl_->meta, impl_->cells.data(), kCellCapacity)) {
-        LOG_WARN("Terminal bridge: 快照超出镜像容量（rows*cols > 12000），帧跳过");
+        LOG_WARN("Terminal bridge: 快照超出镜像容量（rows*cols > 153600），帧跳过");
         return false;
     }
     *rows = impl_->meta.getRows();

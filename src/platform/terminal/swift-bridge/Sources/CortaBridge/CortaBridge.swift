@@ -34,14 +34,15 @@ public struct BridgeStatus {
     public init() {}
 }
 
-/// 审计 P2-A 落定：可视网格容量上限 200 列 × 60 行 = 12000 cell
-/// （覆盖 POC-4 的 80×24=1920 基准与 20×6 极小窗下限）。
+/// 可视网格容量上限 640 列 × 240 行 = 153600 cell。
+/// bug508 起因：旧上限 200×60=12000 在 4K 外接屏或 12px 小字号下（列数 ≈550）整帧丢弃 → 白屏；
+/// 新上限按 640×240 覆盖 6K 屏 + 小字号余量，镜像缓冲常驻增量 ≈3MB（五维预算内）。
 /// 溢出契约：rows*cols > cellCapacity 时 snapshotCells 返回 false，不部分拷贝；
-/// C++ 侧镜像同值常量（swift_bridge.h），两侧以 POC 断言锁定一致。
+/// C++ 侧镜像同值常量（swift_bridge.cpp kCellCapacity），两侧以用例锁定一致。
 public enum BridgeLimits {
-    public static let maxCols = 200
-    public static let maxRows = 60
-    public static let cellCapacity = maxCols * maxRows  // 12000
+    public static let maxCols = 640
+    public static let maxRows = 240
+    public static let cellCapacity = maxCols * maxRows  // 153600
 }
 
 /// spawn 错误盒（let 静态实例 = 并发安全持有）。

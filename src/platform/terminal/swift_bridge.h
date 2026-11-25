@@ -16,6 +16,16 @@ namespace platform {
 // 语义对齐，均不依赖进程 cwd）。自由函数供单测直测传参链。
 std::string resolveSpawnWorkDir(const std::string& workDir);
 
+// bug508：网格尺寸钳制结果（rows/cols 已限幅；clamped=true 表示发生过钳制）
+struct GridSize {
+    int32_t rows;
+    int32_t cols;
+    bool clamped;
+};
+
+// 钳制到快照镜像上限（640 列 × 240 行，与 Swift BridgeLimits 镜像同值）。纯函数可单测。
+GridSize clampGridSize(int32_t rows, int32_t cols);
+
 // 一个 Swift 会话的 C++ 侧持有者。所有方法主线程调用（技术卡 §5.3）。
 class SwiftBridgeSession {
 public:

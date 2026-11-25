@@ -78,6 +78,31 @@ final class BridgeFeedTests: XCTestCase {
         s.stop()
     }
 
+
+    func testBridgeLimitsRaisedForLargeScreens() {
+        XCTAssertEqual(BridgeLimits.maxCols, 640, "bug508：列上限应为 640")
+        XCTAssertEqual(BridgeLimits.maxRows, 240, "bug508：行上限应为 240")
+        XCTAssertEqual(BridgeLimits.cellCapacity, 640 * 240)
+    }
+
+    func testSnapshotAtNewCapacityAndOverflowContract() {
+        // 4K 外接屏 + 12px 字号（约 135×550）必须能拍到
+        let s = make("sleep 0.5", rows: 135, cols: 550)
+        usleep(150_000)
+        var meta = BridgeCellMeta()
+        var cells = [BridgeCell](repeating: BridgeCell(), count: BridgeLimits.cellCapacity)
+        XCTAssertTrue(s.snapshotCells(
+            meta: &meta, cells: &cells, capacity: Int32(BridgeLimits.cellCapacity)))
+        XCTAssertEqual(meta.rows, 135)
+        XCTAssertEqual(meta.cols, 550)
+        // 容量不足 → false 且不部分拷贝（meta 不被改写）
+        var small = [BridgeCell](repeating: BridgeCell(), count: 100)
+        var meta2 = BridgeCellMeta()
+        XCTAssertFalse(s.snapshotCells(meta: &meta2, cells: &small, capacity: 100))
+        XCTAssertEqual(meta2.rows, 0, "溢出时必须不部分拷贝")
+        s.stop()
+    }
+
     func testScrollbackOrderAndContent() {
         let s = make("seq 1 60", rows: 10, cols: 40)
         waitExit(s)

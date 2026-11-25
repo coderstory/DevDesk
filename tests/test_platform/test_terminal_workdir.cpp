@@ -156,3 +156,29 @@ REGISTER_TEST(terminal_workdir_e2e_bash_bare_name,
 })
 
 #endif // __APPLE__
+
+REGISTER_TEST(terminal_bridge_clamp,
+              "terminal_bridge: 网格尺寸钳制到快照镜像上限（bug508）", {
+    auto normal = platform::clampGridSize(24, 80);
+    DOCTEST_CHECK_EQ(normal.rows, 24);
+    DOCTEST_CHECK_EQ(normal.cols, 80);
+    DOCTEST_CHECK_FALSE(normal.clamped);
+
+    // 4K 外接屏 + 12px 字号：约 135 行 × 550 列——旧上限 200×60 会整帧丢弃
+    auto wide = platform::clampGridSize(135, 550);
+    DOCTEST_CHECK_EQ(wide.rows, 135);
+    DOCTEST_CHECK_EQ(wide.cols, 550);
+    DOCTEST_CHECK_FALSE(wide.clamped);
+
+    // 超上限（6K/更小字号）→ 钳到 240×640 并标记
+    auto huge = platform::clampGridSize(400, 900);
+    DOCTEST_CHECK_EQ(huge.rows, 240);
+    DOCTEST_CHECK_EQ(huge.cols, 640);
+    DOCTEST_CHECK_TRUE(huge.clamped);
+
+    // 下限兜底：非法 0/负值不产生空网格
+    auto zero = platform::clampGridSize(0, 0);
+    DOCTEST_CHECK_EQ(zero.rows, 1);
+    DOCTEST_CHECK_EQ(zero.cols, 1);
+    return true;
+})
