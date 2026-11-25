@@ -759,7 +759,9 @@ public:
                 // 档位/减动效经 home_anim 缝；相位壁钟；入场 500ms ease-out 包络。
                 {
                     const bool animOn = ::home_anim::enabled();
-                    const float leftoverH = extraH - statsGrowTotalH;
+                    // 图层是 home.root 的第 4 个流式子块，独占一份列 gap——余高预算
+                    // 不减 gap 会让内容超视口一个 gap（960 档实测 +19.5 → 伪滚动条）。
+                    const float leftoverH = extraH - statsGrowTotalH - gap;
                     if (!animOn || leftoverH < 220.0f) {
                         animFadeStart_.reset();  // 隐藏即重置包络（复显重新入场）
                     } else {

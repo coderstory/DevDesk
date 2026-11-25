@@ -672,12 +672,12 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_CHECK(number->frame.y >= label->frame.y + label->frame.height);
         DOCTEST_CHECK(number->frame.y >= cardTop);
         DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
-        // 限高后余白页底：底部余量 = 未被卡片吸收的余高（>100 防回归吃满）
+        // need506 起余高归留白动画层：内容正好收在视口内（−0.5 余量），不溢出
         const float bottomMargin =
             screen.height - (root->frame.y + root->frame.height);
         DOCTEST_CHECK_MESSAGE(
-            bottomMargin > 100.0f,
-            "600 档限高后页底应留白（余量 >100），实际 " +
+            bottomMargin > -1.0f && bottomMargin < 1.0f,
+            "600 档内容应正好收在视口内（不溢出），实际余量 " +
                 std::to_string(bottomMargin));
     }
 
@@ -712,13 +712,19 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_CHECK(number->frame.y >= label->frame.y + label->frame.height);
         DOCTEST_CHECK(number->frame.y >= cardTop);
         DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
-        // 限高后余白页底（不再填满页高）
+        // need506 起余高归留白动画层（页底不再留空白）：图层是第 4 个流式子块，
+        // 内容高应正好收在视口内（−0.5 余量）；溢出 = 伪滚动条回归。
         const float bottomMargin =
             screen.height - (root->frame.y + root->frame.height);
         DOCTEST_CHECK_MESSAGE(
-            bottomMargin > 100.0f,
-            "960 档限高后页底应留白（余量 >100），实际 " +
+            bottomMargin > -1.0f && bottomMargin < 1.0f,
+            "960 档内容应正好收在视口内（不溢出不留空白），实际余量 " +
                 std::to_string(bottomMargin));
+        const auto* layer = ui.find("home.anim.layer");
+        DOCTEST_REQUIRE(layer != nullptr);
+        DOCTEST_CHECK_MESSAGE(layer->frame.height > 200.0f,
+            "余高应由留白动画层承接，实际层高 " +
+                std::to_string(layer->frame.height));
     }
 
     // 复位进程级全局态，避免污染其它用例
@@ -730,7 +736,7 @@ REGISTER_TEST(home_stat_chart_dual_tier,
 
 // C-2（need380）改写 + 限高（need#7）：今日 token 图表卡已砍（原 need270「与
 // Claude 注册态解耦」随卡片移除失去对象）。本用例锁定：无图表卡 + 5 张统计卡
-// 恒在场 + 卡钳在上限 120、页底留白。
+// 恒在场 + 卡钳在上限 120、余高归留白动画层。
 REGISTER_TEST(home_no_chart_extra_to_stats,
               "home_module: 图表卡已砍、5 统计卡恒在场、单卡限高 120（C-2 need380 / need#7）", {
     core::theme::setFontScale(1.0f);
@@ -770,9 +776,14 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
     const float bottomMargin =
         screen.height - (root->frame.y + root->frame.height);
     DOCTEST_CHECK_MESSAGE(
-        bottomMargin > 100.0f,
-        "限高后页底应留白（余量 >100），实际 " +
+        bottomMargin > -1.0f && bottomMargin < 1.0f,
+        "内容应正好收在视口内（不溢出不留空白），实际余量 " +
             std::to_string(bottomMargin));
+    const auto* layer = ui.find("home.anim.layer");
+    DOCTEST_REQUIRE(layer != nullptr);
+    DOCTEST_CHECK_MESSAGE(layer->frame.height > 200.0f,
+        "余高应由留白动画层承接，实际层高 " +
+            std::to_string(layer->frame.height));
 
     core::theme::setWindowHeight(1000.0f);
     mod->onStop();

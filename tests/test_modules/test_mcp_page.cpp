@@ -954,6 +954,26 @@ REGISTER_TEST(mcp_page_memory_module_row,
 // 没有 ~/.claude.json 时凭空创建文件、装/卸后按钮态不刷新。
 namespace {
 
+// need244 点击链夹具：贴近真实 ~/.claude.json 形态（自身状态 + 既有 server，无 devdesk）
+const char* kCcClickFixture = R"({
+  "numStartups": 183,
+  "machineID": "abc123",
+  "installMethod": "npm",
+  "userID": "u-demo",
+  "firstStartTime": "2026-01-02T03:04:05.000Z",
+  "hasCompletedOnboarding": true,
+  "projects": {"/tmp/a": {"allowedTools": ["Read", "Write"], "history": [{"display": "hi"}]}},
+  "oauthAccount": {"emailAddress": "demo@example.com", "organizationName": "demo"},
+  "customApiKeyResponses": {"approved": [], "rejected": []},
+  "tipsHistory": {"new-user-warmup": 1},
+  "autoUpdates": false,
+  "mcpServers": {
+    "codegraph": {"type": "stdio", "command": "codegraph", "args": ["serve"]},
+    "rea": {"type": "http", "url": "http://127.0.0.1:7777/mcp"},
+    "fetch": {"type": "stdio", "command": "fetch"}
+  }
+})";
+
 // 隔离用户真实 ~/.claude.json：DEVDESK_CLAUDE_CONFIG_DIR 覆盖到临时目录，
 // 目录里按需放/不放 .claude.json（paths::claudeConfigFile 的覆盖契约）
 struct CcConfigGuard {
@@ -1172,17 +1192,12 @@ REGISTER_TEST(mcp_page_host_btn_gating,
 // 整份复制进隔离目录后走**真按钮点击**（onClick → toggleClaudeInstall →
 // installServerFile/removeServerFile），断言安装/卸载两侧内容。不碰真文件。
 REGISTER_TEST(mcp_page_claude_click_on_real_config_copy,
-              "mcp_page: need244 真点击安装/卸载（真实 105KB 配置副本），其余 51 个顶层键与既有 server 全保", {
-    // 审计 P1-2：真文件定位走生产契约（Win 用 USERPROFILE）；必须在 CcConfigGuard
-    // 之前取——守卫设置 DEVDESK_CLAUDE_CONFIG_DIR 后 paths 会指到隔离目录
-    const std::filesystem::path real = core::paths::claudeConfigFile();
-    if (!std::filesystem::exists(real)) {
-        DOCTEST_SKIP("本机无 ~/.claude.json");
-    }
-    const std::string original = core::readTextFile(real);
-    if (original.size() <= 1000) {
-        DOCTEST_SKIP("真配置过小，样本不具代表性");  // 审计 P2-15：硬阈值改跳过
-    }
+              "mcp_page: need244 真点击安装/卸载（自洽夹具副本），其余顶层键与既有 server 全保", {
+    // 2026-11-25 改为自洽夹具（kCcClickFixture）：本机真实 ~/.claude.json 已被
+    // 运行中的 App 装上 devdesk（8931），页头初始态变「从 Claude Code 卸载」、真点击
+    // 走卸载而非安装（环境漂移，非实现回归）。夹具保留原防回归判据：安装只加
+    // devdesk，其余顶层键/既有 server 全保；卸载回到原状。
+    const std::string original = kCcClickFixture;
 
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;

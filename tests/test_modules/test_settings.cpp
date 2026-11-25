@@ -2383,10 +2383,10 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           heightOf("settings.card.editor.fluid.sw.track"),
                           at(24.0f, 24.0f, 24.0f));
             if (err.empty())
-                // UAT6：卡内第二段加自启动行 → 144→184（need321 主题行入外观卡后
-                // editor 184 / appearance 226，配对行高随 appearance 档）
+                // need506：卡内增第 3 行（首页动画 dropdown）→ 184→222
+                //（配对行高仍随 appearance 226，max 语义不变）
                 err = pin("editor 卡高", heightOf("settings.card.editor"),
-                          at(156.0f, 184.0f, 239.0f));
+                          at(189.0f, 222.0f, 289.0f));
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(192.0f, 226.0f, 294.0f));
@@ -2697,11 +2697,12 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(editor->frame.x,
                              appearance->frame.x + colWant + 8.0f));
         DOCTEST_CHECK(nearEq(pair->frame.width, contentW));
-        // 行高 = max(对内卡高)：UAT6 自启动行入 editor 后两卡同高（184|184）→
-        // 行高 184，与 UAT5 前 max(184,144)=184 逐值不变（零滚动预算不动）
+        // 行高 = max(对内卡高)：need321 外观卡 226 > need506 editor 222 →
+        // 行高由 appearance 掌（226），editor 保持自身卡高（222）
         DOCTEST_CHECK(nearEq(pair->frame.height, 226.0f));
         DOCTEST_CHECK(nearEq(appearance->frame.height, 226.0f));
-        DOCTEST_CHECK(nearEq(editor->frame.height, 184.0f));
+        DOCTEST_CHECK(nearEq(editor->frame.height,
+                             module::settings::kEditorFontCardHeight));
         // 两卡同排（行顶同 y）且都在行内
         DOCTEST_CHECK(nearEq(appearance->frame.y, pair->frame.y));
         DOCTEST_CHECK(nearEq(editor->frame.y, pair->frame.y));
@@ -3712,10 +3713,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // UAT5 全局顶部收紧：共享 kHeaderH 64→40，kSettingsHeaderH 已删并入共享源
     DOCTEST_CHECK_EQ(ui_kit::kHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 226.0f);
-    // UAT6：编辑器字号卡卡内第二段加「开机自启动」行 → 144→184（与外观卡同高）。
-    // 关键不变量：与 kAppearanceCardHeight 同值 → 配对行高恒 184 不变，通用 tab
-    // 内容高对可用 424 的零滚动预算（need321 后；0/1/2 警告态逐值随 roundFs 派生）。
-    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
+    // need506：编辑器字号卡增第 3 行（首页动画 dropdown）→ 184→222；仍低于外观卡
+    // → 配对行高恒由 kAppearanceCardHeight 掌（226），通用 tab 零滚动预算不动。
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 222.0f);
     DOCTEST_CHECK(ms::kAppearanceCardHeight > ms::kEditorFontCardHeight);
     // 模块卡：B6/F-69-3 起卡高改内容派生（modulesCardHeightFor，>1.15 档两列降单列），
     // 常量 310 仅留作 N3 前历史参考锚。池#371 修后 10/11 格 4 列 3 行

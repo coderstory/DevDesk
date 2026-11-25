@@ -659,7 +659,8 @@ REGISTER_TEST(gating_home_actions_row_collapse,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    float rowW = 0.0f;  // ① 行宽（= contentW，跨档复算用）
+    float rowW = 0.0f;   // ① 行宽（= contentW，跨档复算用）
+    float noteW = 0.0f;  // ① newnote 紧凑宽（② 档比对「不被拉伸」用）
 
     // ① 全注册：两按钮等宽（C-2 后按钮 3→2，等宽判据保留）
     {
@@ -692,12 +693,14 @@ REGISTER_TEST(gating_home_actions_row_collapse,
         DOCTEST_REQUIRE(ui.find("home.act.claude") == nullptr);  // C-2 已砍
         rowW = row->frame.width;  // = contentW
         DOCTEST_CHECK(rowW > 0.0f);
-        // UAT2 覆盖 W9：两按钮等宽（权重全 1.0），newnote == newtodo
+        // need506 第⑧件拍板：按钮改 demo 紧凑自适应宽（不再撑满行）——两按钮仍等宽，
+        // 行仍占 contentW、按钮左排，右侧留余量（旧「行宽 == 两钮宽 + gap」已废）
         DOCTEST_CHECK(std::fabs(td->frame.width - note->frame.width) < 0.5f);
-        // 行宽 = 两按钮宽 + 1×16 gap
-        DOCTEST_CHECK(std::fabs(row->frame.width -
-                                (note->frame.width + td->frame.width +
-                                 16.0f)) < 1.0f);
+        noteW = note->frame.width;
+        DOCTEST_CHECK_MESSAGE(rowW - (note->frame.width + td->frame.width + 16.0f) > 100.0f,
+            "紧凑按钮行未留余量（按钮被重新撑满行？）行宽 " +
+                std::to_string(rowW));
+        DOCTEST_CHECK(std::fabs(note->frame.x - row->frame.x) < 0.5f);
     }
 
     // ② 只剩 markdown：newnote 独占整行，兄弟按钮消失
@@ -722,11 +725,13 @@ REGISTER_TEST(gating_home_actions_row_collapse,
         DOCTEST_REQUIRE(row != nullptr);
         const auto* note = ui.find("home.act.newnote");
         DOCTEST_REQUIRE(note != nullptr);
-        DOCTEST_REQUIRE_MESSAGE(
-            std::fabs(note->frame.width - rowW) < 1.0f,
-            "关掉兄弟模块后幸存按钮未独占整行: " +
+        // 紧凑契约：幸存按钮保持原宽（不随兄弟数联动拉伸），行仍占 contentW
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(note->frame.width - noteW) < 1.0f,
+            "关掉兄弟模块后幸存按钮宽度漂移: " +
                 std::to_string(note->frame.width) + " vs 期望 " +
-                std::to_string(rowW));
+                std::to_string(noteW));
+        DOCTEST_CHECK(row->frame.width > note->frame.width + 100.0f);
         DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
         DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
     }
