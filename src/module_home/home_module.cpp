@@ -181,30 +181,33 @@ void drawSolidStatCard(eui::Ui& ui,
             // 指标名：三级字，居中；说明（badge）并入同行「笔记 · 今日」。
             // B7 D1（已拍板 5 张统一）：调用方正常态传空 badge → 只显示指标名；
             // 错误态传「加载失败」→ 照旧拼出来，失败必须显形。
-            // 合并文本量宽放不下卡宽时退化为只留 badge（不放宽回指标名）：badge 现在
-            // 只剩错误态「加载失败」，丢 badge 等于把失败藏起来——这正是池117 在
-            // 1000~1394 窗口宽下暴露的缺陷（合并文案 14px≈180 > cw，旧逻辑回退成指标名，
-            // 速率卡「加载失败」不显形）。单 badge 文本在最小窗 cw≈87 仍放得下。
-            // 溢出仍由 maxWidth+Ellipsis+clip 兜底，量宽不准也绝不会画到卡外。
+            // 行预算按整卡宽（含左右内边距区）：中文宽度量字体栈（SimSun/SimHei 类
+            // Latin 全角档，14px 合并文案量得 210）超内容宽 cw、整卡宽仍放得下；
+            // 按内容宽退化只剩 badge 会丢掉指标名（池489 量化）。文本仍居中：
+            // position 左移 pad + 宽取整卡宽，rect 中心与内容宽版重合，常规档视觉不变。
+            // 整段放不下时的退化目标仍是 badge（不放宽回指标名）：badge 是错误态
+            // 「加载失败」，丢 badge 等于把失败藏起来（池117 在 1000~1394 窗口宽的缺陷）。
+            // 溢出由 maxWidth+Ellipsis+clip 兜底，量宽不准也绝不会画到卡外。
             // 量宽留 12px 余量：measureTextSize 与最终排版有 1~2% 的差（字距/取整）。
+            const float labelW = width;
             std::string labelText = badge.empty() ? label : label + " · " + badge;
             if (!badge.empty()) {
                 core::TextStyle merged;
                 merged.text = labelText;
                 merged.fontSize = core::theme::scaled(14.0f);
-                if (core::TextPrimitive::measureTextSize(merged).x + 12.0f > cw) {
+                if (core::TextPrimitive::measureTextSize(merged).x + 12.0f > labelW) {
                     labelText = badge;
                 }
             }
             ui.text(id + ".label")
-                .position(0.0f, textTop)
-                .size(cw, labelH)
+                .position(-pad, textTop)
+                .size(labelW, labelH)
                 .text(labelText)
                 .fontSize(core::theme::scaled(14.0f))
                 .lineHeight(labelH)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.textTertiary)
-                .maxWidth(cw)
+                .maxWidth(labelW)
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();

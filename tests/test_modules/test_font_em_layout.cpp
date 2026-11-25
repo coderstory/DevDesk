@@ -6,8 +6,10 @@
 // 改源码布局必须同步改这里，否则这组断言会对着旧常量恒绿：
 //   - home_module.cpp drawSolidStatCard：pad=20、labelH=16、numGap=4、numberH=34、
 //     卡高 96；指标名 14（fontSizeBody）、数字 30（fontSizeStat）、说明并入同行 14。
-//     5 卡等分：卡宽=(contentW-4×20)/5，cw=卡宽-2×20；contentW=窗宽-侧栏 220-页 padding 64。
-//     默认窗 1600×1000 → cw≈207.2；最小窗 1000×640 → cw≈87.2（主力程序 main.cpp:767）
+//     卡网格 gap 8、单卡最小宽 180、最多 5 列（homeGridColumns 响应式）：
+//     contentW=窗宽-侧栏 220-页内边距 64；cw=卡宽-2×20。默认窗 1600×1000 → 5 列
+//     卡宽 256.8 / cw 216.8；最小窗 1000×640 → 3 列卡宽 233.3 / cw 193.3。
+//     行预算：指标名/数字按 cw，合并说明（失败态）按整卡宽（池489）。
 //   - todo_module.cpp drawChip：chip 高 22、字号 fontSizeSmall-1；
 //     drawCard：title y=14、chip y=44、卡高 kCardHeight、列头 title y=16
 //   - app_sidebar.cpp：itemH 40、label 宽 200、brand 56px（UAT5 logo 48 行高 56）
@@ -47,25 +49,67 @@ REGISTER_TEST(font_em_semantics_active, "font-em: measured width follows CSS em 
 REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed card", {
     const auto& t = core::theme::current();
     core::theme::setFontScale(1.0f);  // 100% 是本文件的复核基准；测完由后续用例各自复位
-    // 字号 = drawSolidStatCard 真实渲染尺寸（旧用例按 12/13px 量宽、预算 152，
-    // 是卡高 144 时代的错位常量——真机早就不显形、用例仍绿，池117 实证）。
     const float labelSize = t.sizes.fontSizeBody;   // 14，指标名 + 合并的说明同字号
     const float numberSize = t.sizes.fontSizeStat;  // 30
 
-    // 水平预算（与运行时 measureTextSize + 12px 余量同口径）：
-    constexpr float kHomeStatTextWDefault = 207.2f - 12.0f;  // 默认窗 cw
-    constexpr float kHomeStatTextWMin = 87.2f - 12.0f;       // 最小窗 cw
-    const float wLabel = textW("Token 速率 (tok/s)", labelSize);
+    // 横向预算 = 运行时真实网格（need268 响应式列数，镜像 home_module.cpp）：
+    // 统计卡恒 5 张；卡网格 gap 8 / 单卡最小宽 180 / 最多 5 列；contentW = 窗宽 −
+    // 侧栏 220 − 页内边距 32×2；卡内边距 pad 20 → 内容宽 cw = 卡宽 − 40。
+    // 默认窗 1600 → 5 列：卡宽 256.8、cw 216.8；最小窗 1000 → 3 列：卡宽 233.3、cw 193.3。
+    // 量宽留 12px 余量（measureTextSize 与最终排版 1~2% 差），与运行时同口径。
+    constexpr float kSlack = 12.0f;
+    constexpr float kGridGap = 8.0f;
+    constexpr float kCardMinW = 180.0f;
+    constexpr int kMaxCols = 5;
+    constexpr float kWindowDefault = 1600.0f;
+    constexpr float kWindowMin = 1000.0f;
+    auto contentWidth = [](float windowW) { return windowW - 220.0f - 64.0f; };
+    auto cardWidth = [](float availableW) {
+        for (int cols = kMaxCols; cols > 1; --cols) {
+            const float cardW =
+                (availableW - kGridGap * static_cast<float>(cols - 1)) /
+                static_cast<float>(cols);
+            if (cardW >= kCardMinW) {
+                return cardW;
+            }
+        }
+        return availableW;  // 窄窗单列兜底
+    };
+    const float cardWDefault = cardWidth(contentWidth(kWindowDefault));  // 256.8
+    const float cwDefault = cardWDefault - 40.0f;                        // 216.8
+    const float cwMin = cardWidth(contentWidth(kWindowMin)) - 40.0f;     // 193.3
+
+    const std::string label = "Token 速率 (tok/s)";
+    const std::string merged = label + " · 加载失败";
+    const std::string badge = "加载失败";
+    const float wLabel = textW(label, labelSize);
     const float wNumber = textW("999.9", numberSize, 700);
-    const float wMerged = textW("Token 速率 (tok/s) · 加载失败", labelSize);
-    const float wFail = textW("加载失败", labelSize);
-    // 默认窗：指标名 / 数字 / 合并说明三条都必须整段放下（正常运行态与失败态全覆盖）
-    DOCTEST_CHECK(wLabel <= kHomeStatTextWDefault);
-    DOCTEST_CHECK(wNumber <= kHomeStatTextWDefault);
-    DOCTEST_CHECK(wMerged <= kHomeStatTextWDefault);
+    const float wMerged = textW(merged, labelSize);
+    const float wFail = textW(badge, labelSize);
+    // 默认窗：指标名 / 数字走内容宽预算；合并文案（失败态）走整卡宽预算——
+    // 运行时 drawSolidStatCard 的行预算=整卡宽（含内边距区，池489）。
+    DOCTEST_CHECK(wLabel + kSlack <= cwDefault);
+    DOCTEST_CHECK(wNumber + kSlack <= cwDefault);
+    DOCTEST_CHECK(wMerged + kSlack <= cardWDefault);
     // 最小窗：合并文案放不下是既定事实（运行时退化为只显 badge，见 drawSolidStatCard）。
     // 底线 = 退化后的「加载失败」仍能整段放下——失败必须显形。
-    DOCTEST_CHECK(wFail <= kHomeStatTextWMin);
+    DOCTEST_CHECK(wFail + kSlack <= cwMin);
+
+    // CJK 宽字体压力档：本机/中文环境实测 SimSun/SimHei 的 Latin 是全角宽档，
+    // 合并文案（14px=210）明显宽于产品默认栈（Segoe UI + YaHei 回退，179.9）。
+    // 预算必须按最坏档校验，否则宽字体环境把「加载失败」挤进省略号（池 489）。
+    // clean Windows 无这些字体文件时量宽落系统回退，数值仍在校验预算内（CI 安全）。
+    for (const char* fam : {"Microsoft YaHei", "SimHei", "SimSun"}) {
+        if (core::TextPrimitive::resolveFontPath(fam).empty()) {
+            continue;
+        }
+        const float wl = core::TextPrimitive::measureTextWidth(label, fam, labelSize);
+        const float wm = core::TextPrimitive::measureTextWidth(merged, fam, labelSize);
+        DOCTEST_CHECK_MESSAGE(wl + kSlack <= cwDefault,
+                              std::string(fam) + " label=" + std::to_string(wl));
+        DOCTEST_CHECK_MESSAGE(wm + kSlack <= cardWDefault,
+                              std::string(fam) + " merged=" + std::to_string(wm));
+    }
 
     // 纵向（drawSolidStatCard 绝对定位：textTop=(96-40-54)/2=1、numberY=21；
     // 卡高 96、numberH=34 → 数字盒 21..55）
