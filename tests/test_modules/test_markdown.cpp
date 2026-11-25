@@ -5994,15 +5994,17 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     DOCTEST_CHECK(sawPreview);
     DOCTEST_CHECK(sawLive);
 
-    // (3b) 池369：预览路径只挂裁剪钩——drawPreviewColumn 体内禁入视图态特判
-    // 符号（实时态的贴合高覆盖/输入块绘制只属于 drawLiveColumn）。
+    // (3b) 池369：预览路径不挂实时态特判——drawPreviewColumn 体内禁入贴合高
+    // 覆盖/输入块绘制/几何改写（这些只属于 drawLiveColumn）。afterHitOverlay
+    // 是通用「hit 层收尾绘制」缝而非实时态符号：预览拖选高亮经它画块局部
+    // 半透明矩形（不消费命中、不改包裹高），故不在禁用清单。
     std::string previewBody =
         mdFunctionBody(src, "MarkdownModule::drawPreviewColumn(");
     DOCTEST_CHECK_MESSAGE(!previewBody.empty(),
                           "取不到 drawPreviewColumn 函数体（签名被改？）");
     for (const char* bad : {"hooks.wrapHeight", "hooks.drawContent",
-                            "hooks.afterHitOverlay", "drawLiveInputBlock",
-                            "liveFitHeight", "applyLiveGeometryOverride"}) {
+                            "drawLiveInputBlock", "liveFitHeight",
+                            "applyLiveGeometryOverride"}) {
         DOCTEST_CHECK_MESSAGE(previewBody.find(bad) == std::string::npos,
                               std::string("预览路径混入视图态特判：") + bad);
     }
