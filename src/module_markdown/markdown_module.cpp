@@ -331,6 +331,7 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     drawNoteContextMenu(ui, screen, t, componentTheme);
     drawFolderContextMenu(ui, screen, t, componentTheme);
     drawEditorContextMenu(ui, screen, t, componentTheme);
+    drawPreviewContextMenu(ui, screen, t, componentTheme);  // bug547 预览右键复制
     drawDeleteDialog(ui, screen, t, componentTheme);
     drawRenameDialog(ui, screen, t, componentTheme);
     drawFolderDeleteDialog(ui, screen, t, componentTheme);
@@ -344,6 +345,7 @@ bool MarkdownModule::closeTopmostPopup() {
     if (renameOpen_) { renameOpen_ = false; return true; }
     if (deleteConfirmOpen_) { deleteConfirmOpen_ = false; return true; }
     if (editorCtxOpen_) { editorCtxOpen_ = false; return true; }
+    if (previewCtxOpen_) { previewCtxOpen_ = false; return true; }
     if (dirCtxOpen_) { dirCtxOpen_ = false; return true; }
     if (ctxMenuOpen_) { ctxMenuOpen_ = false; return true; }
     if (newFolderOpen_) {
@@ -590,6 +592,8 @@ void MarkdownModule::setMode(ViewMode m) {
     mode_ = m;
     // 进预览态时对齐编辑器位置（延迟到 compose，需要列宽与样式）
     if (m == ViewMode::Preview) syncPreviewOnEnter_ = true;
+    // bug546：进双栏态重新跟编辑区同步（手滚接管不跨态滞留）
+    if (m == ViewMode::Split) splitPreviewFollow_ = true;
     saveViewState();  // 四态视图跨会话记忆
     LOG_INFO("Markdown 视图切换: " + std::to_string(static_cast<int>(m)));
 }

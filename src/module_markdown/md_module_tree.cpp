@@ -812,6 +812,8 @@ void MarkdownModule::openNote(const std::string& relPath) {
     outlineDirty_ = true;
     activeOutlineIdx_ = -1;
     previewHover_.reset();  // 换笔记 = 块身份换代，旧 hover 作废
+    // bug546：换笔记 → 双栏预览恢复跟编辑区（手滚记账值属旧文档坐标）
+    splitPreviewFollow_ = true;
     // 换笔记 = 实时态状态群换代（见 enterLiveState）
     enterLiveState("换笔记");
     tagInput_.clear();  // 清掉上一篇残留的半截输入
