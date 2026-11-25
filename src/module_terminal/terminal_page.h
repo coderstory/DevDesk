@@ -127,6 +127,17 @@ private:
     std::chrono::steady_clock::time_point lastClickAt_{};
     CellPos lastClickPos_{};
     int clickStreak_ = 0;
+    // M2 Task 4：标签改名/右键/拖拽排序
+    std::vector<float> tabX_;
+    std::vector<float> tabW_;
+    std::chrono::steady_clock::time_point lastTabClickAt_{};
+    int lastTabClickIndex_ = -1;
+    int renamingTab_ = -1;
+    std::string renameText_;
+    int ctxTab_ = -1;
+    bool ctxTabMenuOpen_ = false;
+    float ctxTabMenuX_ = 0.0f;
+    float ctxTabMenuY_ = 0.0f;
     bool ctxMenuOpen_ = false;
     float ctxMenuX_ = 0.0f;
     float ctxMenuY_ = 0.0f;

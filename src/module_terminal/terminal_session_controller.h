@@ -93,6 +93,8 @@ public:
     // 关闭第 i 个会话（终止进程，无确认；语义=终止）。激活右邻优先，无右邻则左邻；
     // 关最后一个 → activeIndex=-1（空态）。
     void closeSession(int index);
+    // M2 Task 4：标签拖拽排序（from→to，to 按移除前的目标位；activeIndex 跟随移动）
+    void moveSession(int from, int to);
     void setActive(int index);
     // 网页 tab 改名（P1-4）：写入会话展示名，桌面 tab 与网页显示同一名字。
     void setSessionTitle(int index, const std::string& title);

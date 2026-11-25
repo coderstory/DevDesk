@@ -22,6 +22,7 @@
 #include "core/theme.h"
 #include "platform/folder_picker.h"
 #include "terminal_keyencoder.h"
+#include "terminal_quit_guard.h"
 #include "terminal_text_util.h"
 #include "core/ui_geometry.h"
 #include <components/contextmenu.h>
@@ -1018,6 +1019,12 @@ GridLayout TerminalPage::compose(
                                     tabTitles_[static_cast<size_t>(i)]; // bug248：复用缓存
                                 const float titleW = std::min(
                                     ui_kit::cachedTextWidth(title, titleFs, 400) + 2.0f, kTabTitleMaxW);
+                                if (static_cast<int>(tabX_.size()) <= i) {
+                                    tabX_.resize(static_cast<size_t>(i) + 1);
+                                    tabW_.resize(static_cast<size_t>(i) + 1);
+                                }
+                                tabX_[static_cast<size_t>(i)] = x;
+                                tabW_[static_cast<size_t>(i)] = w;
                                 ui.stack(id)
                                     .position(x, 0.0f)
                                     .size(w, kTabH)
@@ -1045,7 +1052,53 @@ GridLayout TerminalPage::compose(
                                                 if (h) hoveredTabIndex_ = i;
                                                 else if (hoveredTabIndex_ == i) hoveredTabIndex_ = -1;
                                             })
-                                            .onClick([ctrl, i]() { ctrl->setActive(i); });
+                                            .onDrag([this, ctrl, i](const core::dsl::DragEvent& d) {
+                                                // M2 Task 4：拖拽排序——落点 x 越过邻标签中线即换位
+                                                if (i >= static_cast<int>(tabX_.size())) return;
+                                                const float dropX =
+                                                    tabX_[static_cast<size_t>(i)] +
+                                                    static_cast<float>(d.totalX);
+                                                int target = i;
+                                                for (int k = 0; k < static_cast<int>(tabX_.size());
+                                                     ++k) {
+                                                    const float mid = tabX_[static_cast<size_t>(k)] +
+                                                                      tabW_[static_cast<size_t>(k)] * 0.5f;
+                                                    if (dropX > mid) target = k;
+                                                }
+                                                if (target != i) ctrl->moveSession(i, target);
+                                            })
+                                            .onClick([this, ctrl, i]() {
+                                                // M2 Task 4：双击标签 → 改名（400ms 同格判定）
+                                                const auto now = std::chrono::steady_clock::now();
+                                                const double dt = std::chrono::duration<double>(
+                                                                      now - lastTabClickAt_)
+                                                                      .count();
+                                                const bool dbl =
+                                                    lastTabClickIndex_ == i && dt < 0.4;
+                                                lastTabClickAt_ = now;
+                                                lastTabClickIndex_ = i;
+                                                if (dbl) {
+                                                    renamingTab_ = i;
+                                                    const Session* st = ctrl->at(i);
+                                                    renameText_ = st ? st->title : std::string();
+                                                    return;
+                                                }
+                                                ctrl->setActive(i);
+                                            })
+                                            .onContextMenu([this, i](const eui::PointerEvent& ev,
+                                                                     const eui::Rect&) {
+                                                ctxTab_ = i;
+                                                const ::core::Router* router = ::core::appRouter();
+                                                const core::MenuAnchor a =
+                                                    core::menuAnchorForPointer(
+                                                        static_cast<float>(ev.x),
+                                                        static_cast<float>(ev.y),
+                                                        router ? router->pageOriginX() : 0.0f,
+                                                        0.0f, 1.0f);
+                                                ctxTabMenuX_ = a.x;
+                                                ctxTabMenuY_ = a.y;
+                                                ctxTabMenuOpen_ = true;
+                                            });
                                         if (isActive) {
                                             ui.rect(id + ".bar")
                                                 .position(0.0f, kTabH - 2.0f)
@@ -1126,6 +1179,22 @@ GridLayout TerminalPage::compose(
                                                 else ctrl->closeSession(i);
                                             });
                                     });
+                            }
+                            if (renamingTab_ == i) {
+                                components::input(ui, "term.tab.rename")
+                                    .position(x, 0.0f)
+                                    .size(w, kTabH)
+                                    .value(renameText_)
+                                    .placeholder("标签名")
+                                    .fontSize(titleFs)
+                                    .theme(core::theme::componentTokens(t))
+                                    .onChange([this](const std::string& v) { renameText_ = v; })
+                                    .onEnter([this, ctrl, i]() {
+                                        ctrl->setSessionTitle(i, renameText_);
+                                        renamingTab_ = -1;
+                                    })
+                                    .onCancel([this]() { renamingTab_ = -1; })
+                                    .build();
                             }
                             x += w + kTabGap;
                         }
@@ -1317,6 +1386,53 @@ GridLayout TerminalPage::compose(
                                       search_.searched = false;
                                       search_.pendingStep = false;
                                   });
+
+            // 层 8.55（M2 Task 4）：标签右键菜单——重命名 / 关闭其他 / 关闭右侧
+            if (ctxTabMenuOpen_) {
+                const std::vector<components::ContextMenuItem> items = {
+                    {"重命名"}, {"关闭其他"}, {"关闭右侧"}};
+                components::contextMenu(ui, "term.tabctx")
+                    .open(ctxTabMenuOpen_)
+                    .screen(screen.width, screen.height)
+                    .position(ctxTabMenuX_, ctxTabMenuY_)
+                    .autoWidth()
+                    .items(items)
+                    .theme(core::theme::componentTokens(t))
+                    .onSelect([this, ctrl](int index) {
+                        ctxTabMenuOpen_ = false;
+                        const int from = ctxTab_;
+                        if (from < 0 || from >= ctrl->count()) return;
+                        switch (index) {
+                            case 0: {
+                                renamingTab_ = from;
+                                const Session* st = ctrl->at(from);
+                                renameText_ = st ? st->title : std::string();
+                                break;
+                            }
+                            case 1: // 关闭其他
+                            case 2: { // 关闭右侧
+                                std::vector<int> victims;
+                                for (int k = 0; k < ctrl->count(); ++k) {
+                                    if (k == from) continue;
+                                    if (index == 1 || k > from) victims.push_back(k);
+                                }
+                                for (auto it = victims.rbegin(); it != victims.rend(); ++it) {
+                                    const Session* vs = ctrl->at(*it);
+                                    if (vs != nullptr && stateNeedsCloseConfirm(vs->state)) {
+                                        requestCloseConfirm(*it); // 首个在跑的交给确认卡
+                                        break;
+                                    }
+                                    ctrl->closeSession(*it);
+                                }
+                                break;
+                            }
+                            default:
+                                break;
+                        }
+                    })
+                    .onOpenChange([this](bool v) { ctxTabMenuOpen_ = v; })
+                    .build();
+            }
 
             // 层 8.6（M2 Task 2）：右键菜单——复制 / 清屏 / 搜索
             // 粘贴不做：EUI 已在 Cmd/Ctrl+V 灌 pasteText（input_state.h:235），

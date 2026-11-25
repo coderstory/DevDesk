@@ -221,6 +221,22 @@ void SessionController::setSessionTitle(int index, const std::string& title) {
     ++titleRevision_;
 }
 
+void SessionController::moveSession(int from, int to) {
+    const int n = static_cast<int>(sessions_.size());
+    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
+    Session moved = std::move(sessions_[static_cast<size_t>(from)]);
+    sessions_.erase(sessions_.begin() + from);
+    sessions_.insert(sessions_.begin() + to, std::move(moved));
+    if (activeIndex_ == from) {
+        activeIndex_ = to;
+    } else if (from < activeIndex_ && activeIndex_ <= to) {
+        --activeIndex_;
+    } else if (to <= activeIndex_ && activeIndex_ < from) {
+        ++activeIndex_;
+    }
+    ++titleRevision_; // 顺序变化 → 页面标题缓存重建
+}
+
 void SessionController::restartSession(int index) {
     if (index < 0 || index >= static_cast<int>(sessions_.size())) return;
     Session& s = sessions_[index];

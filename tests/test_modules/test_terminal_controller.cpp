@@ -657,3 +657,29 @@ REGISTER_TEST(terminalQuitConfirmDecision,
     DOCTEST_CHECK_FALSE(stateNeedsCloseConfirm(terminal::SessionState::Failed));
     return true;
 })
+
+REGISTER_TEST(terminalMoveSessionReorder,
+              "terminal controller: 标签拖拽排序——会话跟随、activeIndex 重映射", {
+    FakeBackend backend;
+    terminal::SessionController c;
+    c.setBackend(&backend);
+    const int a = c.startSession();
+    const int b = c.startSession();
+    const int d = c.startSession();
+    DOCTEST_CHECK_EQ(c.count(), 3);
+    c.setActive(b); // 活动 = 中间那个
+    // 把第一个拖到最后：a,c,d,b? 顺序 a(0) b(1) d(2) → move(0,2) ⇒ b d a
+    c.moveSession(0, 2);
+    DOCTEST_CHECK_EQ(c.count(), 3);
+    // 活动会话对象仍是 b（原 index 1）→ 移动后 index 0
+    DOCTEST_CHECK_EQ(c.activeIndex(), 0);
+    DOCTEST_CHECK_TRUE(c.active() != nullptr);
+    DOCTEST_CHECK_EQ(c.active()->titleNumber, 2);
+    // 把活动会话拖到末尾：b d a → d a b，活动 index 2
+    c.moveSession(0, 2);
+    DOCTEST_CHECK_EQ(c.activeIndex(), 2);
+    DOCTEST_CHECK_EQ(c.active()->titleNumber, 2);
+    (void)a;
+    (void)d;
+    return true;
+})
