@@ -5820,3 +5820,92 @@ REGISTER_TEST(todo_import_reload_async_fill,
     mod->onStop();
     return true;
 })
+
+REGISTER_TEST(todo_ui_detail_save_keeps_completed_at,
+              "todo_ui: 已完成任务在详情直接保存后完成时间不变（A-1）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    const int64_t todoCol = cols.value()[0].id;
+    const int64_t doneCol = cols.value()[2].id;
+    auto made = env.svc->createTask(todoCol, "已完成任务");
+    DOCTEST_REQUIRE(made.isOk());
+    DOCTEST_REQUIRE(env.svc->moveTask(made.value().id, doneCol, 0).isOk());
+    auto listed = env.svc->listTasks(doneCol);
+    DOCTEST_REQUIRE(listed.isOk());
+    DOCTEST_REQUIRE_EQ(listed.value().size(), 1u);
+    module::todo::Task orig = listed.value()[0];
+    orig.completedAt = std::optional<int64_t>(1700000000);
+    DOCTEST_REQUIRE(env.svc->updateTask(orig).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.2.card.0.bg");  // 已完成列
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+    }
+    {
+        Frame f2(mod.get());  // f1 先销毁再重绘
+        const auto* save = f2.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(save != nullptr);
+        DOCTEST_REQUIRE(save->onClick != nullptr);
+        save->onClick();  // 不改任何字段，直接保存
+    }
+    auto got = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(got.isOk());
+    bool found = false;
+    for (const auto& tk : got.value()) {
+        if (tk.id == made.value().id) {
+            found = true;
+            DOCTEST_CHECK_EQ(tk.completedAt.value_or(-1), 1700000000);
+        }
+    }
+    DOCTEST_CHECK(found);
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_detail_blank_title_rejected,
+              "todo_ui: 详情空白标题保存被拒，弹窗保留、库值不变（A-4）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    auto made = env.svc->createTask(cols.value()[0].id, "   ");  // service 不校验
+    DOCTEST_REQUIRE(made.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onClick();
+    }
+    {
+        Frame f2(mod.get());
+        const auto* save = f2.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(save != nullptr);
+        save->onClick();
+    }
+    {
+        Frame f3(mod.get());
+        DOCTEST_CHECK(f3.ui.find("todo.dialog.detail.save.bg") != nullptr);  // 弹窗没关
+    }
+    auto got = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(got.isOk());
+    bool found = false;
+    for (const auto& tk : got.value()) {
+        if (tk.id == made.value().id) {
+            found = true;
+            DOCTEST_CHECK_EQ(tk.title, std::string("   "));
+        }
+    }
+    DOCTEST_CHECK(found);
+    mod->onStop();
+    return true;
+})

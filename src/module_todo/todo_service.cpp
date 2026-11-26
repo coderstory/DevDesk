@@ -529,6 +529,8 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
 }
 
 core::Result<void> TodoService::updateTask(const Task& task) {
+    // handle() 的逃生口契约：锁必须覆盖 step + sqlite3_changes（防并发语句插队把 0 行判成他人变化）
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     const int64_t now = nowEpochSeconds();
 
     std::string tagsJson = serializeTags(task.tags);
@@ -567,6 +569,9 @@ core::Result<void> TodoService::updateTask(const Task& task) {
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
         return core::propagate<void>(stepResult);
+    }
+    if (sqlite3_changes(db_.handle()) == 0) {
+        return core::Result<void>::fail(core::ErrorCode::NotFound, "任务不存在");
     }
     return core::Result<void>::ok();
 }

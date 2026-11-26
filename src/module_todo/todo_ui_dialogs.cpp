@@ -6,6 +6,7 @@
 
 #include <core/component_theme.h>
 #include <core/router.h>
+#include <core/str_util.h>
 #include <core/theme.h>
 #include <core/ui_geometry.h>
 #include <ui_kit/dialog_form.h>
@@ -706,9 +707,14 @@ Task DetailDialog::collect(const std::vector<Task>& tasks) const {
     }
     updated.priority = priority;
     updated.dueAt = dueAt;
-    updated.completedAt = completed
-        ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
-        : std::nullopt;
+    const bool wasCompleted = orig != nullptr && orig->completedAt.has_value();
+    if (orig != nullptr && wasCompleted == completed) {
+        updated.completedAt = orig->completedAt;  // 完成态没变：完成时间是事实，不得重写
+    } else {
+        updated.completedAt = completed
+            ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
+            : std::nullopt;
+    }
     updated.tags = tags;
     updated.docPath = docPath;
     // 保留原 position（硬编码 0 会把任务顶到列首）
@@ -718,6 +724,10 @@ Task DetailDialog::collect(const std::vector<Task>& tasks) const {
 
 // 表单原样落库；false = 保存失败（已 setStatus 报错），调用方保持弹窗打开
 bool DetailDialog::save(const DialogHost& host) const {
+    if (core::str::trimAscii(title).empty()) {
+        if (host.warn) host.warn("标题不能为空");
+        return false;  // 弹窗保持打开，不改库
+    }
     return host.updateTask(collect(*host.tasks));
 }
 
