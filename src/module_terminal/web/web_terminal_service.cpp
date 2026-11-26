@@ -967,6 +967,7 @@ void WebTerminalService::handleStream(const platform::http::RequestCtx& ctx,
         return;
     }
     forceFull_.store(true);
+    pushSessionSnapshot_.store(true); // 晚连接补 tabs 快照（见头文件注释）
     if (sessionBridge_ != nullptr) sessionBridge_->addSubscriber();
     rw.setStatus(200);
     rw.setHeader("Content-Type", "text/event-stream");
@@ -1219,6 +1220,10 @@ void WebTerminalService::publishSessionEvent(const std::string& eventName,
 void WebTerminalService::publishFrame() {
     if (sessionBridge_ == nullptr || controller_ == nullptr || gridEncoder_ == nullptr) return;
     if (bridge_.subscriberCount() == 0) return;
+    // 晚连接补一次 tabs 快照（UI 线程读 controller，安全）
+    if (pushSessionSnapshot_.exchange(false)) {
+        publishSessionEvent("session", takeTabSnapshot(), false);
+    }
     const ::terminal::Session* session = controller_->active();
     if (session == nullptr) return;
     if (forceFull_.exchange(false)) {

@@ -85,10 +85,18 @@ public:
         return s_->selectionText(rowStart, colStart, rowEnd, colEnd, out);
     }
 
-    // 鼠标上报（mouseMove/mouseButton/mouseReporting/altscreen）：本平台**保持接口默认**
-    // （空操作 / false）——Swift/Corta 桥没有 DECSET 1000/1002/1003 跟踪，也没有
-    // SGR 鼠标序列的编码出口，页面侧 reporting()=false 即不接指针事件。能力缺口
-    // 留待桥侧补齐，不在本文件用 #ifdef 或假状态绕过。
+    // 鼠标上报：转发给 Swift 桥（Corta 只读状态给「是否要鼠标」，事件由桥按 SGR 编码
+    // 写入 PTY）。只支持 SGR（?1006）：非 SGR 编码（X10 默认态 / UTF8 ?1005）暂不实现
+    // ——opencode / vim / tmux 均启用 SGR，且 Corta 的复合模式在 SGR 未开时读作 off。
+    void mouseMove(int row, int col, bool buttonDown) override {
+        s_->mouseMove(row, col, buttonDown);
+    }
+    void mouseButton(int row, int col, int button, bool pressed) override {
+        s_->mouseButton(row, col, button, pressed);
+    }
+    bool mouseReporting() const override { return s_->mouseReporting(); }
+    // 备屏：Corta 公开 isAlternateScreenActive（桥读取），真机未验证（见汇报）
+    bool altscreen() const override { return s_->altscreen(); }
 
 private:
     std::unique_ptr<SwiftBridgeSession> s_;

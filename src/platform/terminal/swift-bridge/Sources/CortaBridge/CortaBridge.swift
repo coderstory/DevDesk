@@ -166,6 +166,30 @@ public final class CortaBridgeSession: @unchecked Sendable {
             rows: UInt16(max(rows, 1)), columns: UInt16(max(cols, 1))))
     }
 
+    // MARK: - 鼠标上报状态（只读；事件编码在 C++ 侧）
+
+    /// 应用请求的鼠标跟踪模式：0=off / 1000=normal / 1002=buttonEvent / 1003=anyEvent。
+    /// 读 Corta 的复合值 `sgrMouseTrackingMode`（TerminalSession+State.swift）：它把
+    /// `mouseTrackingMode` 与 `isSgrMouseEncodingEnabled` 在**同一把锁**下合并，SGR 编码
+    /// 未开时恒为 `.off`。这正是本桥需要的语义——X10/UTF8 编码本桥不产出，非 SGR 的
+    /// 跟踪等同于关（见 terminal_backend_mac.cpp 注释）。
+    public func mouseTrackingMode() -> Int32 {
+        Int32(session.sgrMouseTrackingMode.rawValue)
+    }
+
+    /// 是否可以按 SGR（?1006）规则上报鼠标。Corta 未单独公开 `isSgrMouseEncodingEnabled`，
+    /// 只能由同一复合值反推：非 off ⇒ 跟踪开 **且** SGR 编码开，缺一不可上报。
+    /// 与 mouseTrackingMode() 读同一状态，不额外加锁次序（两侧都是锁内单次读）。
+    public func sgrMouseEncodingEnabled() -> Bool {
+        session.sgrMouseTrackingMode != .off
+    }
+
+    /// 备屏（全屏 TUI）中——页面据此决定滚轮走应用还是本地回滚。
+    /// 直接读 Corta 公开的 `isAlternateScreenActive`（TerminalSession+State.swift:230）。
+    public func altscreenActive() -> Bool {
+        session.isAlternateScreenActive
+    }
+
     // MARK: - 快照（主线程拉取）
 
     /// 拉取平铺缓冲。返回 false = 网格超 capacity（溢出契约，不部分拷贝）。

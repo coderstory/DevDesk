@@ -18,6 +18,35 @@ namespace {
 constexpr int32_t kMaxCols = 640;
 constexpr int32_t kMaxRows = 240;
 constexpr int32_t kCellCapacity = kMaxCols * kMaxRows;
+
+// SGR 鼠标编码（xterm ?1006）：`ESC [ < Cb ; Cx ; Cy {M|m}`，坐标 **1 基**。
+// final='m' 表示松开，'M' 表示按下/移动/滚轮（与 X10 的「松开永远 Cb=3」不同）。
+std::string encodeSgrMouse(int32_t code, int row, int col, bool releaseFinal) {
+    std::string out;
+    out.reserve(24);
+    out += '\x1b';
+    out += "[<";
+    out += std::to_string(code);
+    out += ';';
+    out += std::to_string(col + 1);  // Cx 在前、Cy 在后（xterm 线序）
+    out += ';';
+    out += std::to_string(row + 1);
+    out += releaseFinal ? 'm' : 'M';
+    return out;
+}
+
+// 契约按钮号（terminal_backend.h:77）→ SGR Cb 低位：0/1/2 = 左/中/右；4/5 = 滚轮 64/65。
+// -1 = 未定义的按钮号（调用方丢弃）。
+int32_t sgrButtonCode(int button) {
+    switch (button) {
+        case 0: return 0;   // 左
+        case 1: return 1;   // 中
+        case 2: return 2;   // 右
+        case 4: return 64;  // 上滚
+        case 5: return 65;  // 下滚
+        default: return -1;
+    }
+}
 } // namespace
 
 GridSize clampGridSize(int32_t rows, int32_t cols) {
@@ -43,6 +72,12 @@ struct SwiftBridgeSession::Impl {
         std::vector<CortaBridge::BridgeCell>(kCellCapacity, CortaBridge::BridgeCell::init());
     CortaBridge::BridgeCellMeta meta = CortaBridge::BridgeCellMeta::init();
     bool resizeWarned = false;
+    // 鼠标上报的按下配对与移动去重。SGR Cb 只有单按钮位（多键同时按下无编码），
+    // 故按按钮逐个配对；release 只对「上报过的按下」发，避免应用卡在按下态。
+    bool mousePressed[3] = {false, false, false};
+    int32_t lastMouseButton = -1;  // 最近按下未松的 0 基按钮号，-1=无
+    int32_t lastMotionRow = -1;
+    int32_t lastMotionCol = -1;
 };
 
 SwiftBridgeSession::SwiftBridgeSession() = default;
@@ -174,6 +209,92 @@ bool SwiftBridgeSession::selectionText(int rowStart, int colStart, int rowEnd, i
     }
     out.assign(buf);
     return true;
+}
+
+// ---- 鼠标上报 ----
+// 读 Corta 状态决定「报不报」，事件本身按 SGR 规则编码后走 write 通道（PTY 输入）。
+// 非 SGR 编码（X10/UTF8）本桥不产出：Corta 的复合模式在 SGR 未开时即 off。
+
+int32_t SwiftBridgeSession::mouseTrackingMode() {
+    if (impl_->session.isNone()) return 0;
+    return impl_->session.getSome().mouseTrackingMode();
+}
+
+bool SwiftBridgeSession::sgrMouseEncodingEnabled() {
+    if (impl_->session.isNone()) return false;
+    return impl_->session.getSome().sgrMouseEncodingEnabled();
+}
+
+bool SwiftBridgeSession::mouseReporting() { return mouseTrackingMode() != 0; }
+
+bool SwiftBridgeSession::altscreen() {
+    if (impl_->session.isNone()) return false;
+    return impl_->session.getSome().altscreenActive();
+}
+
+void SwiftBridgeSession::mouseMove(int row, int col, bool buttonDown) {
+    if (impl_->session.isNone()) return;
+    const int32_t mode = mouseTrackingMode();
+    if (mode == 0) return;
+    if (mode == 1000) return;  // normal：只报按键，移动一条不发
+    // 拖动态：优先用 mouseButton 记下的按钮；没有则看页面给的 buttonDown（按下事件可能
+    // 因 Shift 覆盖/首帧时序没上报）。1003=anyEvent 允许「无按键」位（Cb 低位 3）。
+    int32_t held = impl_->lastMouseButton;
+    if (held < 0) {
+        if (buttonDown) held = 0;
+        else if (mode == 1003) held = 3;
+        else return;  // 1002=buttonEvent：未按住不报
+    }
+    // 同格去重（指针在一个 cell 内抖动不刷 PTY；与 Corta TerminalView 同口径）
+    if (row == impl_->lastMotionRow && col == impl_->lastMotionCol) return;
+    impl_->lastMotionRow = row;
+    impl_->lastMotionCol = col;
+    // 移动位 bit5（+32）：Cb = 32 + 按钮号（无按键=35=3|32）
+    const std::string bytes = encodeSgrMouse(held | 32, row, col, false);
+    write(reinterpret_cast<const uint8_t*>(bytes.data()), static_cast<int32_t>(bytes.size()),
+          false);
+}
+
+void SwiftBridgeSession::mouseButton(int row, int col, int button, bool pressed) {
+    if (impl_->session.isNone()) return;
+    if (mouseTrackingMode() == 0) return;
+    const int32_t code = sgrButtonCode(button);
+    if (code < 0) return;
+    if (code >= 64) {
+        // 滚轮：只有按下形态，释放不上报（xterm 语义；页面按「按下+抬起」成对调用，
+        // 与 libvterm 一致丢弃抬起）。
+        if (!pressed) return;
+        impl_->lastMotionRow = row;
+        impl_->lastMotionCol = col;
+        const std::string bytes = encodeSgrMouse(code, row, col, false);
+        write(reinterpret_cast<const uint8_t*>(bytes.data()),
+              static_cast<int32_t>(bytes.size()), false);
+        return;
+    }
+    const size_t idx = static_cast<size_t>(button);
+    if (pressed) {
+        impl_->mousePressed[idx] = true;
+        impl_->lastMouseButton = button;
+    } else {
+        // 未上报过的按下不凭空发 release（页面契约：配对才发）
+        if (!impl_->mousePressed[idx]) return;
+        impl_->mousePressed[idx] = false;
+        if (impl_->lastMouseButton == button) {
+            impl_->lastMouseButton = -1;
+            for (size_t i = 0; i < 3; i++) {
+                if (impl_->mousePressed[i]) {
+                    impl_->lastMouseButton = static_cast<int32_t>(i);
+                    break;
+                }
+            }
+        }
+    }
+    impl_->lastMotionRow = row;
+    impl_->lastMotionCol = col;
+    // 按下 'M' / 松开 'm'，Cb 都是被操作按钮本身（SGR 与 X10 的关键差别）
+    const std::string bytes = encodeSgrMouse(code, row, col, !pressed);
+    write(reinterpret_cast<const uint8_t*>(bytes.data()), static_cast<int32_t>(bytes.size()),
+          false);
 }
 
 bool SwiftBridgeSession::copyToClipboard(const uint8_t* bytes, int32_t count) {

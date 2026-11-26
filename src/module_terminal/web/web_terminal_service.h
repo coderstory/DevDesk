@@ -182,6 +182,10 @@ private:
     ::terminal::web::WebSessionBridge* sessionBridge_ = nullptr;
     std::unique_ptr<::terminal::web::WebGridEncoder> gridEncoder_;
     std::atomic<bool> forceFull_{true};
+    // 晚连接补快照（2026-11-27）：新订阅者接入后，下一帧 UI tick 补推一次
+    // 「session」事件（tabs+activeId），否则网页端直到用户点 tab 才拿到 tab 列表，
+    // 空态遮罩会盖在活帧上（第二台设备打开网页端必现）。
+    std::atomic<bool> pushSessionSnapshot_{false};
     bool gridCursorValid_ = false;
     int gridLastCursorRow_ = -1;
     int gridLastCursorCol_ = -1;

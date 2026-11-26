@@ -72,8 +72,9 @@ public:
     virtual void setOutputNotify(std::function<void()> notify) { (void)notify; }
     virtual bool supportsOutputNotify() const { return false; }
     // 鼠标上报（0 基行列）：页面把指针事件交给后端，后端翻译成 VT 序列写入子进程。
-    // 默认空实现/假 = 该平台后端无鼠标上报能力（mac 的 Corta 桥当前如此）；
-    // 页面以 mouseReporting() 做门控（false 即不接指针事件）。
+    // 默认空实现/假 = 该平台后端无鼠标上报能力；页面以 mouseReporting() 做门控
+    // （false 即不接指针事件）。当前两端都已实现：Windows=libvterm 内置编码，
+    // mac=Corta 桥自拼 SGR（仅 ?1006，X10/UTF8 不支持；opencode/vim/tmux 均用 SGR）。
     // button：0=左 1=中 2=右 4=上滚 5=下滚；pressed 按下/松开各一次。
     virtual void mouseMove(int row, int col, bool buttonDown) {
         (void)row;

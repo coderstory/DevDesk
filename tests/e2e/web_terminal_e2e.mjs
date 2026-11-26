@@ -345,12 +345,18 @@ async function main() {
       () => window.__wt && window.__wt.state().status === 'connected' && window.__wt.state().view === 'terminal',
       null, { timeout: 30000 });
 
+    // 晚连接的网页客户端不会收到初始 tab 快照（服务端只在 tab 变更时推 session 事件）：
+    // 先建一个 tab 让 session 事件带回 tabs，否则 #empty 覆盖层会挡住画布点击。
+    await dpage.evaluate(() => window.__wt.client.newTab());
+    await dpage.waitForFunction(
+      () => window.__wt.state().tabs.length >= 1 && document.getElementById('empty').hidden,
+      null, { timeout: 15000 });
+
     // M3-2（桌面）：点击打开（剥尾标点）、拖动与长按不打开
     await dpage.evaluate(() => {
       window.__lastOpen = null;
       window.__wt.__lastOpen = null;
       window.open = (u) => { window.__lastOpen = u; return null; };
-      window.__wt.client.sendInput('\x03');   // 清掉手机端残留的粘贴行
     });
     await dpage.evaluate(() => window.__wt.client.sendInput("echo 'https://a.io/x.'\r"));
     await dpage.waitForFunction(() => !!window.__wt.renderer.linkRectFor('https://a.io/x'),
@@ -384,7 +390,6 @@ async function main() {
     state.steps.push('m3-link-desktop');
     console.log('STEP m3-link-desktop');
 
-    await dpage.evaluate(() => window.__wt.client.newTab());
     await dpage.waitForFunction(() => document.querySelectorAll('#tabs .tab').length >= 2, null, { timeout: 15000 });
     const tabBefore = await dpage.evaluate(() => ({
       ids: Array.from(document.querySelectorAll('#tabs .tab')).map((el) => el.getAttribute('data-id')),

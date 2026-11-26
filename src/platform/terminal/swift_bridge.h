@@ -50,6 +50,19 @@ public:
     int32_t scrollbackCount();
     bool scrollbackLineText(int32_t index, std::string& out);
     bool selectionText(int rowStart, int colStart, int rowEnd, int colEnd, std::string& out);
+
+    // 鼠标上报（0 基行列，页面契约见 terminal_backend.h:74-92）。
+    // Corta 只读状态给出「应用是否要鼠标」与「是否 SGR 编码」，没有事件注入 API，
+    // 因此事件在 C++ 侧按 SGR（?1006）规则编码后复用 write 通道写入 PTY。
+    // 非 SGR 编码（X10 / UTF8）不产出：SGR 未开时 Corta 复合值即 off，等价于不上报。
+    int32_t mouseTrackingMode();  // 0=off 1000=normal 1002=buttonEvent 1003=anyEvent
+    bool sgrMouseEncodingEnabled();
+    bool mouseReporting();
+    bool altscreen();
+    // button：0=左 1=中 2=右 4=上滚 5=下滚；pressed 按下/松开各一次
+    //（滚轮只发按下形态，松开被吞——见实现注释）。
+    void mouseMove(int row, int col, bool buttonDown);
+    void mouseButton(int row, int col, int button, bool pressed);
     // 系统剪贴板写入（NSPasteboard；会话无关静态面）
     static bool copyToClipboard(const uint8_t* bytes, int32_t count);
     void stop();
