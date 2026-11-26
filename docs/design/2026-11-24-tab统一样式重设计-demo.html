@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  need#501 统一 tab 重设计 · F1 第 2 轮定稿：B 精修下划线（主形态）+ C 连体卡片（仅 notepad 文档 tab 栏）。
+  2026-11-24 用户拍板：组合 = B 主 + C notepad；B 指示条 = tab 底部下划线。
+  自包含单文件，无外部依赖，浏览器直开，可拖窗缩放验证自适应。
+  色值与 token 槽位映射见 docs/design/2026-11-24-tab统一样式重设计-设计.md §12。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>need#501 tab 重设计 · 定稿组合（B 主 + C notepad）</title>
+<style>
+  :root{
+    --easeOutCubic: cubic-bezier(0.215,0.61,0.355,1);
+    --easeOutQuad: cubic-bezier(0.5,1,0.89,1);
+    --easeOutBack: cubic-bezier(0.34,1.56,0.64,1);
+  }
+  body.theme-dark{
+    --bg:#1A1816; --surface:#232120; --surfaceElevated:#2C2A28;
+    --hover:#353231; --borderDefault:#3A3735; --borderMuted:#2A2826;
+    --primaryText:#36D399; --accentText:#36D399; --textPrimary:#FAF9F5;
+    --textSecondary:#C9C5BD; --textTertiary:#9A948A; --textDisabled:#908A82;
+    --primarySoftBg:rgba(54,211,153,0.08);
+    --thumbShadow:0 1px 3px rgba(0,0,0,0.35);
+  }
+  body.theme-light{
+    --bg:#F5FAF7; --surface:#FFFFFF; --surfaceElevated:#FFFFFF;
+    --hover:#EEF6F1; --borderDefault:#E5E7EB; --borderMuted:#F3F4F6;
+    --primaryText:#157A4E; --accentText:#0C7A58; --textPrimary:#1F2937;
+    --textSecondary:#4B5563; --textTertiary:#6B6D80; --textDisabled:#9CA3AF;
+    --primarySoftBg:rgba(7,193,96,0.08);
+    --thumbShadow:0 1px 3px rgba(0,0,0,0.10);
+  }
+  *{box-sizing:border-box; font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  body{margin:0; background:var(--bg); color:var(--textPrimary); min-height:100vh;}
+
+  /* 顶部控制条（主题切换器自身用 B 下划线形态——组件自示范） */
+  .topbar{position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:20px;
+    padding:10px 24px 0; background:var(--surface); border-bottom:1px solid var(--borderDefault); height:48px;}
+  .topbar h1{font-size:15px; font-weight:600; margin:0; margin-right:8px;}
+  .themegroup{position:relative; display:inline-flex; gap:8px; height:36px;}
+  .themegroup .mk{position:absolute; height:2.5px; background:var(--primaryText); border-radius:999px;
+    transition:left .16s var(--easeOutCubic), width .16s var(--easeOutCubic);}
+  .themegroup button{border:none; background:transparent; cursor:pointer; height:36px; padding:0 14px;
+    font-size:11.2px; color:var(--textSecondary); border-radius:6px;
+    transform:scale(1); transition:transform .2s var(--easeOutBack), color .15s linear, background .12s var(--easeOutQuad);}
+  .themegroup button:hover{background:var(--primarySoftBg);}
+  .themegroup button:active{transform:scale(0.97); transition:transform .1s var(--easeOutQuad);}
+  .themegroup button.on{color:var(--textPrimary);}
+  .note{font-size:12px; color:var(--textTertiary);}
+
+  .wrap{padding:24px; max-width:1200px;}
+  .db{border:1px solid var(--borderDefault); border-radius:12px; background:var(--surface);
+    padding:20px 24px; margin-bottom:20px;}
+  .db h2{font-size:14px; font-weight:600; color:var(--textPrimary); margin:0 0 4px;}
+  .db .desc{font-size:12px; color:var(--textTertiary); margin:0 0 16px;}
+  .row{display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:16px;}
+
+  /* ===== 方向 B：精修下划线（主形态·定稿）——指示条贴 tab 底部 ===== */
+  .tg{position:relative; display:inline-flex;}
+  .tg .mk{position:absolute; height:2.5px; background:var(--primaryText); border-radius:999px; pointer-events:none;
+    transition:left .16s var(--easeOutCubic), width .16s var(--easeOutCubic);}
+  .tg .tab{border:none; background:transparent; cursor:pointer; white-space:nowrap;
+    color:var(--textSecondary); border-radius:8px;
+    transform:scale(1); transition:transform .2s var(--easeOutBack), color .15s linear, background .12s var(--easeOutQuad);}
+  .tg .tab:hover{background:var(--primarySoftBg);}
+  .tg .tab:active{transform:scale(0.97); transition:transform .1s var(--easeOutQuad);}
+  .tg .tab.on{color:var(--textPrimary);}
+  .tg.big{height:40px; gap:8px;}
+  .tg.big .tab{height:40px; padding:0 20px; font-size:14.4px;}
+  .tg.big .tab span{display:inline-block; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom;}
+  .tg.small{height:36px; gap:4px;}
+  .tg.small .tab{height:36px; padding:0 14px; font-size:11.2px; border-radius:6px;}
+  .tg.small .tab span{display:inline-block; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom;}
+
+  /* ===== 方向 C：连体卡片条带（仅 notepad 文档 tab 栏·定稿） ===== */
+  .strip{position:relative; display:inline-flex; align-items:stretch; height:36px;
+    border:1px solid var(--borderDefault); border-radius:8px;}
+  .strip .tab{border:none; background:transparent; cursor:pointer; white-space:nowrap;
+    color:var(--textSecondary); position:relative; min-width:96px; padding:0 12px; font-size:11.2px;
+    transform:scale(1); transition:transform .2s var(--easeOutBack), color .15s linear, background .12s var(--easeOutQuad);}
+  .strip .tab + .tab{border-left:1px solid var(--borderMuted);}
+  .strip .tab:hover{background:var(--hover);}
+  .strip .tab:active{transform:scale(0.97); transition:transform .1s var(--easeOutQuad);}
+  .strip .tab.on{background:var(--surfaceElevated); color:var(--accentText);}
+  .strip .tab.on:hover{background:var(--surfaceElevated);}
+  .strip .tab.on::before{content:""; position:absolute; top:0; left:0; right:0; height:2px;
+    background:var(--primaryText); border-radius:999px;}
+  .strip .tab:first-child{border-radius:7px 0 0 7px;}
+  .strip .tab:last-child{border-radius:0 7px 7px 0;}
+  .strip .tab:only-child{border-radius:7px;}
+  .strip .tab span.lb{display:inline-block; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom;}
+  .strip .tab .x{display:inline-flex; align-items:center; justify-content:center;
+    width:24px; height:24px; margin-left:6px; margin-right:-6px; border-radius:6px;
+    color:var(--textTertiary); opacity:0.6; font-size:13px; line-height:1;}
+  .strip .tab .x:hover{opacity:1; color:var(--textSecondary); background:var(--hover);}
+  .strip .tab .x:active{transform:scale(0.9);}
+  /* 选中卡下缘并入内容区（下圆角 0 + 底边隐藏） */
+  .strip.join{border-bottom-color:transparent; border-bottom-left-radius:0; border-bottom-right-radius:0;}
+  .strip.join .tab{border-bottom:1px solid transparent; margin-bottom:-1px;}
+  .strip.join .tab.on{background:var(--surfaceElevated); border-radius:7px 7px 0 0;}
+  .strip.join .tab.on:first-child{border-radius:7px 7px 0 0;}
+  .strip.join .tab.on:last-child{border-radius:7px 7px 0 0;}
+
+  /* ===== wtabRow：tab 行 + 右缘计数 ===== */
+  .wtabrow{display:flex; align-items:center; gap:16px;}
+  .wtabrow .count{margin-left:auto; font-size:12px; color:var(--textSecondary); white-space:nowrap;}
+  .edge{display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--textTertiary);}
+  .edge .erow{display:flex; justify-content:space-between; gap:24px; min-width:260px;}
+  .edge .erow b{font-weight:400; color:var(--textSecondary);}
+
+  /* 弹窗样张 */
+  .dialog{border:1px solid var(--borderDefault); border-radius:14px; background:var(--surfaceElevated);
+    padding:16px 20px 20px; max-width:520px;}
+  .dialog h3{margin:0 0 8px; font-size:14px; font-weight:600;}
+  .dialog .body{margin-top:12px; font-size:12.4px; color:var(--textSecondary);
+    border:1px dashed var(--borderDefault); border-radius:8px; padding:14px;}
+
+  /* notepad 栏样张 */
+  .notepad{display:flex; align-items:center; gap:12px;}
+  .empty{font-size:12px; color:var(--textTertiary); padding:8px 12px;
+    border:1px dashed var(--borderDefault); border-radius:8px; display:none;}
+  .reset{border:1px solid var(--borderDefault); background:transparent; color:var(--textSecondary);
+    border-radius:8px; padding:5px 12px; font-size:12px; cursor:pointer;
+    transform:scale(1); transition:transform .2s var(--easeOutBack);}
+  .reset:active{transform:scale(0.97); transition:transform .1s var(--easeOutQuad);}
+</style>
+</head>
+<body class="theme-dark">
+
+<div class="topbar">
+  <h1>need#501 定稿：B 主 + C notepad</h1>
+  <div class="themegroup" id="themeSeg" data-h="36"><div class="mk"></div>
+    <button data-th="theme-dark" class="on">深色</button>
+    <button data-th="theme-light">浅色</button>
+  </div>
+  <span class="note">B 指示条 = tab 底部下划线 · 拖窗缩放验证自适应 · 点击看指示条滑动与果冻按压</span>
+</div>
+
+<div class="wrap">
+
+<div class="db">
+  <div class="desc">定稿（2026-11-24 用户拍板第 2 轮）：页面级 / 弹窗级 / wtabRow = B 精修下划线；notepad 文档 tab 栏 = C 连体卡片。A 一体轨道未采纳（存档于设计文档 §3）。</div>
+
+  <h2>1. 页面级 tab = B（高 40 · 字 14.4）</h2>
+  <div class="row">
+    <div class="tg big" data-h="40"><div class="mk"></div>
+      <button class="tab on"><span>概览</span></button>
+      <button class="tab"><span>连接配置</span></button>
+      <button class="tab"><span>运行日志</span></button>
+      <button class="tab"><span>年度数据统计与图表分析总览</span></button>
+    </div>
+    <span class="note">超长 label：160px 截断省略号 + title 提示</span>
+  </div>
+
+  <h2>2. 弹窗级小 tab = B（高 36 · 字 11.2）</h2>
+  <div class="row">
+    <div class="dialog">
+      <h3>导出设置</h3>
+      <div class="tg small" data-h="36"><div class="mk"></div>
+        <button class="tab on"><span>格式</span></button>
+        <button class="tab"><span>范围</span></button>
+        <button class="tab"><span>高级选项</span></button>
+      </div>
+      <div class="body">内容区（弹窗级 36 档，与页面级 40 恒差 4）</div>
+    </div>
+  </div>
+
+  <h2>3. notepad 文档 tab 栏 = C 连体卡片（高 36 · 带关闭钮 · 选中卡下缘并入内容区）</h2>
+  <div class="row notepad">
+    <div class="strip join np">
+      <button class="tab on"><span class="lb">需求分析.md</span><span class="x" title="关闭">×</span></button>
+      <button class="tab"><span class="lb">技术方案卡.md</span><span class="x" title="关闭">×</span></button>
+      <button class="tab"><span class="lb">测试清单.md</span><span class="x" title="关闭">×</span></button>
+    </div>
+    <button class="reset" onclick="resetNp()">恢复样张</button>
+  </div>
+  <div class="empty" id="npEmpty">所有文档已关闭 —— tab 栏整组隐藏，此处显示页面空态引导（demo 演示空态）</div>
+
+  <h2>4. wtabRow = B（tab 行 + 右缘计数）</h2>
+  <div class="row wtabrow">
+    <div class="tg big" data-h="40"><div class="mk"></div>
+      <button class="tab on"><span>全部</span></button>
+      <button class="tab"><span>进行中</span></button>
+      <button class="tab"><span>已完成</span></button>
+      <button class="tab"><span>已取消</span></button>
+    </div>
+    <span class="count" id="cnt">共 12 条</span>
+  </div>
+  <div class="row edge">
+    <div class="erow"><span>计数边界样张：</span><span>正常「共 12 条」 / 超限「共 999+ 条」 / 加载「…」 / 错误「—」</span></div>
+    <div class="erow"><span>契约：</span><b>计数固定行右缘，切 tab 零位移（对比上方切换）</b></div>
+  </div>
+</div>
+
+<p class="note">参数依据：docs/design/2026-11-24-tab统一样式重设计-设计.md（§2.1 定稿 · §4 B 参数 · §5 C notepad 参数 · §12 槽位映射）。demo 仅视觉校准，不是实现蓝图。</p>
+</div>
+
+<script>
+// 计数字典（wtabRow 演示：计数随选中 tab 变内容、位置恒定）
+var CNT = {"全部":"共 12 条","进行中":"共 5 条","已完成":"共 6 条","已取消":"共 1 条"};
+
+// B 指示条：贴 tab 底缘（top = h-3），宽 = 文字宽（不含 padding）
+function moveMk(tg, btn){
+  var h = +tg.dataset.h || 40;
+  var mk = tg.querySelector(".mk");
+  var g = tg.getBoundingClientRect();
+  var span = btn.querySelector("span");
+  var sr = span.getBoundingClientRect();
+  mk.style.left = (sr.left - g.left) + "px";
+  mk.style.width = sr.width + "px";
+  mk.style.top = (h - 3) + "px";
+  mk.style.height = "2.5px";
+}
+
+document.querySelectorAll(".tg").forEach(function(tg){
+  tg.querySelectorAll(".tab").forEach(function(btn){
+    if(btn.classList.contains("on")) requestAnimationFrame(function(){ moveMk(tg, btn); });
+    btn.addEventListener("click", function(){
+      if(btn.classList.contains("on")) return; // 幂等：已选再点不重放动画
+      tg.querySelectorAll(".tab.on").forEach(function(b){ b.classList.remove("on"); });
+      btn.classList.add("on");
+      moveMk(tg, btn);
+      var row = tg.closest(".wtabrow");
+      if(row){ var c = row.querySelector(".count"); if(c) c.textContent = CNT[btn.textContent.trim()] || ""; }
+    });
+  });
+  window.addEventListener("resize", function(){
+    var on = tg.querySelector(".tab.on"); if(on) moveMk(tg, on);
+  });
+});
+
+// notepad 关闭钮（C 栏）：关非激活不动激活态；关激活 → 激活右移邻 tab（右缘无则左移）；关完 → 栏隐藏+空态
+document.querySelectorAll(".np").forEach(function(strip){
+  strip.addEventListener("click", function(e){
+    var x = e.target.closest(".x"); if(!x) return;
+    e.stopPropagation();
+    var btn = x.closest(".tab"), wasOn = btn.classList.contains("on");
+    btn.remove();
+    var rest = strip.querySelectorAll(".tab");
+    if(!rest.length){
+      strip.style.display = "none";
+      var emp = document.getElementById("npEmpty");
+      if(emp) emp.style.display = "inline-block";
+      return;
+    }
+    if(wasOn){
+      var nx = btn.nextElementSibling;
+      rest.forEach(function(b){ b.classList.remove("on"); });
+      (strip.contains(nx) ? nx : rest[0]).classList.add("on");
+    }
+  });
+});
+
+function resetNp(){
+  document.getElementById("npEmpty").style.display = "none";
+  location.reload();
+}
+
+// 顶部主题切换（B 下划线形态自示范）
+var seg = document.getElementById("themeSeg");
+var sbtns = seg.querySelectorAll("button"), smk = seg.querySelector(".mk");
+function segSync(b){
+  sbtns.forEach(function(x){ x.classList.toggle("on", x === b); });
+  var r = b.getBoundingClientRect(), g = seg.getBoundingClientRect();
+  smk.style.left = (r.left - g.left + 14) + "px";
+  smk.style.width = (r.width - 28) + "px";
+  smk.style.top = "33px";
+}
+sbtns.forEach(function(b){ b.addEventListener("click", function(){ segSync(b); document.body.className = b.dataset.th; }); });
+requestAnimationFrame(function(){ segSync(seg.querySelector("button.on")); });
+window.addEventListener("resize", function(){ segSync(seg.querySelector("button.on")); });
+
+// URL hash 直达主题：#light
+if(location.hash === "#light"){ var lb = sbtns[1]; if(lb) lb.click(); }
+</script>
+</body>
+</html>

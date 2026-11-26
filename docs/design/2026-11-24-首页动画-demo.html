@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<!--
+  首页动画 demo 第 2 轮（need#506 F1）——demo 仅视觉校准，不是实现蓝图。
+  口径：只要持续动画（弱 B1 / 中 B2 / 强 B3 三档），无进场特效。
+  CSS @keyframes 为近似呈现；实现按设计文档 §7 EUI 映射表落地：
+  三档全部 = 20fps 限帧泵 + 壁钟相位 compose 重算（app_fluid 同机制）；
+  B3 软晕实现为 splash 同心圆 alpha 阶梯（非 CSS 渐变）。差异见文档 §7.4。
+  自包含单文件，无外部依赖，浏览器直开，可拖窗缩放验证自适应。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>首页动画 demo 第 2 轮 · need#506</title>
+<style>
+  /* ── token（唯一权威 src/core/theme.h，两主题实值照抄）── */
+  :root, body.dark {
+    --bg: #1A1816; --surface: #232120; --elevated: #2C2A28;
+    --hover: #353231; --primary: #36D399; --primary-pressed: #23B07F;
+    --soft-bg: #0D3326; --text-1: #FAF9F5; --text-2: #C9C5BD;
+    --text-3: #9A948A; --border: #3A3735; --on-primary: #FFFFFF;
+  }
+  body.light {
+    --bg: #F5FAF7; --surface: #FFFFFF; --elevated: #FFFFFF;
+    --hover: #EEF6F1; --primary: #07C160; --primary-pressed: #059048;
+    --soft-bg: #E8F8EE; --text-1: #1F2937; --text-2: #4B5563;
+    --text-3: #6B6D80; --border: #E5E7EB; --on-primary: #FFFFFF;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text-1);
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── 控制条（demo 专用）── */
+  .ctrl {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--text-2);
+  }
+  .ctrl b { color: var(--text-1); font-weight: 600; }
+  .scheme-btn {
+    cursor: pointer; user-select: none;
+    padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-2); font-size: 13px;
+    transition: all 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .scheme-btn:hover { background: var(--hover); color: var(--text-1); }
+  .scheme-btn.on {
+    background: var(--soft-bg); border-color: var(--primary); color: var(--primary);
+    font-weight: 600;
+  }
+  .divider { width: 1px; height: 22px; background: var(--border); }
+  .hint { font-size: 12px; color: var(--text-3); }
+
+  /* ── 首页复刻区（外壳不滚、内容区内滚）── */
+  .page { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 0 32px; }
+  .content { min-height: 100%; display: flex; flex-direction: column; gap: 20px; max-width: 1600px; margin: 0 auto; }
+  .header { height: 40px; display: flex; align-items: center; gap: 12px; }
+  .header h1 { font-size: 24px; font-weight: 600; line-height: 24px; flex: 1; }
+  .btn-outline {
+    height: 40px; padding: 0 18px; border-radius: 10px;
+    border: 1px solid var(--primary); background: var(--surface);
+    color: var(--primary); font-size: 15px; display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer; transition: background 160ms ease;
+  }
+  .btn-outline:hover { background: var(--soft-bg); }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; }
+  .card {
+    flex: 1 1 170px; min-width: 170px; max-width: 320px; min-height: 110px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 13px;
+    padding: 20px; display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+    position: relative; z-index: 2; /* 动画层在内容之下 */
+    transition: transform 160ms cubic-bezier(0.22,0.61,0.36,1), box-shadow 160ms cubic-bezier(0.22,0.61,0.36,1);
+  }
+  .card:hover { transform: translateY(-4px); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+  body.light .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .card .label { font-size: 13px; color: var(--text-2); }
+  .card .num { font-size: 44px; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .card .num.muted { color: var(--text-3); }
+  .card .spark { margin-top: auto; height: 24px; }
+  .card .spark svg { width: 100%; height: 100%; display: block; }
+  .spark path { fill: none; stroke: var(--primary); stroke-width: 1.5; opacity: 0.55; }
+
+  .actions { display: flex; gap: 16px; margin-bottom: 16px; position: relative; z-index: 2; }
+  .btn-filled {
+    flex: 1; height: 44px; border-radius: 10px; border: none;
+    background: var(--primary); color: var(--on-primary); font-size: 15px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+    transition: filter 160ms ease;
+  }
+  .btn-filled:hover { filter: brightness(0.94); }
+  .btn-outline2 {
+    flex: 1; height: 44px; border-radius: 10px; border: 1px solid var(--primary);
+    background: var(--surface); color: var(--primary); font-size: 15px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+    transition: background 160ms ease;
+  }
+  .btn-outline2:hover { background: var(--soft-bg); }
+
+  /* ── 留白区：持续动画落点（三档共用容器，点击穿透）── */
+  .whitespace { flex: 1 1 auto; position: relative; min-height: 40px; }
+  .layer { position: absolute; inset: 0; pointer-events: none; opacity: 1; transition: opacity 240ms ease; }
+  .layer.off { opacity: 0; }
+  .layer .note {
+    position: absolute; right: 0; bottom: 0; font-size: 12px; color: var(--text-3); text-align: right;
+  }
+
+  .dot { position: absolute; border-radius: 50%; background: var(--primary); }
+  .ring {
+    position: absolute; width: 56px; height: 56px; border-radius: 50%;
+    border: 1.5px solid var(--primary); opacity: 0.10;
+  }
+  .blob { position: absolute; border-radius: 50%; }
+
+  /* B1：页底带（锚底 32，高 96） */
+  #b1 { top: auto; bottom: 0; height: 128px; }
+  #b1 .bandzone { position: absolute; left: 0; right: 0; bottom: 32px; height: 96px; }
+  #b1 .bandzone .dot, #b1 .bandzone .ring {
+    animation-name: drift, breathe;
+    animation-timing-function: ease-in-out, ease-in-out;
+    animation-iteration-count: infinite, infinite;
+    animation-direction: alternate, normal;
+  }
+
+  /* B2：全域星尘（远/近双层视差） */
+  #b2 .far  { animation: drift 16s ease-in-out infinite alternate, breathe 11s ease-in-out infinite; }
+  #b2 .near { animation: drift 10s ease-in-out infinite alternate, breathe 8s  ease-in-out infinite; }
+
+  /* B3：流质晕层（大软晕慢漂 + 近景墨点） */
+  #b3 .blob { animation: drift 20s ease-in-out infinite alternate, breatheBlob 13s ease-in-out infinite; }
+  #b3 .dot  { animation: drift 10s ease-in-out infinite alternate, breathe 8s  ease-in-out infinite; }
+
+  @keyframes drift  { 0% { transform: translate(0,0); } 100% { transform: translate(var(--dx,6px), var(--dy,-4px)); } }
+  @keyframes breathe { 0%,100% { opacity: var(--a0,0.14); } 50% { opacity: var(--a1,0.22); } }
+  @keyframes breatheBlob { 0%,100% { opacity: var(--a0,0.06); } 50% { opacity: var(--a1,0.09); } }
+
+  /* ── 减动效模拟：全部静止为静态构图（运动归零）── */
+  body.reduce .dot, body.reduce .ring, body.reduce .blob { animation: none !important; }
+
+  /* 层切换 240ms 交叉过渡由 .layer opacity transition 承担 */
+</style>
+</head>
+<body class="dark">
+
+<div class="ctrl">
+  <b>need#506 首页动画 · 第 2 轮（持续档）</b>
+  <span class="divider"></span>
+  <span>档位：</span>
+  <button class="scheme-btn" data-tier="b1">弱 B1 页底墨染带</button>
+  <button class="scheme-btn on" data-tier="b2">中 B2 全域星尘（主推）</button>
+  <button class="scheme-btn" data-tier="b3">强 B3 流质晕层</button>
+  <span class="divider"></span>
+  <button class="scheme-btn" id="themeBtn">深 / 浅主题</button>
+  <label><input type="checkbox" id="reduceChk"> 减动效模拟（静止化）</label>
+  <span class="hint">三档实现均为 20fps 限帧泵驱动（app_fluid 同款），demo 为 CSS 近似</span>
+</div>
+
+<div class="page" id="page">
+  <div class="content">
+    <div class="header" id="hdr">
+      <h1>工作台</h1>
+      <button class="btn-outline">⟳ 刷新</button>
+    </div>
+
+    <div class="stats" id="stats">
+      <div class="card"><span class="label">Token 速率</span><span class="num muted">--</span>
+        <div class="spark"><svg viewBox="0 0 100 24" preserveAspectRatio="none"><path d="M0,18 C10,17 14,12 22,13 S36,19 44,15 S60,6 68,9 S84,16 100,12"/></svg></div>
+      </div>
+      <div class="card"><span class="label">今日笔记</span><span class="num">12</span></div>
+      <div class="card"><span class="label">待办待处理</span><span class="num">8</span></div>
+      <div class="card"><span class="label">待办逾期</span><span class="num" style="color:var(--primary)">2</span></div>
+      <div class="card"><span class="label">今日 API 调用</span><span class="num">46</span></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn-filled">＋ 新建笔记</button>
+      <button class="btn-outline2">＋ 新建任务</button>
+    </div>
+
+    <!-- 留白区：三档持续动画层（位置为 hash01 确定性布置的示例值，实现由 sin 散列计算） -->
+    <div class="whitespace" id="ws">
+
+      <!-- B1 弱档：页底墨染带（7 点 + 1 环，距底 32 高 96） -->
+      <div class="layer" id="b1">
+        <div class="bandzone">
+          <span class="ring" style="left:12%; top:18px;"></span>
+          <span class="dot" style="left:6%;  top:44px; width:4px; height:4px; --a0:0.10; --a1:0.16; --dx:5px;  --dy:-4px; animation-duration:9s,7.2s;"></span>
+          <span class="dot" style="left:17%; top:30px; width:5px; height:5px; --a0:0.18; --a1:0.26; --dx:-6px; --dy:3px;  animation-duration:11s,8.4s; animation-delay:-2s,-1s;"></span>
+          <span class="dot" style="left:31%; top:56px; width:3px; height:3px; --a0:0.12; --a1:0.18; --dx:6px;  --dy:2px;  animation-duration:8s,6.6s;  animation-delay:-4s,-3s;"></span>
+          <span class="dot" style="left:46%; top:26px; width:4px; height:4px; --a0:0.14; --a1:0.20; --dx:-5px; --dy:-3px; animation-duration:10s,9.1s; animation-delay:-1s,-5s;"></span>
+          <span class="dot" style="left:58%; top:52px; width:5px; height:5px; --a0:0.16; --a1:0.22; --dx:4px;  --dy:-5px; animation-duration:12s,7.8s; animation-delay:-6s,-2s;"></span>
+          <span class="dot" style="left:72%; top:34px; width:3px; height:3px; --a0:0.10; --a1:0.15; --dx:-6px; --dy:4px;  animation-duration:9s,8.8s;  animation-delay:-3s,-7s;"></span>
+          <span class="dot" style="left:86%; top:48px; width:4px; height:4px; --a0:0.13; --a1:0.19; --dx:5px;  --dy:-2px; animation-duration:10.5s,6.9s; animation-delay:-5s,-4s;"></span>
+        </div>
+        <span class="note">弱 B1 · 页底带 96px · 8 元素 · alpha ≤0.26</span>
+      </div>
+
+      <!-- B2 中档：全域星尘（远层 10 + 近层 6，双层视差） -->
+      <div class="layer off" id="b2">
+        <span class="dot far" style="left:4%;  top:10%; width:3px; height:3px; --a0:0.08; --a1:0.12; --dx:8px;  --dy:-6px; animation-duration:18s,13s;"></span>
+        <span class="dot far" style="left:15%; top:64%; width:2.5px;height:2.5px;--a0:0.09; --a1:0.12; --dx:-8px; --dy:5px;  animation-duration:14s,9.5s; animation-delay:-3s,-2s;"></span>
+        <span class="dot far" style="left:24%; top:28%; width:4px; height:4px; --a0:0.08; --a1:0.11; --dx:7px;  --dy:6px;  animation-duration:17s,12s; animation-delay:-6s,-4s;"></span>
+        <span class="dot far" style="left:33%; top:80%; width:3px; height:3px; --a0:0.10; --a1:0.12; --dx:-7px; --dy:-5px; animation-duration:16s,10.8s;animation-delay:-2s,-6s;"></span>
+        <span class="dot far" style="left:43%; top:16%; width:2.5px;height:2.5px;--a0:0.08; --a1:0.12; --dx:8px;  --dy:-4px; animation-duration:19s,14.2s;animation-delay:-8s,-1s;"></span>
+        <span class="dot far" style="left:52%; top:56%; width:4px; height:4px; --a0:0.09; --a1:0.12; --dx:-8px; --dy:6px;  animation-duration:15s,11.6s;animation-delay:-5s,-8s;"></span>
+        <span class="dot far" style="left:63%; top:36%; width:3px; height:3px; --a0:0.08; --a1:0.11; --dx:7px;  --dy:-6px; animation-duration:18s,9.8s; animation-delay:-9s,-3s;"></span>
+        <span class="dot far" style="left:74%; top:74%; width:2.5px;height:2.5px;--a0:0.10; --a1:0.12; --dx:-8px; --dy:-5px; animation-duration:14.5s,13.4s;animation-delay:-4s,-5s;"></span>
+        <span class="dot far" style="left:84%; top:22%; width:3px; height:3px; --a0:0.08; --a1:0.12; --dx:8px;  --dy:5px;  animation-duration:16.5s,10.2s;animation-delay:-7s,-9s;"></span>
+        <span class="dot far" style="left:93%; top:60%; width:4px; height:4px; --a0:0.09; --a1:0.12; --dx:-7px; --dy:-6px; animation-duration:17.5s,12.6s;animation-delay:-1s,-7s;"></span>
+        <span class="dot near" style="left:9%;  top:44%; width:5px; height:5px; --a0:0.14; --a1:0.20; --dx:10px; --dy:-8px; animation-duration:11s,7.4s; animation-delay:-2s,-3s;"></span>
+        <span class="dot near" style="left:28%; top:8%;  width:4px; height:4px; --a0:0.16; --a1:0.22; --dx:-10px;--dy:7px;  animation-duration:9.5s,6.6s; animation-delay:-5s,-1s;"></span>
+        <span class="dot near" style="left:47%; top:70%; width:6px; height:6px; --a0:0.15; --a1:0.21; --dx:9px;  --dy:8px;  animation-duration:10.5s,8.2s; animation-delay:-3s,-4s;"></span>
+        <span class="dot near" style="left:60%; top:24%; width:4px; height:4px; --a0:0.14; --a1:0.22; --dx:-9px; --dy:-7px; animation-duration:12s,7.1s; animation-delay:-6s,-2s;"></span>
+        <span class="dot near" style="left:78%; top:52%; width:5px; height:5px; --a0:0.16; --a1:0.20; --dx:10px; --dy:6px;  animation-duration:10s,9.4s; animation-delay:-4s,-6s;"></span>
+        <span class="dot near" style="left:89%; top:12%; width:4px; height:4px; --a0:0.15; --a1:0.22; --dx:-10px;--dy:-8px; animation-duration:11.5s,6.8s; animation-delay:-7s,-5s;"></span>
+        <span class="note">中 B2 · 全域双层视差 · 16 元素 · alpha ≤0.22 · 余高&lt;120px 自隐</span>
+      </div>
+
+      <!-- B3 强档：流质晕层（3 软晕 + 6 墨点） -->
+      <div class="layer off" id="b3">
+        <span class="blob" style="left:6%;  top:6%;  width:380px; height:380px; --a0:0.05; --a1:0.08; --dx:14px; --dy:-10px; animation-duration:22s,15s;
+          background: radial-gradient(closest-side, var(--primary) 0%, transparent 70%); opacity:0.06;"></span>
+        <span class="blob" style="left:55%; top:30%; width:300px; height:300px; --a0:0.06; --a1:0.09; --dx:-14px;--dy:9px;  animation-duration:18s,12.2s; animation-delay:-4s,-2s;
+          background: radial-gradient(closest-side, var(--primary) 0%, transparent 70%); opacity:0.07;"></span>
+        <span class="blob" style="left:20%; top:58%; width:220px; height:220px; --a0:0.05; --a1:0.08; --dx:12px; --dy:10px;  animation-duration:16s,10.6s; animation-delay:-8s,-5s;
+          background: radial-gradient(closest-side, var(--primary) 0%, transparent 70%); opacity:0.06;"></span>
+        <span class="dot" style="left:14%; top:38%; width:4px; height:4px; --a0:0.10; --a1:0.16; --dx:10px; --dy:-8px; animation-duration:10s,7.6s;"></span>
+        <span class="dot" style="left:36%; top:74%; width:5px; height:5px; --a0:0.12; --a1:0.16; --dx:-10px;--dy:7px;  animation-duration:9s,6.4s;  animation-delay:-2s,-3s;"></span>
+        <span class="dot" style="left:50%; top:18%; width:3px; height:3px; --a0:0.10; --a1:0.14; --dx:9px;  --dy:8px;  animation-duration:11s,8.8s; animation-delay:-4s,-1s;"></span>
+        <span class="dot" style="left:66%; top:60%; width:4px; height:4px; --a0:0.12; --a1:0.16; --dx:-9px; --dy:-7px; animation-duration:10.5s,7.2s;animation-delay:-6s,-4s;"></span>
+        <span class="dot" style="left:80%; top:34%; width:5px; height:5px; --a0:0.11; --a1:0.16; --dx:10px; --dy:6px;  animation-duration:9.5s,9.2s; animation-delay:-3s,-6s;"></span>
+        <span class="dot" style="left:90%; top:78%; width:3px; height:3px; --a0:0.10; --a1:0.15; --dx:-10px;--dy:-8px; animation-duration:12s,6.6s; animation-delay:-5s,-2s;"></span>
+        <span class="note">强 B3 · 流质晕层前景化 · 3 晕 + 6 点 · alpha ≤0.18 · 实现为同心圆 alpha 阶梯</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var layers = { b1: document.getElementById('b1'), b2: document.getElementById('b2'), b3: document.getElementById('b3') };
+  var ws = document.getElementById('ws');
+  var current = 'b2';
+  var th = { b1: 128, b2: 152, b3: 152 };  // 显隐阈值：B1 128 / B2·B3 152（含 note 行余量）
+
+  // 单一同步口：active 档显隐由「当前档 + 余高阈值」共同决定，非当前档恒隐
+  function syncLayers() {
+    var h = ws.clientHeight;
+    Object.keys(layers).forEach(function (k) {
+      layers[k].classList.toggle('off', k !== current || h < th[k]);
+    });
+  }
+
+  function showTier(id) { current = id; syncLayers(); }
+
+  document.querySelectorAll('.scheme-btn[data-tier]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.scheme-btn[data-tier]').forEach(function (b) { b.classList.remove('on'); });
+      btn.classList.add('on');
+      showTier(btn.getAttribute('data-tier'));
+    });
+  });
+
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    document.body.classList.toggle('dark');
+    document.body.classList.toggle('light');
+  });
+
+  document.getElementById('reduceChk').addEventListener('click', function () {
+    document.body.classList.toggle('reduce', this.checked);
+  });
+
+  // 自适应：与档位单一同步口（syncLayers）合流，不再单独覆盖档位状态
+  if (window.ResizeObserver) new ResizeObserver(syncLayers).observe(ws);
+  window.addEventListener('resize', syncLayers);
+
+  showTier('b2');  // 默认中档（文档 §2.2）
+})();
+</script>
+</body>
+</html>
