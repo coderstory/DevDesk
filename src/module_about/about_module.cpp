@@ -13,9 +13,6 @@
 #include <ui_kit/card.h>
 
 #include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -233,7 +230,8 @@ public:
                 {"C++ 标准", aboutCppLine()},
             }},
             {"许可与致谢", {
-                {"开源协议", "MIT License"},
+                // 与仓库根 LICENSE 一致（GPL v2）。此处曾误写 MIT License。
+                {"开源协议", "GPLv2"},
             }},
         };
 

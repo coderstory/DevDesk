@@ -706,9 +706,18 @@ Task DetailDialog::collect(const std::vector<Task>& tasks) const {
     }
     updated.priority = priority;
     updated.dueAt = dueAt;
-    updated.completedAt = completed
-        ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
-        : std::nullopt;
+    // completed_at 是事实记录：已完成的任务保存详情时保留原完成时刻，只有
+    // 「原本未完成 → 本次勾上」才置 now。否则每次编辑都会把完成时间改成当下，
+    // 完成时间显示错，且下次冷启动逃过自动归档（归档判据 = completed_at < 今日零点）。
+    const bool wasCompleted = orig != nullptr && orig->completedAt.has_value();
+    if (!completed) {
+        updated.completedAt = std::nullopt;
+    } else if (wasCompleted) {
+        updated.completedAt = orig->completedAt;
+    } else {
+        updated.completedAt =
+            std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)));
+    }
     updated.tags = tags;
     updated.docPath = docPath;
     // 保留原 position（硬编码 0 会把任务顶到列首）

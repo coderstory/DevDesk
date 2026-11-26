@@ -18,6 +18,7 @@
 #include "core/sqlite_db.h"
 #include "core/theme.h"
 #include "module_todo/todo_service.h"
+#include "module_todo/todo_dialogs.h"  // DetailDialog::collect：completed_at 保留口径直测
 #include "module_todo/todo_ui_logic.h"
 #include "ui_kit/card.h"      // cardSurface / kCardGlassAlpha
 #include "ui_kit/metrics.h"  // kHeaderH：看板几何断言基准高
@@ -5818,5 +5819,52 @@ REGISTER_TEST(todo_import_reload_async_fill,
     DOCTEST_CHECK(head->text == "导入前任务");
 
     mod->onStop();
+    return true;
+})
+
+// completed_at 是事实记录：编辑详情不得把已完成任务的完成时刻改成当下。
+// 若不保留原值：① 完成时间显示错；② 下次冷启动逃过自动归档
+//（archiveDoneTasksBeforeToday 判据 = completed_at < 今日零点）。
+REGISTER_TEST(todo_ui_detail_collect_keeps_completed_at,
+              "todo_ui: 详情 collect 保留原 completed_at（只首次完成才置 now）", {
+    using namespace module::todo::ui;
+    using module::todo::Task;
+    const int64_t kOldCompletion = 1700000000;  // 2023 年某个时刻
+    Task orig;
+    orig.id = 7;
+    orig.columnId = 3;
+    orig.title = "已完成任务";
+    orig.completedAt = kOldCompletion;
+    const std::vector<Task> tasks{orig};
+
+    // ① 已完成的保持原值
+    DetailDialog d;
+    d.taskId = 7;
+    d.title = "改个标题";
+    d.completed = true;
+    const Task kept = d.collect(tasks);
+    DOCTEST_REQUIRE(kept.completedAt.has_value());
+    DOCTEST_CHECK_EQ(*kept.completedAt, kOldCompletion);
+
+    // ② 取消完成 → 清空
+    d.completed = false;
+    DOCTEST_CHECK_FALSE(d.collect(tasks).completedAt.has_value());
+
+    // ③ 原本未完成 → 本次勾上 = 置 now
+    Task pending;
+    pending.id = 8;
+    pending.columnId = 3;
+    pending.title = "待办任务";
+    const std::vector<Task> pendings{pending};
+    DetailDialog d2;
+    d2.taskId = 8;
+    d2.title = "待办任务";
+    d2.completed = true;
+    const int64_t before = static_cast<int64_t>(std::time(nullptr));
+    const Task fresh = d2.collect(pendings);
+    const int64_t after = static_cast<int64_t>(std::time(nullptr));
+    DOCTEST_REQUIRE(fresh.completedAt.has_value());
+    DOCTEST_CHECK(*fresh.completedAt >= before);
+    DOCTEST_CHECK(*fresh.completedAt <= after);
     return true;
 })
