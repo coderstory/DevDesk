@@ -10,12 +10,12 @@
 
 **Spec:**
 - 原始审计：桌面 `新建 文本文档 (2).txt`（2026-11-26，MCP 与智能体模块审计报告）
-- 权威设计：`docs/superpowers/specs/2026-10-26-mcp-server-skeleton-design.md`（§14.2 已知风险）、`docs/superpowers/specs/2026-09-30-agent-design.md`、`docs/superpowers/design/2026-11-19-mcp-agent-tools-ui.md`
+- 权威设计：`docs/superpowers/specs/2026-10-26-mcp-server-skeleton-design.md`（§14.2 已知风险）、`docs/superpowers/specs/2026-09-30-agent-design.md`、`docs/design/2026-11-19-mcp-agent-tools-ui.md`
 - 本计划已按下节「实地核对」修正原报告，执行者以本计划为准。
 
 ## Global Constraints
 
-- 构建/测试唯一入口：`bash scripts/build-test-run.sh --dev --filter <名字>`；全量 `doctest+probe+守卫链` 只在收口跑一次。禁止手敲 cmake。
+- 构建/测试唯一入口：`bash scripts/build-test-run.sh --dev --filter <名字>`；全量 `doctest+probe+守卫链` 只在收口跑一次。禁止手敲 cmake。**probe 例外**：UI/链路探针沿用项目既有通道 `(cd build && ctest -L probe -R <name>)`（devdesk-discipline §1），构建仍必须经脚本。
 - 不抛 C++ 异常，错误统一 `Result<T>`；新代码不得引入 `#ifdef _WIN32/__APPLE__`（平台差异拆文件）。
 - `module_*` 之间禁止互相依赖；`core` 不依赖 `platform`、不调 EUI-NEO 运行时；模块层只经 app 层函数指针桥跨模块。
 - 测试是自制迷你 doctest：仅 `REGISTER_TEST` / `DOCTEST_CHECK(_EQ/_NE/_TRUE/_FALSE/_MESSAGE)` / `DOCTEST_REQUIRE*` / `DOCTEST_SKIP`，**无 `CHECK_LE`**；bool 用例体 `return true;` 收尾。
@@ -30,6 +30,7 @@
 - 工具挂死触发 600s 总闸 detach：槽位只可在 worker 真正退出时释放；若在请求线程释放，上限形同虚设。
 - 服务改端口/重启：开关状态必须延续，不能重启后悄悄回到「允许」。
 - 开关写盘失败（库忙/只读）：开关必须回弹并在行内红字说明，不能显示已开启。
+- 页面「试一下」是**用户显式本地操作**，直接 `IMcpTool::execute`，不经过 MCP 闸与并发槽位——这是既定边界（会写进 spec），不属缺口。
 
 ---
 
@@ -88,8 +89,8 @@
 | 功能代码量 | ≤ 400 行（生产）；测试 ≤ 300 行 |
 | 注释量 | ≤ 50 行，只写 why/契约，不复读 what |
 | 执行周期 | 2–3 个工作日（含 probe 与真机走查） |
-| 内存 | 常驻 +0（2 个 atomic + 1 个 bool）；峰值线程数从无界收敛到 ≤ 8 |
-| CPU | 每 call 两次原子读写，< 1µs；每帧开关读取一次函数指针，可忽略 |
+| 内存 | 常驻 +0（3 个 atomic：协议开关/槽位计数/服务开关；无堆分配）；峰值线程数从无界收敛到 ≤ 8 |
+| CPU | 每 call 两次原子读写，< 1µs；每帧开关读取一次函数指针，可忽略；切换开关时一次 `SettingsStore::load()+save()`（本地 SQLite，通常 <50ms，属用户点击动作） |
 | 二进制 | +约 4KB |
 
 ---
@@ -224,7 +225,8 @@ REGISTER_TEST(mcp_protocol_destructive_gate_blocks_by_default,
     DOCTEST_CHECK_TRUE(boolField(result.asObject(), "isError"));
     const auto content = result.asObject().get("content");
     DOCTEST_REQUIRE(content.isArray());
-    const auto first = content.asArray().at(0);
+    DOCTEST_REQUIRE_EQ(content.size(), 1);
+    const auto first = content[0];  // JsonValue 只有 operator[]，无 asArray/at
     DOCTEST_REQUIRE(first.isObject());
     DOCTEST_CHECK(strField(first.asObject(), "text").find("未授权") != std::string::npos);
     DOCTEST_CHECK_EQ(tool->calls, 0);
@@ -304,6 +306,7 @@ std::string toolResultJson(const core::mcp::ToolResult& tr) {
             const core::mcp::ToolResult refused{
                 true, "破坏性工具 " + toolName +
                           " 未授权：MCP 页「破坏性工具」开关为关闭状态"};
+            LOG_INFO("MCP 拒绝破坏性工具调用（开关关闭）: " + toolName);
             auto refusedJson = parseFragment(toolResultJson(refused));
             if (refusedJson.isFail() || !refusedJson.value().isObject()) {
                 return HttpOutcome{200, errorResponseText(id, -32603,
@@ -334,6 +337,7 @@ Expected: 新老用例全 PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
+git add src/module_mcp/mcp_protocol.h src/module_mcp/mcp_protocol.cpp tests/test_modules/test_mcp_protocol.cpp
 git commit -m "wip: mcp tools/call 破坏性工具服务端闸（默认拒）"
 ```
 
@@ -351,7 +355,7 @@ git commit -m "wip: mcp tools/call 破坏性工具服务端闸（默认拒）"
 
 - [ ] **Step 1: 写失败用例**
 
-在测试文件加 `#include <future>` 与阻塞桩：
+在测试文件加 `#include <atomic>`、`#include <future>` 与阻塞桩：
 
 ```cpp
 // 进 execute 后阻塞，直到 release()；用于确定性占住并发槽位
@@ -370,23 +374,54 @@ public:
             core::mcp::ToolResult{false, "released"});
     }
     bool waitEntered() {
-        return entered_.get_future().wait_for(std::chrono::seconds(2)) ==
+        return enteredFuture_.wait_for(std::chrono::seconds(2)) ==
                std::future_status::ready;
     }
-    void release() { release_.set_value(); }
+    void release() { releaseOnce(); }
+    // 幂等：fail-fast 路径与正常路径都可能调用，二次 set_value 会抛 future_error
+    void releaseOnce() {
+        if (!released_.exchange(true)) release_.set_value();
+    }
     std::atomic<int> calls{0};
 
 private:
+    std::atomic<bool> released_{false};
     std::promise<void> entered_;
+    std::shared_future<void> enteredFuture_ = entered_.get_future();
     std::promise<void> release_;
     std::shared_future<void> gate_ = release_.get_future();
 };
+
+// 断言失败提前 return 时也要放行阻塞 worker / join 线程，避免 std::terminate 或槽位永久占用
+struct BlockingReleaseGuard {
+    BlockingTool& tool;
+    ~BlockingReleaseGuard() { tool.releaseOnce(); }
+};
+struct ThreadJoinGuard {
+    std::thread& thread;
+    ~ThreadJoinGuard() {
+        if (thread.joinable()) thread.join();
+    }
+};
+
+// 进程级计数可能被前序超时用例 detach 的 worker 占用；用例开头统一排空
+bool waitInflightDrained(int seconds) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    while (module::mcp::inflightToolCalls() != 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return module::mcp::inflightToolCalls() == 0;
+}
 ```
 
 ```cpp
 REGISTER_TEST(mcp_protocol_concurrency_cap_rejects_and_recovers,
               "mcp protocol: 并发上限=1 时第二个 call 立刻 -32603，释放后计数归零", {
     test_support::ScopedEnv env("MCP_MAX_CONCURRENT_CALLS", "1");
+    DOCTEST_REQUIRE(waitInflightDrained(3));  // 前序超时用例的 detach worker 先排空
+
     Fixture fixture;
     auto tool = std::make_shared<BlockingTool>();
     DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
@@ -398,6 +433,8 @@ REGISTER_TEST(mcp_protocol_concurrency_cap_rejects_and_recovers,
     std::string ignoredSecond;
     std::thread first(
         [&] { fixture.protocol.handlePost(call, sid, "", ignoredFirst); });
+    ThreadJoinGuard join{first};          // REQUIRE 失败也 join，避免 terminate
+    BlockingReleaseGuard release{*tool};  // 提前 return 也放行 worker
     DOCTEST_REQUIRE(tool->waitEntered());
     DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 1);
 
@@ -406,10 +443,39 @@ REGISTER_TEST(mcp_protocol_concurrency_cap_rejects_and_recovers,
     DOCTEST_CHECK(second.body.find("并发已达上限") != std::string::npos);
     DOCTEST_CHECK_EQ(tool->calls.load(), 1);  // 第二个没有执行
 
-    tool->release();
+    tool->releaseOnce();  // 先放行，再断言计数（断言前不得占着槽位）
     first.join();
     DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 0);
     DOCTEST_CHECK_EQ(tool->calls.load(), 1);
+    return true;
+})
+
+REGISTER_TEST(mcp_protocol_slot_held_until_detached_worker_exits,
+              "mcp protocol: 超时 detach 后槽位仍被占，worker 真正退出才归零", {
+    test_support::ScopedEnv env("MCP_TOOL_TIMEOUT_SECONDS", "1");
+    DOCTEST_REQUIRE(waitInflightDrained(3));
+
+    Fixture fixture;
+    auto tool = std::make_shared<BlockingTool>();
+    DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
+    const std::string sid = fixture.openSession();
+    std::string ignored;
+    auto outcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"block_tool","arguments":{}}})",
+        sid, "", ignored);
+    DOCTEST_CHECK_EQ(errorCodeOf(outcome.body), -32603);  // 外层总闸超时
+
+    // 先记快照，再放行：若在请求线程提前归还，快照会是 0（红灯）
+    const int heldWhileDetached = module::mcp::inflightToolCalls();
+    tool->releaseOnce();
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (module::mcp::inflightToolCalls() != 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_CHECK_EQ(heldWhileDetached, 1);
+    DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 0);
     return true;
 })
 ```
@@ -474,44 +540,24 @@ struct ToolCallSlotRelease {
         auto slotRelease = std::make_shared<ToolCallSlotRelease>();
 ```
 
-worker lambda 捕获 `slotRelease`；线程创建失败分支显式 `slotRelease.reset();` 再返回错误。超时 detach 路径**不要** reset（worker 会归还）。
-
-- [ ] **Step 4: 跑绿 + detach 归零用例**
-
-再补一条超时 detach 用例（Review Focus 第 3 条必须有测试钉住）：
+worker lambda **按值**捕获（`shared_ptr` 拷贝进线程存储；禁止 `&slotRelease`——超时 detach 后请求线程先返回，引用会悬垂）：
 
 ```cpp
-REGISTER_TEST(mcp_protocol_concurrency_slot_held_until_detached_worker_exits,
-              "mcp protocol: 超时 detach 后槽位仍被占，worker 真正退出才归零", {
-    test_support::ScopedEnv env("MCP_TOOL_TIMEOUT_SECONDS", "1");
-    Fixture fixture;
-    auto tool = std::make_shared<BlockingTool>();
-    DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
-    const std::string sid = fixture.openSession();
-    std::string ignored;
-    auto outcome = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"block_tool","arguments":{}}})",
-        sid, "", ignored);
-    DOCTEST_CHECK_EQ(errorCodeOf(outcome.body), -32603);
-    DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 1);  // detach 不归还
-    tool->release();
-    // worker 已脱离，只能轮询到归零（上限 3s，避免偶发慢机假红）
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (module::mcp::inflightToolCalls() != 0 &&
-           std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 0);
-    return true;
-})
+executeWorker = std::thread(
+    [tool, argumentsJson, executePromise, slotRelease] { /* ... */ });
 ```
 
+线程创建失败分支显式 `slotRelease.reset();` 再返回错误。超时 detach 路径**不要** reset（worker 会归还）。
+
+- [ ] **Step 4: 跑绿**
+
 Run: `bash scripts/build-test-run.sh --dev --filter mcp_protocol`
-Expected: 全部 PASS；`mcp_protocol_tool_timeout_...` 既有两条仍绿。
+Expected: 全部 PASS；`mcp_protocol_tool_timeout_...` / `...abandoned_worker_counter` 既有用例仍绿（detach worker 自然结束后计数归零）。
 
 - [ ] **Step 5: 提交**
 
 ```bash
+git add src/module_mcp/mcp_protocol.h src/module_mcp/mcp_protocol.cpp tests/test_modules/test_mcp_protocol.cpp
 git commit -m "wip: mcp tools/call 在途并发上限（默认 8）与槽位生命周期"
 ```
 
@@ -524,7 +570,8 @@ git commit -m "wip: mcp tools/call 在途并发上限（默认 8）与槽位生�
 - Modify: `src/mcp_service_bridge.cpp`
 - Modify: `src/main.cpp:300-330, 630-645`
 - Test: `tests/test_modules/test_mcp_settings.cpp:198-281`
-- Test: `tests/test_modules/test_mcp_service.cpp`（新增：重启后开关延续）
+- Test: `tests/test_modules/test_mcp_service.cpp`（新增：运行中转发 + 重启延续，真 HTTP 往返）
+- Test: `tests/test_main.cpp:187-196`（逐用例复位新增两槽）
 
 **Interfaces:**
 - `SettingsConfig::mcpAllowDestructive`（bool，默认 false），键名 `mcpAllowDestructive`
@@ -586,14 +633,16 @@ Expected: 编译失败。
 
 `settings_config.h`：加 `bool mcpAllowDestructive = false;`，注释「MCP 页「破坏性工具」开关；默认关 = 服务端一律拒」。
 
-`settings_config.cpp`：加键 `constexpr const char* kKeyMcpAllowDestructive = "mcpAllowDestructive";`；load 段照 `mdAssocEnabled` 写法：
+`settings_config.cpp`：加键 `constexpr const char* kKeyMcpAllowDestructive = "mcpAllowDestructive";`；插入 **`loadChecked()`**（`readRow` 是该函数内的 lambda，`load()` 只是委托、没有这个作用域），位置放在 `kKeyNotepadAssocEverEnabled` 块之后；坏值不静默：
 
 ```cpp
     if (auto raw = readRow(kKeyMcpAllowDestructive); raw.isOk()) {
         auto v = parseRow(configKey(kKeyMcpAllowDestructive), raw.value());
-        if (v.isOk() && v.value().isBool()) {
-            cfg.mcpAllowDestructive = v.value().asBool();
+        if (v.isFail()) {
+            return core::Result<SettingsConfig>::fail(v.errorCode(),
+                                                      v.errorMessage());
         }
+        if (v.value().isBool()) cfg.mcpAllowDestructive = v.value().asBool();
     }
 ```
 
@@ -625,6 +674,11 @@ core::Result<void> mcpSetAllowDestructiveImpl(bool on) {
     auto saved = store.save(cfg);
     if (saved.isFail()) return saved;
     module::mcp::globalMcpService().setAllowDestructive(on);
+    if (on) {
+        // app 层负责用户可见提示：总开关一次放行 7 件破坏性工具，必须明示
+        app::showAppNotice("破坏性工具已开启",
+                           "MCP 客户端现在可写文件、执行命令、删除待办/笔记");
+    }
     return core::Result<void>::ok();
 }
 ```
@@ -634,7 +688,22 @@ core::Result<void> mcpSetAllowDestructiveImpl(bool on) {
 
 冷启动**直连**路径（`main.cpp:636` 的 `globalMcpService().start(...)`）同样要在启动前用 `gatingConfigSnapshot().mcpAllowDestructive` 赋值；否则冷启动会退回默认关。两处入口都改，才算口径一致。
 
-`mcp_service.h/.cpp`：加 `std::atomic<bool> allowDestructive_{false};`（`mcp_service.h` 补 `#include <atomic>`）+ `setAllowDestructive/allowDestructive`；`start()` 构造 `McpProtocol` 后立刻 `protocol->setAllowDestructive(allowDestructive_.load())`。
+`mcp_service.h/.cpp`：加 `std::atomic<bool> allowDestructive_{false};`（`mcp_service.h` 补 `#include <atomic>`）+ 运行中转发：
+
+```cpp
+void McpService::setAllowDestructive(bool allow) {
+    allowDestructive_.store(allow, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(mutex_);  // 与 stop() 搬移 protocol_ 互斥
+    if (protocol_) protocol_->setAllowDestructive(allow);
+}
+bool McpService::allowDestructive() const {
+    return allowDestructive_.load(std::memory_order_relaxed);
+}
+```
+
+`start()` 构造 `McpProtocol` 后立刻 `protocol->setAllowDestructive(allowDestructive_.load())`（新建协议拿到当前值）。getter 只读 atomic，不加锁。
+
+`tests/test_main.cpp:187-196` 的逐用例隔离清单追加：`::app::mcp::setDestructiveHandlers(nullptr, nullptr);`（新增的函数指针槽必须每用例复位，防 fail-fast 留桩）。
 
 - [ ] **Step 4: 跑绿**
 
@@ -642,22 +711,43 @@ Run: `bash scripts/build-test-run.sh --dev --filter mcp_settings`
 Run: `bash scripts/build-test-run.sh --dev --filter mcp_bridge`
 Expected: PASS。
 
-重启延续用例（`test_mcp_service.cpp`，Review Focus 第 4 条）：
+真 HTTP 往返用例（`test_mcp_service.cpp`；**在 Step 3 实现前先写入并跑红**，再实现到绿；先在匿名 namespace 加一个 `isDestructive()=true` 的 stub，仿现有 `SlowTool`）：
 
 ```cpp
-REGISTER_TEST(mcp_service_allow_destructive_survives_restart,
-              "mcp service: setAllowDestructive 在 stop/restart 后延续（不被重置为允许）", {
-    module::mcp::McpService service(core::mcp::globalMcpTools());
-    service.setAllowDestructive(true);
-    DOCTEST_CHECK_TRUE(service.allowDestructive());
-    // 未启动时 stop 是 no-op；启动→停止→再启动走同一条成员注入路径
-    DOCTEST_REQUIRE(service.start(0).isOk());
-    const int port = service.port();
-    service.stop();
-    DOCTEST_CHECK_TRUE(service.allowDestructive());
-    DOCTEST_REQUIRE(service.start(port > 0 ? 0 : 0).isOk());
-    DOCTEST_CHECK_TRUE(service.allowDestructive());
-    service.stop();
+REGISTER_TEST(mcp_service_allow_destructive_live_and_restart,
+              "mcp service: 运行中开关即时生效；重启后仍允许（真 HTTP 往返）", {
+    core::mcp::McpToolRegistry reg;
+    auto tool = std::make_shared<DangerStubTool>();
+    DOCTEST_REQUIRE(reg.registerTool(tool).isOk());
+    module::mcp::McpService svc(reg);
+    DOCTEST_REQUIRE(svc.start(0).isOk());
+    const int port = svc.port();
+    const std::string sid = initializeSession(port);
+    DOCTEST_REQUIRE(!sid.empty());
+
+    const std::string call =
+        R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe_destructive_tool","arguments":{}}})";
+    auto blocked = postJson(port, call, {{"Mcp-Session-Id", sid}});
+    DOCTEST_REQUIRE_EQ(blocked.statusCode, 200);
+    DOCTEST_CHECK(blocked.body.find("\"isError\":true") != std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 0);
+
+    svc.setAllowDestructive(true);  // 运行中转发到 live protocol
+    auto allowed = postJson(port, call, {{"Mcp-Session-Id", sid}});
+    DOCTEST_REQUIRE_EQ(allowed.statusCode, 200);
+    DOCTEST_CHECK(allowed.body.find("\"isError\"") == std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 1);
+
+    svc.stop();
+    DOCTEST_REQUIRE(svc.start(0).isOk());  // 重启：新 protocol 必须拿到成员值
+    const int port2 = svc.port();
+    const std::string sid2 = initializeSession(port2);
+    DOCTEST_REQUIRE(!sid2.empty());
+    auto afterRestart = postJson(port2, call, {{"Mcp-Session-Id", sid2}});
+    DOCTEST_REQUIRE_EQ(afterRestart.statusCode, 200);
+    DOCTEST_CHECK(afterRestart.body.find("\"isError\"") == std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 2);
+    svc.stop();
     return true;
 })
 ```
@@ -668,6 +758,11 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
+git add src/module_settings/settings_config.h src/module_settings/settings_config.cpp \
+        src/mcp_service_bridge.h src/mcp_service_bridge.cpp src/main.cpp \
+        src/module_mcp/mcp_service.h src/module_mcp/mcp_service.cpp \
+        tests/test_modules/test_mcp_settings.cpp tests/test_modules/test_mcp_service.cpp \
+        tests/test_main.cpp
 git commit -m "wip: 破坏性开关持久化（SettingsConfig 第 27 键）+ mcp 桥读写"
 ```
 
@@ -711,7 +806,10 @@ REGISTER_TEST(mcp_page_destructive_row,
     {
         eui::Ui ui;  // 桥未装配：点击失败 → 红字 + 回弹
         composeFrame(mod, ui, screen, "mcp_drow_2");
-        ui.find("mcp.module.destructive.toggle.hit")->onClick();
+        const auto* toggle2 = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle2 != nullptr);
+        DOCTEST_REQUIRE(toggle2->onClick != nullptr);
+        toggle2->onClick();
         composeFrame(mod, ui, screen, "mcp_drow_3");
         const auto* desc = ui.find("mcp.module.destructive.desc");
         DOCTEST_REQUIRE(desc != nullptr);
@@ -722,7 +820,10 @@ REGISTER_TEST(mcp_page_destructive_row,
         g_allowDestructive = false;
         eui::Ui ui;
         composeFrame(mod, ui, screen, "mcp_drow_4");
-        ui.find("mcp.module.destructive.toggle.hit")->onClick();
+        const auto* toggle2 = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle2 != nullptr);
+        DOCTEST_REQUIRE(toggle2->onClick != nullptr);
+        toggle2->onClick();
         DOCTEST_CHECK_TRUE(g_allowDestructive);  // onChange(true) 真到达桥
         composeFrame(mod, ui, screen, "mcp_drow_5");
         const auto* track = ui.find("mcp.module.destructive.toggle.track");
@@ -765,17 +866,31 @@ Expected: FAIL（找不到 `mcp.module.destructive`）。
 `mcp_page_module.h` 私有段把 `drawMemoryModuleRow` 改为通用助手（保留原函数签名以避免大改）并新增（需补 `#include <functional>`）：
 
 ```cpp
+    // onToggle 必须**按值**持有：调用处构造的是临时 std::function，
+    // 若按 const& 传参再被 lambda 引用捕获，compose 返回后即悬垂。
     void drawToolSwitchRow(eui::Ui& ui, float contentW,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& comp,
                            const char* idPrefix, const char* title,
-                           const char* desc, bool checked,
+                           const char* desc, uint32_t iconCodepoint,
+                           const eui::Color& iconColor, bool checked,
                            std::string& errorSlot,
-                           const std::function<core::Result<void>(bool)>& onToggle);
+                           std::function<core::Result<void>(bool)> onToggle);
     std::string destructiveSaveError_;
 ```
 
-`drawMemoryModuleRow` 变成 8 行转发（idPrefix `"mcp.module.memory"`、`app::memory_mcp::status().switchOn`、`memorySaveError_`、`app::memory_mcp::setEnabled`）；新增 `drawDestructiveModuleRow` 转发（idPrefix `"mcp.module.destructive"`、`app::mcp::allowDestructive()`、`destructiveSaveError_`、`app::mcp::setAllowDestructive`）。
+助手内 switch 接线（`switch.h::build()` 会复制 `onChange_`，所以 lambda 必须拥有 `onToggle`）：
+
+```cpp
+    .onChange([this, onToggle = std::move(onToggle), &errorSlot](bool on) {
+        const auto r = onToggle(on);
+        errorSlot = r.isFail() ? r.errorMessage() : std::string();
+    })
+```
+
+**禁止** `[&onToggle]`。
+
+`drawMemoryModuleRow` 转发用记忆行参数（idPrefix `"mcp.module.memory"`、图标 `0xF5DC`、`t.colors.primary`）；新增 `drawDestructiveModuleRow` 用警示图标 `0xF071`、`t.colors.warning`，绑定 `app::mcp::allowDestructive()` / `setAllowDestructive` / `destructiveSaveError_`。软底沿用 `primarySoftBg`（本批不新增 token）。测试追加：`mcp.module.destructive.icon` 存在且 text == utf8(0xF071)，与记忆行图标不同。
 
 `.cpp` 原 699-779 行的绘制体搬进助手，所有 `id + ".xxx"` 拼法保持不变（既有记忆用例 id 不动）。
 
@@ -795,11 +910,20 @@ Expected: 记忆行、宿主行、卡片、弹窗等全部既有用例仍 PASS�
 
 - [ ] **Step 5: 真窗口 probe**
 
-在 `tests/probes/mcp_card_343_probe.cpp` 的页头检查段追加：`mcp.module.destructive` 存在、`height == 64`、开关 track 右缘对齐记忆行 track 右缘；跑 `(cd build && ctest -L probe -R mcp_card)` 并确认截图产物落 `evidence/`。
+在 `tests/probes/mcp_card_343_probe.cpp` 的页头检查段追加：`mcp.module.destructive` 存在、`height == 64`、开关 track 右缘对齐记忆行 track 右缘。运行：
+
+```bash
+(cd build && ctest -L probe -R mcp_card)            # 几何门禁
+./build/tests/mcp_card_343_probe --shot evidence/20261126-mcp-destructive-toggle.png
+```
+
+两样产物都落 `evidence/`。
 
 - [ ] **Step 6: 提交**
 
 ```bash
+git add src/module_mcp/mcp_page_module.h src/module_mcp/mcp_page_module.cpp \
+        tests/test_modules/test_mcp_page.cpp tests/probes/mcp_card_343_probe.cpp
 git commit -m "wip: MCP 页头「破坏性工具」开关行（复用记忆行样式）"
 ```
 
@@ -823,12 +947,20 @@ git commit -m "wip: MCP 页头「破坏性工具」开关行（复用记忆行�
 
 - [ ] **Step 2: 跑红**
 
-Run: `bash scripts/build-test-run.sh --dev --no-test` 后 `(cd build && ctest -L probe -R mcp_e2e)`
+构建走脚本、probe 走既有通道：
+
+```bash
+bash scripts/build-test-run.sh --dev --no-test --no-run
+(cd build && ctest -L probe -R mcp_e2e)
+```
+
 Expected: FAIL（`setAllowDestructive` 不存在 / 行为未实现）。
 
 - [ ] **Step 3: 文档同步**
 
-spec §14.2 第 6 条「无鉴权/本机信任」后补一句契约：破坏性工具另有服务端开关（默认关），本机信任不再等同于「用户知情授权」；USER_GUIDE 的 MCP 小节加开关位置与拒绝文案说明。
+1. spec §14.2 第 6 条后补：破坏性工具另有服务端开关（默认关），本机信任不再等同知情授权；第 5 条后补：挂死的 detached worker 会永久占用并发槽位（默认 8），服务重启不清零，极端情况需重启应用。
+2. `McpService::stop()`：若 `inflightToolCalls() > 0` 打 `LOG_WARN` 带上计数（不重置计数器，避免旧 worker 退出时 `fetch_sub` 成负数）。
+3. USER_GUIDE MCP 小节：列出 7 件受总开关控制的破坏性工具（fs.write / fs.edit / bash.run / git.commit / todo.delete / md.delete / claude_proxy 的破坏性工具）与拒绝文案；说明「总开关 = 7 件全开」，并写明并发上限可用 `MCP_MAX_CONCURRENT_CALLS` 调整（默认 8）。
 
 - [ ] **Step 4: 收口全量**
 
@@ -838,7 +970,19 @@ Expected: `Total:` 全绿、probe 全绿、模块隔离守卫 0。
 - [ ] **Step 5: squash 提交**
 
 ```bash
-git add -A
+git status   # 确认无他人未提交改动；禁止 git add -A
+git add src/core/mcp_tool.h src/module_mcp/mcp_tool_mirror.h \
+        src/module_mcp/mcp_tool_mirror.cpp src/module_mcp/mcp_protocol.h \
+        src/module_mcp/mcp_protocol.cpp src/module_mcp/mcp_service.h \
+        src/module_mcp/mcp_service.cpp src/module_mcp/mcp_page_module.h \
+        src/module_mcp/mcp_page_module.cpp src/module_settings/settings_config.h \
+        src/module_settings/settings_config.cpp src/mcp_service_bridge.h \
+        src/mcp_service_bridge.cpp src/main.cpp \
+        tests/test_modules/test_mcp_protocol.cpp tests/test_modules/test_mcp_tool_mirror.cpp \
+        tests/test_modules/test_mcp_settings.cpp tests/test_modules/test_mcp_service.cpp \
+        tests/test_modules/test_mcp_page.cpp tests/test_main.cpp \
+        tests/probes/mcp_e2e_probe.cpp tests/probes/mcp_card_343_probe.cpp \
+        docs/superpowers/specs/2026-10-26-mcp-server-skeleton-design.md docs/USER_GUIDE.md
 git commit -m "feat: MCP 破坏性工具服务端闸 + 在途并发上限（默认关/默认 8）"
 ```
 
