@@ -1256,17 +1256,21 @@ GridLayout TerminalPage::compose(
                                                                       tabW_[static_cast<size_t>(k)] * 0.5f;
                                                     if (dropX > mid) target = k;
                                                 }
-                                                if (target != i) ctrl->moveSession(i, target);
+                                                if (target != i) {
+                                                    ctrl->moveSession(i, target);
+                                                    lastTabClickIndex_ = -1; // 换位后序号语义变了
+                                                }
                                             })
                                             // M2 Task 8（缺陷 A）：切换会话改由按下即生效
                                             // （TAB 惯例）。onClick 依赖「press/release 同目标 +
                                             // 未发生过位移」，手势链上任一环节抢走都不触发；按下
                                             // 路径不依赖 release，单击切换稳定。双击改名语义不变。
-                                            .onPress([this, ctrl, i](const eui::PointerEvent& ev,
-                                                                     const eui::Rect&) {
+                                            .onPress([this, ctrl, i, scale = screen.scale](
+                                                         const eui::PointerEvent& ev,
+                                                         const eui::Rect&) {
                                                 tabDragStartX_ =
                                                     static_cast<float>(ev.x) /
-                                                    (screen.scale > 0.0f ? screen.scale : 1.0f);
+                                                    (scale > 0.0f ? scale : 1.0f);
                                                 const auto now = std::chrono::steady_clock::now();
                                                 const double dt = std::chrono::duration<double>(
                                                                       now - lastTabClickAt_)
