@@ -9,6 +9,8 @@
 #include "agent_module_internal.h"
 #include "module_agent/agent_task_templates.h"
 
+#include <exception>
+
 namespace module::agent {
 
 bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
