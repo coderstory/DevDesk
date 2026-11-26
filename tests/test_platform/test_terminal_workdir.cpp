@@ -155,7 +155,6 @@ REGISTER_TEST(terminal_workdir_e2e_bash_bare_name,
     return true;
 })
 
-#endif // __APPLE__
 
 REGISTER_TEST(terminal_bridge_clamp,
               "terminal_bridge: 网格尺寸钳制到快照镜像上限（bug508）", {
@@ -182,3 +181,6 @@ REGISTER_TEST(terminal_bridge_clamp,
     DOCTEST_CHECK_EQ(zero.cols, 1);
     return true;
 })
+
+
+#endif // __APPLE__

@@ -212,6 +212,220 @@ async function main() {
     console.log('STEP echo-hi');
     await shot(page, '03-echo-hi.png');
 
+    // ===== M3：网页端轻量项（键带 / 链接 / 拖文件 / 无障碍 / 标签排序） =====
+    // M3-1 最小键带：手机视口 hasTouch → 键带自动可见（不额外加 ?keys=1）
+    const keybarVisible = await page.evaluate(() => !document.getElementById('keybar').hidden);
+    if (!keybarVisible) throw new Error('M3-1 KEYBAR_HIDDEN');
+    await page.evaluate(() => { window.__wt.__lastInput = null; });
+    await page.evaluate(() => document.getElementById('key-ctrl').click());
+    const ctrlState = await page.evaluate(() => ({
+      latched: document.getElementById('key-ctrl').classList.contains('latched'),
+      pressed: document.getElementById('key-ctrl').getAttribute('aria-pressed'),
+    }));
+    if (!ctrlState.latched || ctrlState.pressed !== 'true') {
+      throw new Error('M3-1 CTRL_LATCH_MISSING ' + JSON.stringify(ctrlState));
+    }
+    await page.evaluate(() => document.getElementById('kbd-capture')
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true, cancelable: true })));
+    const ctrlInput = await page.evaluate(() => window.__wt.__lastInput);
+    if (ctrlInput !== '\x03') throw new Error('M3-1 CTRL_C_BYTE ' + JSON.stringify(ctrlInput));
+    // 锁存保持到再点一次 Ctrl（点字母不自动解除）
+    if (!(await page.evaluate(() => document.getElementById('key-ctrl').classList.contains('latched')))) {
+      throw new Error('M3-1 CTRL_LATCH_AUTO_CLEARED');
+    }
+    await page.evaluate(() => document.getElementById('key-ctrl').click());
+    if (await page.evaluate(() => document.getElementById('key-ctrl').classList.contains('latched'))) {
+      throw new Error('M3-1 CTRL_UNLATCH_FAILED');
+    }
+    await page.evaluate(() => document.getElementById('key-up').click());
+    if (await page.evaluate(() => window.__wt.__lastInput) !== '\x1b[A') throw new Error('M3-1 UP_KEY');
+    await page.evaluate(() => document.getElementById('key-down').click());
+    if (await page.evaluate(() => window.__wt.__lastInput) !== '\x1b[B') throw new Error('M3-1 DOWN_KEY');
+    state.steps.push('m3-keybar');
+    console.log('STEP m3-keybar');
+
+    // M3-2 链接：按三端矩阵手机网页「不做」——触屏视口点击不打开、也无悬停下划线
+    await page.evaluate(() => {
+      window.__lastOpen = null;
+      window.__wt.__lastOpen = null;
+      window.open = (u) => { window.__lastOpen = u; return null; };  // 拦掉真实弹窗
+    });
+    await page.evaluate(() => window.__wt.client.sendInput("echo 'https://a.io/x.'\r"));
+    await page.waitForFunction(() => window.__frameText && window.__frameText().includes('https://a.io/x'),
+      null, { timeout: 30000 });
+    const linkRect = await page.evaluate(() => window.__wt.renderer.linkRectFor('https://a.io/x'));
+    if (!linkRect) throw new Error('M3-2 LINK_NOT_FOUND');
+    await page.mouse.click(linkRect.x, linkRect.y);
+    if (await page.evaluate(() => window.__wt.__lastOpen)) throw new Error('M3-2 MOBILE_LINK_OPENED');
+    await page.mouse.move(linkRect.x, linkRect.y);
+    if (!(await page.evaluate(() => document.getElementById('link-underline').hidden))) {
+      throw new Error('M3-2 MOBILE_HOVER_UNDERLINE');
+    }
+    state.steps.push('m3-link-mobile');
+    console.log('STEP m3-link-mobile');
+
+    // M3-3 拖文件：单引号转义、空格连接、走 bracketed paste 通道
+    await page.evaluate(() => { window.__wt.__lastInput = null; window.__wt.__lastPaste = false; });
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      const add = (name, p) => {
+        const f = new File(['x'], name, { type: 'text/plain' });
+        try { Object.defineProperty(f, 'path', { value: p }); } catch (e) { /* 浏览器可能不可写 */ }
+        dt.items.add(f);
+      };
+      add('a b.txt', '/tmp/a b.txt');
+      add("it's.txt", "/tmp/it's.txt");
+      document.getElementById('canvas-scroll')
+        .dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    });
+    const dropped = await page.evaluate(() => ({ text: window.__wt.__lastInput, paste: window.__wt.__lastPaste }));
+    const dropExpect = "'/tmp/a b.txt' '/tmp/it'\\''s.txt'";
+    if (dropped.text !== dropExpect) throw new Error('M3-3 DROP_TEXT ' + JSON.stringify(dropped.text));
+    if (!dropped.paste) throw new Error('M3-3 DROP_NOT_PASTE_CHANNEL');
+    // 非终端区拖入不插入
+    await page.evaluate(() => {
+      const before = window.__wt.__lastInput;
+      const dt = new DataTransfer();
+      dt.items.add(new File(['x'], 'z.txt', { type: 'text/plain' }));
+      document.getElementById('view-terminal')
+        .dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      window.__dropUnchanged = window.__wt.__lastInput === before;
+    });
+    if (!(await page.evaluate(() => window.__dropUnchanged))) throw new Error('M3-3 DROP_OUTSIDE_INSERTED');
+    state.steps.push('m3-drop');
+    console.log('STEP m3-drop');
+
+    // M3-4 无障碍语义：文本层 role/aria、连接状态 aria-live、键带与粘贴钮可聚焦有标签
+    const a11y = await page.evaluate(() => {
+      const ids = ['key-esc', 'key-tab', 'key-ctrl', 'key-up', 'key-down'];
+      const tl = document.getElementById('text-layer');
+      return {
+        role: tl.getAttribute('role'),
+        live: tl.getAttribute('aria-live'),
+        label: tl.getAttribute('aria-label'),
+        hidden: tl.getAttribute('aria-hidden'),
+        connLive: document.getElementById('conn-text').getAttribute('aria-live'),
+        pasteLabel: document.getElementById('btn-paste').getAttribute('aria-label'),
+        keyLabels: ids.map((id) => document.getElementById(id).getAttribute('aria-label')),
+        focusable: ids.every((id) => {
+          const b = document.getElementById(id);
+          b.focus();
+          return document.activeElement === b && b.tabIndex >= 0;
+        }),
+      };
+    });
+    if (a11y.role !== 'log' || a11y.live !== 'polite' || a11y.label !== '终端输出' || a11y.hidden !== null) {
+      throw new Error('M3-4 TEXT_LAYER_ARIA ' + JSON.stringify(a11y));
+    }
+    if (a11y.connLive !== 'polite') throw new Error('M3-4 CONN_LIVE');
+    if (!a11y.pasteLabel) throw new Error('M3-4 PASTE_LABEL');
+    if (a11y.keyLabels.some((l) => !l) || !a11y.focusable) throw new Error('M3-4 KEYBAR_A11Y ' + JSON.stringify(a11y));
+    state.steps.push('m3-a11y');
+    console.log('STEP m3-a11y');
+
+    // M3-5 标签拖拽排序 + 关闭其他（桌面视口；触屏不启用）
+    const mobileDrag = await page.evaluate(() => {
+      const el = document.querySelector('#tabs .tab');
+      const draggable = el ? el.getAttribute('draggable') : null;
+      let menuOpen = false;
+      if (el) {
+        el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 }));
+        menuOpen = !document.getElementById('tab-menu').hidden;
+      }
+      return { draggable, menuOpen };
+    });
+    if (mobileDrag.draggable === 'true') throw new Error('M3-5 MOBILE_DRAG_ENABLED');
+    if (mobileDrag.menuOpen) throw new Error('M3-5 MOBILE_CONTEXT_MENU_OPEN');
+
+    const desktop = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const dpage = await desktop.newPage();
+    dpage.on('pageerror', (e) => console.log('PAGE_ERROR', e.message));
+    await dpage.goto(`${base}/`, { waitUntil: 'load', timeout: 30000 });
+    await dpage.waitForFunction(
+      () => window.__wt && window.__wt.state().status === 'connected' && window.__wt.state().view === 'terminal',
+      null, { timeout: 30000 });
+
+    // M3-2（桌面）：点击打开（剥尾标点）、拖动与长按不打开
+    await dpage.evaluate(() => {
+      window.__lastOpen = null;
+      window.__wt.__lastOpen = null;
+      window.open = (u) => { window.__lastOpen = u; return null; };
+      window.__wt.client.sendInput('\x03');   // 清掉手机端残留的粘贴行
+    });
+    await dpage.evaluate(() => window.__wt.client.sendInput("echo 'https://a.io/x.'\r"));
+    await dpage.waitForFunction(() => !!window.__wt.renderer.linkRectFor('https://a.io/x'),
+      null, { timeout: 30000 });
+    const dLink = await dpage.evaluate(() => window.__wt.renderer.linkRectFor('https://a.io/x'));
+    if (!dLink) throw new Error('M3-2 DESKTOP_LINK_NOT_FOUND');
+    await dpage.mouse.click(dLink.x, dLink.y);
+    const dOpened = await dpage.evaluate(() => window.__wt.__lastOpen);
+    if (dOpened !== 'https://a.io/x') throw new Error('M3-2 DESKTOP_LINK_OPEN ' + JSON.stringify(dOpened));
+    // 拖动（拖选）不得打开
+    await dpage.evaluate(() => { window.__wt.__lastOpen = null; });
+    await dpage.mouse.move(dLink.x, dLink.y);
+    await dpage.mouse.down();
+    await dpage.mouse.move(dLink.x + 40, dLink.y + 4);
+    await dpage.mouse.up();
+    if (await dpage.evaluate(() => window.__wt.__lastOpen)) throw new Error('M3-2 DESKTOP_DRAG_OPENED');
+    // 长按（≥500ms）不得打开
+    await dpage.evaluate((pt) => new Promise((resolve) => {
+      window.__wt.__lastOpen = null;
+      const el = document.getElementById('canvas-scroll');
+      el.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, clientX: pt.x, clientY: pt.y, pointerType: 'touch',
+      }));
+      setTimeout(() => {
+        el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: pt.x, clientY: pt.y, pointerType: 'touch' }));
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: pt.x, clientY: pt.y }));
+        resolve();
+      }, 600);
+    }), dLink);
+    if (await dpage.evaluate(() => window.__wt.__lastOpen)) throw new Error('M3-2 DESKTOP_LONG_PRESS_OPENED');
+    state.steps.push('m3-link-desktop');
+    console.log('STEP m3-link-desktop');
+
+    await dpage.evaluate(() => window.__wt.client.newTab());
+    await dpage.waitForFunction(() => document.querySelectorAll('#tabs .tab').length >= 2, null, { timeout: 15000 });
+    const tabBefore = await dpage.evaluate(() => ({
+      ids: Array.from(document.querySelectorAll('#tabs .tab')).map((el) => el.getAttribute('data-id')),
+      active: window.__wt.state().activeId,
+      draggable: Array.from(document.querySelectorAll('#tabs .tab')).every((el) => el.getAttribute('draggable') === 'true'),
+    }));
+    if (!tabBefore.draggable) throw new Error('M3-5 DESKTOP_DRAG_HANDLE_MISSING');
+    await dpage.evaluate(() => {
+      const tabs = Array.from(document.querySelectorAll('#tabs .tab'));
+      const from = tabs[0], to = tabs[tabs.length - 1];
+      const dt = new DataTransfer();
+      const fire = (el, type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+      fire(from, 'dragstart');
+      fire(to, 'dragover');
+      fire(to, 'drop');
+      fire(from, 'dragend');
+    });
+    const tabAfter = await dpage.evaluate(() => ({
+      ids: Array.from(document.querySelectorAll('#tabs .tab')).map((el) => el.getAttribute('data-id')),
+      active: window.__wt.state().activeId,
+    }));
+    if (tabAfter.ids[0] !== tabBefore.ids[1] ||
+        tabAfter.ids[tabAfter.ids.length - 1] !== tabBefore.ids[0]) {
+      throw new Error('M3-5 DRAG_ORDER ' + JSON.stringify({ tabBefore, tabAfter }));
+    }
+    if (tabAfter.active !== tabBefore.active) throw new Error('M3-5 DRAG_ACTIVE_CHANGED');
+    const ctxTarget = await dpage.evaluate(() => {
+      const el = document.querySelectorAll('#tabs .tab')[1];
+      el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 40 }));
+      return { id: el.getAttribute('data-id'), open: !document.getElementById('tab-menu').hidden };
+    });
+    if (!ctxTarget.open) throw new Error('M3-5 CONTEXT_MENU_NOT_OPEN');
+    await dpage.evaluate(() => document.getElementById('tab-close-others').click());
+    await dpage.waitForFunction(() => document.querySelectorAll('#tabs .tab').length === 1, null, { timeout: 15000 });
+    const keptId = await dpage.evaluate(() => document.querySelector('#tabs .tab').getAttribute('data-id'));
+    if (keptId !== ctxTarget.id) throw new Error('M3-5 CLOSE_OTHERS_KEPT ' + keptId + ' != ' + ctxTarget.id);
+    state.steps.push('m3-tabs');
+    console.log('STEP m3-tabs');
+    await desktop.close();
+
+
     // 杀产品再起：SSE 断开 → 自动重连 → 建新终端仍有帧（resync/订阅链路活着）
     await stopApp(app);
     await page.waitForFunction(() => window.__wt.state().status !== 'connected', null, { timeout: 30000 });

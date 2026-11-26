@@ -71,6 +71,25 @@ public:
     virtual uint32_t bellCount() const { return 0; }
     virtual void setOutputNotify(std::function<void()> notify) { (void)notify; }
     virtual bool supportsOutputNotify() const { return false; }
+    // 鼠标上报（0 基行列）：页面把指针事件交给后端，后端翻译成 VT 序列写入子进程。
+    // 默认空实现/假 = 该平台后端无鼠标上报能力（mac 的 Corta 桥当前如此）；
+    // 页面以 mouseReporting() 做门控（false 即不接指针事件）。
+    // button：0=左 1=中 2=右 4=上滚 5=下滚；pressed 按下/松开各一次。
+    virtual void mouseMove(int row, int col, bool buttonDown) {
+        (void)row;
+        (void)col;
+        (void)buttonDown;
+    }
+    virtual void mouseButton(int row, int col, int button, bool pressed) {
+        (void)row;
+        (void)col;
+        (void)button;
+        (void)pressed;
+    }
+    // 应用已请求鼠标上报（DECSET 1000/1002/1003 任一）
+    virtual bool mouseReporting() const { return false; }
+    // 备屏（全屏 TUI）中——页面据此决定滚轮走应用还是走本地回滚
+    virtual bool altscreen() const { return false; }
 };
 
 // 平台后端。macOS=Swift/Corta 桥；Windows=ConPTY 桥（available() 动态探测 1809+，

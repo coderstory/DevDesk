@@ -2,6 +2,7 @@
 #include "terminal_session_controller.h"
 
 #include <algorithm>
+#include <type_traits>
 #include <utility>
 
 #include "core/logging.h"
@@ -342,6 +343,28 @@ bool SessionController::activeSelectionText(int rowStart, int colStart, int rowE
     Session* s = active();
     return s && s->handle ? s->handle->selectionText(rowStart, colStart, rowEnd, colEnd, out)
                           : false;
+}
+
+bool SessionController::activeMouseReporting() const {
+    const Session* s = active();
+    return s != nullptr && s->handle != nullptr && s->handle->mouseReporting();
+}
+
+bool SessionController::activeAltscreen() const {
+    const Session* s = active();
+    return s != nullptr && s->handle != nullptr && s->handle->altscreen();
+}
+
+void SessionController::mouseMoveActive(int row, int col, bool buttonDown) {
+    Session* s = active();
+    if (s == nullptr || !s->handle) return;
+    s->handle->mouseMove(row, col, buttonDown);
+}
+
+void SessionController::mouseButtonActive(int row, int col, int button, bool pressed) {
+    Session* s = active();
+    if (s == nullptr || !s->handle) return;
+    s->handle->mouseButton(row, col, button, pressed);
 }
 
 } // namespace terminal

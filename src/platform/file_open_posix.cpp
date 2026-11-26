@@ -25,4 +25,14 @@ core::Result<void> openDirectory(const std::string& path) {
         "xdg-open 打开目录失败 (exit=" + std::to_string(ret) + ")");
 }
 
+core::Result<void> openPathOrUrl(const std::string& target) {
+    if (target.empty()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError, "目标为空");
+    }
+    const int ret = std::system(("xdg-open " + shellSingleQuote(target)).c_str());
+    if (ret == 0) return core::Result<void>::ok();
+    return core::Result<void>::fail(core::ErrorCode::Internal,
+                                    "xdg-open 打开链接失败 (exit=" + std::to_string(ret) + ")");
+}
+
 } // namespace platform::file_open

@@ -5,6 +5,7 @@
 #include <ratio>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +24,8 @@
 #include "platform/folder_picker.h"
 #include "platform/terminal_launch.h"
 #include "terminal_keyencoder.h"
+#include "terminal_links.h"
+#include "platform/file_open.h"
 #include "terminal_quit_guard.h"
 #include "terminal_text_util.h"
 #include "core/ui_geometry.h"
@@ -155,6 +158,16 @@ TermPerfUi& termPerfUi() {
 
 // bug248 估宽缓存已归一至 ui_kit::cachedTextWidth（need:296 D2；bug267 字族入键
 // 防御随归一带入 helper），本文件直调、显式传 weight=400（与原实现同口径）。
+
+// M2 Task 8③：eui 指针键 → 终端鼠标上报键号（xterm：左0/中1/右2）；其余键不报。
+int reportButtonOf(eui::PointerButton button) {
+    switch (button) {
+        case eui::PointerButton::Left: return 0;
+        case eui::PointerButton::Middle: return 1;
+        case eui::PointerButton::Right: return 2;
+        default: return -1;
+    }
+}
 
 } // namespace
 
@@ -497,6 +510,13 @@ GridLayout TerminalPage::compose(
             const auto colOf = [cellW](double pageX) {
                 return std::max(0, static_cast<int>(pageX / cellW));
             };
+            // M2 Task 8③：鼠标上报坐标钳进可视网格（越界行/列不能把负值报给应用）
+            const auto reportRow = [layout](int r) {
+                return std::clamp(r, 0, std::max(0, layout.rows - 1));
+            };
+            const auto reportCol = [layout](int c) {
+                return std::clamp(c, 0, std::max(0, layout.cols - 1));
+            };
             // Press/Release=物理（除 scale），Move=逻辑（input_types.h 契约）——统一折算
             // 到页面坐标再进 rowOf/colOf
             auto toPage = [pageOriginX, pageOriginY](const eui::PointerEvent& e) {
@@ -610,10 +630,53 @@ GridLayout TerminalPage::compose(
                 // IME 锚位（bug363）：挂获焦元素本尊，见上方层 4 前置注释
                 .imeRect(imeAnchorX, imeAnchorY, cellW, cellH)
                 .color(Color{0, 0, 0, 0.01f})
-                .onPress([this, toPage, rowOf, colOf, copySelection, layout,
-                          lineTextAtVisibleRow](const eui::PointerEvent& e, const eui::Rect&) {
+                // M2 Task 8③：中/右键也要进 onPress/onRelease 才能上报给应用（默认只吃左键）；
+                // 本地选区仍在处理函数里只认左键，行为不变。
+                .acceptedButtons(eui::PointerButton::Left | eui::PointerButton::Middle |
+                                 eui::PointerButton::Right)
+                // M2 Task 8②：指针离开网格 → 撤销链接 Hand 判据（光标回 IBeam）
+                .onHover([this](bool hovered) {
+                    if (!hovered && linkHoverHand_) {
+                        linkHoverHand_ = false;
+                        ::core::platform::requestUiUpdate();
+                    }
+                })
+                .onPress([this, ctrl, toPage, rowOf, colOf, reportRow, reportCol, copySelection,
+                          layout, lineTextAtVisibleRow](const eui::PointerEvent& e,
+                                                        const eui::Rect&) {
                     auto [lx, ly] = toPage(e);
                     const CellPos hit{rowOf(ly), colOf(lx)};
+                    modShift_ = e.modifiers.shift;
+                    hoverRow_ = hit.row;
+                    hoverCol_ = hit.col;
+                    // M2 Task 8①：Cmd/Ctrl+左键点链接 = 打开（命中即吞事件：不拖选、不报应用）
+                    if (e.modifiers.shortcut() && e.button == eui::PointerButton::Left &&
+                        hit.row >= 0 && hit.row < layout.rows) {
+                        const std::vector<LinkSpan> links =
+                            findLinks(lineTextAtVisibleRow(hit.row));
+                        if (const LinkSpan* link = linkAtColumn(links, hit.col)) {
+                            const std::string target = link->target;
+                            if (platform::file_open::openPathOrUrl(target).isFail()) {
+                                toast_.show("", "无法打开链接：" + target, true);
+                            }
+                            return;
+                        }
+                    }
+                    // M2 Task 8③：应用请求鼠标上报且未按 Shift → 报按下，不走本地选区。
+                    // 有本地选区时的右键是复制手势（见 onContextMenu），不上报，免得
+                    // 复制动作漏进 TUI
+                    const bool rightClickCopy =
+                        e.button == eui::PointerButton::Right && input_.hasSelection();
+                    const int reportButton = reportButtonOf(e.button);
+                    if (reportButton >= 0 && !rightClickCopy && !e.modifiers.shift &&
+                        ctrl->activeMouseReporting()) {
+                        ctrl->mouseButtonActive(reportRow(hit.row), reportCol(hit.col),
+                                                reportButton, true);
+                        reportedButton_ = reportButton;
+                        return;
+                    }
+                    // 本地选区只认左键（中/右键此前进不来，行为与旧版一致）
+                    if (e.button != eui::PointerButton::Left) return;
                     const auto now = std::chrono::steady_clock::now();
                     const double dt =
                         std::chrono::duration<double>(now - lastClickAt_).count();
@@ -647,21 +710,67 @@ GridLayout TerminalPage::compose(
                     }
                     input_.press(hit);
                 })
-                .onMove([this, toPage, rowOf, colOf](const eui::PointerEvent& e, const eui::Rect&) {
-                    if (!input_.pressing()) return false;
+                .onMove([this, ctrl, toPage, rowOf, colOf, reportRow, reportCol, layout,
+                         lineTextAtVisibleRow](const eui::PointerEvent& e, const eui::Rect&) {
                     auto [lx, ly] = toPage(e);  // Move 已是逻辑，仅补页面原点（bug245）
-                    input_.dragTo({rowOf(ly), colOf(lx)});
+                    const int row = rowOf(ly);
+                    const int col = colOf(lx);
+                    modShift_ = e.modifiers.shift;
+                    hoverRow_ = row;
+                    hoverCol_ = col;
+                    // M2 Task 8②：悬停链接 + Cmd/Ctrl → Hand（光标形状按帧取，翻转才请求重绘）
+                    bool hand = false;
+                    if (e.modifiers.shortcut() && row >= 0 && row < layout.rows) {
+                        const std::vector<LinkSpan> links = findLinks(lineTextAtVisibleRow(row));
+                        hand = linkAtColumn(links, col) != nullptr;
+                    }
+                    if (hand != linkHoverHand_) {
+                        linkHoverHand_ = hand;
+                        ::core::platform::requestUiUpdate();
+                    }
+                    // M2 Task 8③：应用请求鼠标（未按 Shift）→ 上行移动（含左键按下态），
+                    // 不做本地拖选。返回 false：上报不改本地视觉态，不必为此每帧重绘
+                    if (!e.modifiers.shift && ctrl->activeMouseReporting()) {
+                        ctrl->mouseMoveActive(reportRow(row), reportCol(col),
+                                              e.buttons.contains(eui::PointerButton::Left));
+                        return false;
+                    }
+                    if (!input_.pressing()) return false;
+                    input_.dragTo({row, col});
                     return true;
                 })
-                .onRelease([this, toPage, rowOf, colOf, copySelection](
+                .onRelease([this, ctrl, toPage, rowOf, colOf, reportRow, reportCol, copySelection](
                                const eui::PointerEvent& e, const eui::Rect&) {
-                    if (!input_.pressing()) return;
                     auto [lx, ly] = toPage(e);
-                    input_.release({rowOf(ly), colOf(lx)});
+                    const int row = rowOf(ly);
+                    const int col = colOf(lx);
+                    modShift_ = e.modifiers.shift;
+                    hoverRow_ = row;
+                    hoverCol_ = col;
+                    // M2 Task 8③：与 press 配对——按下已上报该键则抬起必上报（即便此刻按了
+                    // Shift，否则应用会卡在按下态）；未上报过的键不凭空发 release
+                    const int reportButton = reportButtonOf(e.button);
+                    if (reportButton >= 0 && reportedButton_ == reportButton) {
+                        ctrl->mouseButtonActive(reportRow(row), reportCol(col), reportButton, false);
+                        reportedButton_ = -1;
+                        return;
+                    }
+                    if (e.button != eui::PointerButton::Left) return;
+                    if (!input_.pressing()) return;
+                    input_.release({row, col});
                     // M2 Task 2：选即复制（默认开，不加设置项）——拖选结束即写剪贴板
                     if (input_.hasSelection()) (void)copySelection();
                 })
-                .onContextMenu([this](const eui::PointerEvent& ev, const eui::Rect&) {
+                .onContextMenu([this, ctrl, copySelection](const eui::PointerEvent& ev,
+                                                           const eui::Rect&) {
+                    // M2 Task 8（缺陷 B，老板口径）：有选区 → 右键直接复制、不弹菜单
+                    // （终端惯例；选区只由左键产生/修改，右键路径不动它）
+                    if (input_.hasSelection()) {
+                        (void)copySelection();
+                        return;
+                    }
+                    // 应用请求鼠标（未按 Shift）→ 右键归应用；本地菜单走 Shift+右键
+                    if (!ev.modifiers.shift && ctrl->activeMouseReporting()) return;
                     const ::core::Router* router = ::core::appRouter();
                     const core::MenuAnchor a = core::menuAnchorForPointer(
                         static_cast<float>(ev.x), static_cast<float>(ev.y),
@@ -670,9 +779,21 @@ GridLayout TerminalPage::compose(
                     ctxMenuY_ = a.y;
                     ctxMenuOpen_ = true;
                 })
-                .onScroll([this, ctrl](const core::ScrollEvent& e) {
+                .onScroll([this, ctrl, reportRow, reportCol](const core::ScrollEvent& e) {
                     Session* s = ctrl->active();
                     if (s == nullptr) return;
+                    // M2 Task 8③：应用请求鼠标（未按 Shift）→ 滚轮报 4(上)/5(下) 按下+抬起，
+                    // 不走本地回看。ScrollEvent 不带修饰键，Shift 位取最近一次键盘/指针事件；
+                    // 上报坐标取指针最近所在 cell（滚轮事件本身无坐标）
+                    if (!modShift_ && ctrl->activeMouseReporting()) {
+                        const int button = e.y > 0.0 ? 4 : (e.y < 0.0 ? 5 : -1);
+                        if (button < 0) return;
+                        ctrl->mouseButtonActive(reportRow(hoverRow_), reportCol(hoverCol_),
+                                                button, true);
+                        ctrl->mouseButtonActive(reportRow(hoverRow_), reportCol(hoverCol_),
+                                                button, false);
+                        return;
+                    }
                     // 池#364 根因：y 是档位不是像素（滚轮换算/余数/清选区在路由组件内）
                     s->scrollOffset =
                         input_.scrollBy(static_cast<float>(e.y), s->scrollOffset,
@@ -680,6 +801,7 @@ GridLayout TerminalPage::compose(
                 })
                 .onKeyEvent([this, ctrl, onKeyBytes, onCopyText,
                              layout](const eui::KeyEvent& e) {
+                    modShift_ = e.modifiers.shift;  // 滚轮路由用（ScrollEvent 不带修饰键）
                     if (!e.isDown()) return false;
                     // M2 Task 2：字号快捷缩放 Cmd/Ctrl + = / - / 0（0=恢复默认）
                     if (e.modifiers.shortcut() && !e.modifiers.alt) {
@@ -762,8 +884,9 @@ GridLayout TerminalPage::compose(
                     if (!e.pasteText.empty()) onTextInput(e.pasteText, true);
                 })
                 // IBeam 必须在全部 on* 绑定之后设置——dsl 的交互绑定会把 cursor 置
-                // Hand（dsl.h on* 通道），后设覆盖先设（bug243 现象 1 根修）
-                .cursor(eui::CursorShape::IBeam);
+                // Hand（dsl.h on* 通道），后设覆盖先设（bug243 现象 1 根修）。
+                // M2 Task 8②：悬停链接 + 快捷修饰键时 Hand（linkHoverHand_ 由 onMove 维护）
+                .cursor(linkHoverHand_ ? eui::CursorShape::Hand : eui::CursorShape::IBeam);
 
             // 层 3：选区高亮 rects（primary α0.30 暗 / α0.18 亮；列→像素按 width 折算）
             if (input_.hasSelection() && act != nullptr && !frame.cells.empty() && frame.cols > 0) {
@@ -1046,6 +1169,11 @@ GridLayout TerminalPage::compose(
                 }
 
                 // TAB 区（clip 横滚；空白区滚轮横滚）
+                // M2 Task 8（缺陷 A）：拖拽阈值 = 6 逻辑 px（EUI 阈值比较的是物理 px，
+                // 故乘 contentScale）。原先默认 2 物理 px（Retina 上仅 1 逻辑 px）让单击的
+                // 微小抖动也被判定为拖拽：InteractionState 的 dragMoved 一旦置位就吞掉
+                // click（EUI core/input/input_types.h:305），TAB 点击因此失效。
+                const float tabDragPx = 6.0f * (screen.scale > 0.0f ? screen.scale : 1.0f);
                 if (sessionCount > 0) {
                     ui.rect("term.tabs.scroll")
                         .position(tabAreaX, 0.0f)
@@ -1106,8 +1234,13 @@ GridLayout TerminalPage::compose(
                                                 if (h) hoveredTabIndex_ = i;
                                                 else if (hoveredTabIndex_ == i) hoveredTabIndex_ = -1;
                                             })
-                                            .onDrag([this, ctrl, i](const core::dsl::DragEvent& d) {
-                                                // M2 Task 4：拖拽排序——落点 x 越过邻标签中线即换位
+                                            // M2 Task 8（缺陷 A）：排序只在总位移越过阈值后
+                                            // 参与判定（阈值同时喂给 EUI 的 click/drag 互斥），
+                                            // 且只在落点越过某邻标签中线时换位一次
+                                            .dragThreshold(tabDragPx)
+                                            .onDrag([this, ctrl, i, tabDragPx](
+                                                        const core::dsl::DragEvent& d) {
+                                                if (std::fabs(d.totalX) < tabDragPx) return;
                                                 if (i >= static_cast<int>(tabX_.size())) return;
                                                 const float dropX =
                                                     tabX_[static_cast<size_t>(i)] +
@@ -1121,8 +1254,12 @@ GridLayout TerminalPage::compose(
                                                 }
                                                 if (target != i) ctrl->moveSession(i, target);
                                             })
-                                            .onClick([this, ctrl, i]() {
-                                                // M2 Task 4：双击标签 → 改名（400ms 同格判定）
+                                            // M2 Task 8（缺陷 A）：切换会话改由按下即生效
+                                            // （TAB 惯例）。onClick 依赖「press/release 同目标 +
+                                            // 未发生过位移」，手势链上任一环节抢走都不触发；按下
+                                            // 路径不依赖 release，单击切换稳定。双击改名语义不变。
+                                            .onPress([this, ctrl, i](const eui::PointerEvent&,
+                                                                     const eui::Rect&) {
                                                 const auto now = std::chrono::steady_clock::now();
                                                 const double dt = std::chrono::duration<double>(
                                                                       now - lastTabClickAt_)
@@ -1598,6 +1735,169 @@ GridLayout TerminalPage::compose(
                         .verticalAlign(eui::VerticalAlign::Center);
                     ry += 36.0f;
                 }
+            }
+
+            // 层 8.55（M2 Task 4，合并 c75bf271 丢失后按 5499e166 恢复）：标签右键菜单——
+            // 重命名 / 关闭其他 / 关闭右侧。ctxTab_ 由 TAB 的 onContextMenu 置位。
+            if (ctxTabMenuOpen_) {
+                components::contextMenu(ui, "term.tabctx")
+                    .open(ctxTabMenuOpen_)
+                    .screen(screen.width, screen.height)
+                    .position(ctxTabMenuX_, ctxTabMenuY_)
+                    .autoWidth()
+                    .items({"重命名", "关闭其他", "关闭右侧"})
+                    .theme(core::theme::componentTokens(t))
+                    .onSelect([this, ctrl](int index) {
+                        ctxTabMenuOpen_ = false;
+                        const int from = ctxTab_;
+                        if (from < 0 || from >= ctrl->count()) return;
+                        switch (index) {
+                            case 0: {
+                                renamingTab_ = from;
+                                const Session* st = ctrl->at(from);
+                                renameText_ = st ? st->title : std::string();
+                                break;
+                            }
+                            case 1:  // 关闭其他
+                            case 2: { // 关闭右侧
+                                std::vector<int> victims;
+                                for (int k = 0; k < ctrl->count(); ++k) {
+                                    if (k == from) continue;
+                                    if (index == 1 || k > from) victims.push_back(k);
+                                }
+                                for (auto it = victims.rbegin(); it != victims.rend(); ++it) {
+                                    const Session* vs = ctrl->at(*it);
+                                    if (vs != nullptr && stateNeedsCloseConfirm(vs->state)) {
+                                        requestCloseConfirm(*it); // 首个在跑的交给确认卡
+                                        break;
+                                    }
+                                    ctrl->closeSession(*it);
+                                }
+                                break;
+                            }
+                            default:
+                                break;
+                        }
+                    })
+                    .onOpenChange([this](bool v) { ctxTabMenuOpen_ = v; })
+                    .build();
+            }
+
+            // 层 8.6（M2 Task 8 缺陷 B 修复）：网格右键菜单——复制 / 清屏 / 搜索。
+            // 该块由 11560786 引入，合并 c75bf271 解析冲突时整段丢失（页面只剩
+            // ctxMenuOpen_ 标志位）→ 右键什么也不做、选区也没法复制。有选区时右键不
+            // 弹菜单，直接在 onContextMenu 里复制（老板口径，见交互层）。
+            if (ctxMenuOpen_) {
+                components::contextMenu(ui, "term.ctx")
+                    .open(ctxMenuOpen_)
+                    .screen(screen.width, screen.height)
+                    .position(ctxMenuX_, ctxMenuY_)
+                    .autoWidth()
+                    .items({"复制", "清屏", "搜索"})
+                    .theme(core::theme::componentTokens(t))
+                    .onSelect([this, ctrl, copySelection](int index) {
+                        ctxMenuOpen_ = false;
+                        switch (index) {
+                            case 0:
+                                (void)copySelection();
+                                break;
+                            case 1: {  // 清屏 = 送 Ctrl+L（\x0c），shell 语义
+                                const char formFeed = '\x0c';
+                                ctrl->writeToActive(
+                                    reinterpret_cast<const uint8_t*>(&formFeed), 1);
+                                break;
+                            }
+                            case 2:
+                                search_.open = true;
+                                break;
+                            default:
+                                break;
+                        }
+                    })
+                    .onOpenChange([this](bool v) { ctxMenuOpen_ = v; })
+                    .build();
+            }
+
+            // 层 9.4（M2 Task 3，合并 c75bf271 丢失后按 5499e166 恢复）：会话关闭/退出确认卡
+            // （Running 才由模块置位）。无本卡时关标签/退出请求只置位不显形 → 用户看到
+            // 「点了没反应」且关不掉，故必须随页面一起呈现。
+            if (confirmKind_ != ConfirmKind::None) {
+                const float cardW = 380.0f;
+                const float cardH = 168.0f;
+                const float cx = (screen.width - cardW) * 0.5f;
+                const float cy = (screen.height - cardH) * 0.5f;
+                ui.rect("term.confirm.scrim")
+                    .size(screen.width, screen.height)
+                    .color(Color{0.0f, 0.0f, 0.0f, 0.35f});
+                ui.stack("term.confirm.card")
+                    .position(cx, cy)
+                    .size(cardW, cardH)
+                    .content([&] {
+                        ui.rect("term.confirm.bg")
+                            .size(cardW, cardH)
+                            .color(ui_kit::cardSurface(t))
+                            .radius(t.sizes.radius)
+                            .border(1.0f, t.colors.borderDefault)
+                            .build();
+                        const bool quitAll = confirmKind_ == ConfirmKind::QuitAll;
+                        ui.text("term.confirm.title")
+                            .position(16.0f, 18.0f)
+                            .size(cardW - 32.0f, 28.0f)
+                            .text(quitAll ? "有终端会话正在运行" : "该标签的会话正在运行")
+                            .fontSize(core::theme::scaled(15.0f))
+                            .color(t.colors.textPrimary)
+                            .build();
+                        ui.text("term.confirm.body")
+                            .position(16.0f, 50.0f)
+                            .size(cardW - 32.0f, 22.0f)
+                            .text(quitAll ? "退出将终止全部会话，正在跑的命令与输出会丢失。"
+                                          : "关闭将终止该会话，正在跑的命令与输出会丢失。")
+                            .fontSize(core::theme::scaled(12.5f))
+                            .color(t.colors.textSecondary)
+                            .build();
+                        ui.rect("term.confirm.ok")
+                            .position(16.0f, cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .radius(8.0f)
+                            .states(t.colors.errorText, t.colors.errorText, t.colors.errorText)
+                            .onClick([this]() {
+                                const int idx = confirmIndex_;
+                                const ConfirmKind kind = confirmKind_;
+                                confirmKind_ = ConfirmKind::None;
+                                confirmIndex_ = -1;
+                                if (onConfirm_) onConfirm_(kind, idx, true);
+                            });
+                        ui.text("term.confirm.ok.label")
+                            .position(16.0f, cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .text(quitAll ? "关闭全部并退出" : "关闭标签")
+                            .fontSize(core::theme::scaled(13.0f))
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.onPrimary)
+                            .build();
+                        ui.rect("term.confirm.cancel")
+                            .position(16.0f + (cardW - 48.0f) * 0.5f + 16.0f,
+                                      cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .radius(8.0f)
+                            .states(t.colors.hover, t.colors.active, t.colors.hover)
+                            .onClick([this]() {
+                                confirmKind_ = ConfirmKind::None;
+                                confirmIndex_ = -1;
+                                if (onConfirm_) onConfirm_(ConfirmKind::None, -1, false);
+                            });
+                        ui.text("term.confirm.cancel.label")
+                            .position(16.0f + (cardW - 48.0f) * 0.5f + 16.0f,
+                                      cardH - 52.0f)
+                            .size((cardW - 48.0f) * 0.5f, 36.0f)
+                            .text("取消")
+                            .fontSize(core::theme::scaled(13.0f))
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textPrimary)
+                            .build();
+                    });
             }
 
             // 层 9：终端设置面板（need250 页内模态；设计 §2/§4）。scrim α0.35 盖整页面区

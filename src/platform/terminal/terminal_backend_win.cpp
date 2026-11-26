@@ -757,6 +757,23 @@ public:
     std::string title() const override { return vterm_ ? vterm_->title() : std::string(); }
     uint32_t bellCount() const override { return vterm_ ? vterm_->bellCount() : 0; }
 
+    // 鼠标上报：转译层产 SGR 序列，与键盘同走写队列 → writer 线程 WriteFile → ConPTY。
+    // vterm_ 生命周期规则同 title/bellCount：terminate() 后为空即忽略（UI 线程调用）。
+    void mouseMove(int row, int col, bool buttonDown) override {
+        if (!vterm_) return;
+        std::string out;
+        vterm_->mouseMove(row, col, buttonDown, &out);
+        enqueueInput(std::move(out));
+    }
+    void mouseButton(int row, int col, int button, bool pressed) override {
+        if (!vterm_) return;
+        std::string out;
+        vterm_->mouseButton(row, col, button, pressed, &out);
+        enqueueInput(std::move(out));
+    }
+    bool mouseReporting() const override { return vterm_ && vterm_->mouseReporting(); }
+    bool altscreen() const override { return vterm_ && vterm_->altscreen(); }
+
     // bug305 根因：ConPTY 在子进程退出时**不保证**输出管道断裂（实测 pwsh `exit` 后
     // 25s+ 无 EOF，reader 永远阻塞在 ReadFile → exited 标志永不置真 → 会话卡 Running、
     // 覆盖卡不出现）。进程句柄才是权威判据：UI 线程 pollAll 每次巡检一次（零阻塞），
@@ -799,6 +816,16 @@ public:
     }
 
 private:
+    // 鼠标上报字节入写队列（空 payload / 已终止即丢弃，语义同 write 的终止判定）
+    void enqueueInput(std::string payload) {
+        if (payload.empty() || terminated_.load(std::memory_order_relaxed)) return;
+        {
+            std::lock_guard<std::mutex> lock(shared_->wqMutex);
+            shared_->wq.push_back(std::move(payload));
+        }
+        shared_->wqCv.notify_one();
+    }
+
     std::shared_ptr<SessionShared> shared_;
     std::shared_ptr<ShutdownTask> task_;
     VtermCore* vterm_ = nullptr; // 非拥有：实体内存在 task_->vterm（task_ 保活）

@@ -123,6 +123,14 @@ public:
     bool activeScrollbackLine(int index, std::string& out);
     bool activeSelectionText(int rowStart, int colStart, int rowEnd, int colEnd, std::string& out);
 
+    // M2 Task 8③：鼠标上报路由透传（页面交互层 → 激活会话后端）。行列 = 可视网格
+    // cell 坐标（0 起）；button=左0/中1/右2，滚轮=4(上)/5(下) 按下+抬起成对上报。
+    // 无激活会话 / 句柄为空 → 查询返回 false、上报静默丢弃（与 writeToActive 同口径）。
+    bool activeMouseReporting() const;
+    bool activeAltscreen() const;
+    void mouseMoveActive(int row, int col, bool buttonDown);
+    void mouseButtonActive(int row, int col, int button, bool pressed);
+
     // 重试/重新开始：把第 i 个会话回到 Running（Exited/Failed 复位重建）
     void restartSession(int index);
 

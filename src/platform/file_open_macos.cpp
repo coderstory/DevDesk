@@ -85,4 +85,37 @@ core::Result<void> openDirectory(const std::string& path) {
     return core::Result<void>::ok();
 }
 
+core::Result<void> openPathOrUrl(const std::string& target) {
+    if (target.empty()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError, "目标为空");
+    }
+    // 与 openDirectory 同款双 fork 派生；不做存在性校验（URL 无本地路径）
+    const pid_t outer = ::fork();
+    if (outer < 0) {
+        return core::Result<void>::fail(core::ErrorCode::Internal,
+                                        "fork 失败: " + std::string(std::strerror(errno)));
+    }
+    if (outer == 0) {
+        const pid_t inner = ::fork();
+        if (inner < 0) _exit(127);
+        if (inner == 0) {
+            ::execl("/usr/bin/open", "open", target.c_str(), static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        _exit(0);
+    }
+    int status = 0;
+    while (::waitpid(outer, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return core::Result<void>::fail(core::ErrorCode::Internal,
+                                            "waitpid 失败: " + std::string(std::strerror(errno)));
+        }
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        return core::Result<void>::fail(core::ErrorCode::Internal,
+                                        "/usr/bin/open 派生失败（链接点击）");
+    }
+    return core::Result<void>::ok();
+}
+
 } // namespace platform::file_open

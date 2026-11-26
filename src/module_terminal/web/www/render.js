@@ -70,6 +70,8 @@
     this.rowH = 18;
     this.frame = null;
     this.scrollback = [];
+    this._lines = [];      // 与文本层逐行一致的行文本（链接命中用，M3-2）
+    this._lastText = null; // 文本未变则不重写，避免 aria-live 播报与选区被清（M3-4）
     this._blinkOn = true;
     this.stick = true; // 用户停在底部时新帧自动贴底；上翻后保持偏移（UI 设计 §5.2）
     this.measure();
@@ -141,6 +143,93 @@
 
   TermRenderer.prototype._dpr = function () { return global.devicePixelRatio || 1; };
 
+  /* ---------- 行内链接（M3-2；口径对齐 terminal_links.cpp 的 URL 分支） ----------
+   * 文本层仍是单块 textContent（整体可读可复制）；命中按「行号 + 列号」换算。 */
+  var LINK_RE = /https?:\/\/[^\s"'<>|`]+/gi;
+  var TRAIL_ASCII = '.,;:!?)]}';
+  var TRAIL_FULL = ['\uFF0C', '\u3002', '\uFF1B', '\uFF1A', '\uFF01', '\uFF1F', '\uFF09', '\u3011', '\u2026'];
+
+  function stripTrailPunct(s) {
+    for (;;) {
+      if (!s) return s;
+      if (TRAIL_ASCII.indexOf(s.charAt(s.length - 1)) >= 0) { s = s.slice(0, -1); continue; }
+      var hit = false;
+      for (var i = 0; i < TRAIL_FULL.length; i++) {
+        if (s.slice(-TRAIL_FULL[i].length) === TRAIL_FULL[i]) {
+          s = s.slice(0, -TRAIL_FULL[i].length);
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) return s;
+    }
+  }
+
+  TermRenderer.prototype.lineAtRow = function (row) {
+    if (!this._lines || row < 0 || row >= this._lines.length) return null;
+    return this._lines[row];
+  };
+
+  /* 行 + 列 → 链接；rect 为文本层内坐标（PAD 起点），供下划线定位 */
+  TermRenderer.prototype.linkAt = function (row, col) {
+    var line = this.lineAtRow(row);
+    if (line === null) return null;
+    LINK_RE.lastIndex = 0;
+    var m;
+    while ((m = LINK_RE.exec(line))) {
+      var target = stripTrailPunct(m[0]);
+      if (!target) continue;
+      var colBegin = displayWidth(line.slice(0, m.index));
+      var colEnd = colBegin + displayWidth(target);
+      if (col >= colBegin && col < colEnd) {
+        return {
+          target: target, row: row, colBegin: colBegin, colEnd: colEnd,
+          rect: {
+            left: PAD + colBegin * this.cellW,
+            top: PAD + row * this.rowH,
+            width: (colEnd - colBegin) * this.cellW,
+            height: this.rowH
+          }
+        };
+      }
+    }
+    return null;
+  };
+
+  /* 文本层坐标（clientX/clientY）→ 链接 */
+  TermRenderer.prototype.linkAtPoint = function (clientX, clientY) {
+    if (!this._lines || !this._lines.length) return null;
+    var r = this.textLayer.getBoundingClientRect();
+    var x = clientX - r.left - PAD;
+    var y = clientY - r.top - PAD;
+    if (x < 0 || y < 0) return null;
+    var row = Math.floor(y / this.rowH);
+    var col = Math.floor(x / this.cellW);
+    return this.linkAt(row, col);
+  };
+
+  /* 测试/定位用：按目标串在文本层里找链接矩形，返回视口坐标系（client 坐标）。
+   * 取最后一次出现（输出的结果行通常在命令回显之后）。 */
+  TermRenderer.prototype.linkRectFor = function (target) {
+    if (!this._lines || !target) return null;
+    var base = this.textLayer.getBoundingClientRect();
+    for (var row = this._lines.length - 1; row >= 0; row--) {
+      var idx = this._lines[row].indexOf(target);
+      if (idx < 0) continue;
+      var colBegin = displayWidth(this._lines[row].slice(0, idx));
+      var cols = displayWidth(target);
+      return {
+        left: base.left + PAD + colBegin * this.cellW,
+        top: base.top + PAD + row * this.rowH,
+        width: cols * this.cellW,
+        height: this.rowH,
+        x: base.left + PAD + (colBegin + cols / 2) * this.cellW,
+        y: base.top + PAD + row * this.rowH + this.rowH / 2
+      };
+    }
+    return null;
+  };
+
   TermRenderer.prototype.draw = function () {
     var f = this.frame;
     var ctx = this.ctx;
@@ -148,7 +237,11 @@
     var cols = f ? f.cols : 0;
     var visRows = f ? f.rows : 0;
     var totalRows = this.scrollback.length + visRows;
-    if (cols <= 0) return;
+    if (cols <= 0) {
+      this._lines = [];
+      if (this._lastText !== '') { this.textLayer.textContent = ''; this._lastText = ''; }
+      return;
+    }
 
     var cssW = Math.ceil(cols * this.cellW) + PAD * 2;
     var cssH = Math.ceil(totalRows * this.rowH) + PAD * 2;
@@ -167,10 +260,16 @@
     ctx.fillRect(0, 0, cssW, cssH);
 
     // 文本层：行内容 + 与画布相同的字号/行高/内边距，颜色透明只用于原生选择
-    var text = '';
-    for (var s = 0; s < this.scrollback.length; s++) text += fitLine(this.scrollback[s], cols) + '\n';
-    for (var r = 0; r < visRows; r++) text += fitLine(this._rowText(f.lines[r]), cols) + (r < visRows - 1 ? '\n' : '');
-    this.textLayer.textContent = text;
+    // 逐行缓存（链接命中按行取文本）；内容不变不重写 textContent。
+    var lines = [];
+    for (var s = 0; s < this.scrollback.length; s++) lines.push(fitLine(this.scrollback[s], cols));
+    for (var r = 0; r < visRows; r++) lines.push(fitLine(this._rowText(f.lines[r]), cols));
+    this._lines = lines;
+    var text = lines.join('\n');
+    if (text !== this._lastText) {
+      this.textLayer.textContent = text;
+      this._lastText = text;
+    }
     this.textLayer.style.padding = PAD + 'px';
     this.textLayer.style.width = cssW + 'px';
     this.textLayer.style.height = cssH + 'px';

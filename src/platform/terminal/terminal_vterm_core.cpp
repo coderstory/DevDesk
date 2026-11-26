@@ -113,6 +113,11 @@ struct VtermCore::Impl {
     uint32_t bellCount = 0;
     std::function<void()> bellHandler;
     bool bracketedPaste = false;
+    // 鼠标上报模式位（DECSET 1000/1002/1003 各自的开关；任一置位=上报）
+    static constexpr unsigned kMouseClick = 1u << 0;  // 1000
+    static constexpr unsigned kMouseDrag = 1u << 1;   // 1002
+    static constexpr unsigned kMouseMove = 1u << 2;   // 1003
+    unsigned mouseModes = 0;
     std::string* currentReply = nullptr;  // feed 期间非空（单 writer 线程内）
     // damage 合并矩形（end 端排他；dirty 才有效）
     bool dirty = false;
@@ -121,6 +126,8 @@ struct VtermCore::Impl {
     size_t scrollbackLimit = kScrollbackMax;  // need250：设置面板可改（改小即裁最旧）
     // bracketed paste 字节级跟踪残留（≤7 字节候选前缀）
     std::string bpTail;
+    // 鼠标模式字节级跟踪残留（未走完的 `ESC [ ? …` 候选序列，上限 64 字节）
+    std::string mouseTail;
 
     ~Impl() {
         if (vt) vterm_free(vt);
@@ -249,6 +256,66 @@ struct VtermCore::Impl {
         if (bpTail.size() > sizeof(kSeq) - 1) bpTail.erase(0, bpTail.size() - (sizeof(kSeq) - 1));
     }
 
+    // ---- feed 侧鼠标上报模式跟踪 ----
+    // shortcut: 与 trackBracketed 同构的字节级平行扫描，只认 `ESC [ ? <参数;…> h|l`。
+    // 不改 libvterm 的依据：模式落在私有 VTermState（state->mouse_flags /
+    // state->mouse_protocol，state.c:2252 / 840），vterm.h 无任何 getter；
+    // 1006（SGR 编码）**不必**跟踪——编码由库内按 mouse_protocol 决定（mouse.c:39-42），
+    // 页面只需要「应用是否要求上报」这一个布尔。
+    // 多参合并形 `?1000;1006h` 也认（部分 TUI 如此发送）；终结符跨 chunk 时残留
+    // 到 mouseTail 等下一批（与 bpTail 同法）。
+    void trackMouse(const uint8_t* b, int32_t n) {
+        mouseTail.append(reinterpret_cast<const char*>(b), size_t(n));
+        const size_t size = mouseTail.size();
+        size_t pos = 0;
+        while (pos + 3 <= size) {
+            if (mouseTail.compare(pos, 3, "\x1b[?", 3) != 0) {
+                ++pos;
+                continue;
+            }
+            size_t p = pos + 3;  // 参数段：数字与 ';'，直到终结符
+            while (p < size &&
+                   ((mouseTail[p] >= '0' && mouseTail[p] <= '9') || mouseTail[p] == ';'))
+                ++p;
+            if (p >= size) break;  // 终结符未到齐：整个候选留 tail
+            const char fin = mouseTail[p];
+            if (fin == 'h' || fin == 'l') {
+                applyMouseParams(pos + 3, p, fin == 'h');
+                pos = p + 1;
+                continue;
+            }
+            ++pos;  // 其它 CSI：只跳过前缀，逐字节继续找（不吞未知长序列）
+        }
+        if (pos > 0) mouseTail.erase(0, pos);
+        if (mouseTail.size() > 64) mouseTail.erase(0, mouseTail.size() - 64);
+    }
+
+    // 参数段 [begin,end) 逐个数字判 1000/1002/1003（数字长度封顶防溢出）
+    void applyMouseParams(size_t begin, size_t end, bool on) {
+        int num = 0;
+        int digits = 0;
+        for (size_t i = begin; i <= end; ++i) {
+            const char ch = i < end ? mouseTail[i] : ';';
+            if (ch >= '0' && ch <= '9') {
+                if (digits < 5) num = num * 10 + (ch - '0');
+                ++digits;
+                continue;
+            }
+            const unsigned bit = num == 1000 ? kMouseClick
+                                 : num == 1002 ? kMouseDrag
+                                 : num == 1003 ? kMouseMove
+                                               : 0u;
+            if (bit != 0) {
+                if (on)
+                    mouseModes |= bit;
+                else
+                    mouseModes &= ~bit;
+            }
+            num = 0;
+            digits = 0;
+        }
+    }
+
     // ---- libvterm 回调（静态自由函数见文件尾桥接块）----
 
     VTermColor defaultFg;   // state 默认 pen 色（init 缓存，translateColor 规范化用）
@@ -373,6 +440,7 @@ void VtermCore::feed(const uint8_t* bytes, int32_t count, std::string* replyOut)
     vterm_screen_flush_damage(impl_->screen);   // 幂等：merge 模式下冲出合并 damage
     impl_->flushDamageLocked();
     impl_->trackBracketed(bytes, count);
+    impl_->trackMouse(bytes, count);
     impl_->currentReply = nullptr;
 }
 
@@ -478,6 +546,61 @@ void VtermCore::setBellHandler(std::function<void()> handler) {
 bool VtermCore::bracketedPasteEnabled() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->bracketedPaste;
+}
+
+// 鼠标事件入口：锁内直调 libvterm，上报字节经 output 回调（currentReply）取走。
+// 坐标 0 基直接透传：libvterm 鼠标输入就是 0 基（mouse.c:39 SGR 编码 `col + 1`、
+// X10 编码 `col + 0x21`），而 CUP 那类「1 基」只存在于 VT 字节流解析侧，与本事无关。
+void VtermCore::mouseMove(int row, int col, bool buttonDown, std::string* replyOut) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    // 越界贴边（拖出窗口/取整误差）：libvterm 除 X10 外不夹取，越界值会原样进 SGR，
+    // 子进程拿到不存在的行列无从判断。
+    row = std::clamp(row, 0, impl_->rows - 1);
+    col = std::clamp(col, 0, impl_->cols - 1);
+    // buttonDown 仅页面侧契约（指针是否按住）：拖动判定由 libvterm 自己的按钮位
+    //（state->mouse_buttons，mouse.c:97-118）驱动，以 mouseButton 通知为准，不重复传。
+    (void)buttonDown;
+    impl_->currentReply = replyOut;
+    vterm_mouse_move(impl_->vt, row, col, VTERM_MOD_NONE);
+    vterm_screen_flush_damage(impl_->screen);  // 鼠标不改网格；与 feed 同序（幂等）
+    impl_->flushDamageLocked();
+    impl_->currentReply = nullptr;
+}
+
+void VtermCore::mouseButton(int row, int col, int button, bool pressed,
+                            std::string* replyOut) {
+    // 契约按钮号 → libvterm（mouse.c:73-84 只认 1..8）：
+    // 0/1/2 = 左/中/右 → 1/2/3；4/5 = 上/下滚原样（libvterm 4=上 5=下）
+    int libButton = 0;
+    switch (button) {
+        case 0: libButton = 1; break;
+        case 1: libButton = 2; break;
+        case 2: libButton = 3; break;
+        case 4: libButton = 4; break;
+        case 5: libButton = 5; break;
+        default: return;
+    }
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->currentReply = replyOut;
+    // 先落指针位置：按下/松开上报读的是 state->mouse_col/row（mouse.c:86），
+    // 页面可能不先发 move 直发 click（首帧位置否则停在 0,0）。1003 下该 move
+    // 自身会先报一条移动——指针实际确实动了，等于应用本来也会收到的那条。
+    vterm_mouse_move(impl_->vt, std::clamp(row, 0, impl_->rows - 1),
+                     std::clamp(col, 0, impl_->cols - 1), VTERM_MOD_NONE);
+    vterm_mouse_button(impl_->vt, libButton, pressed, VTERM_MOD_NONE);
+    vterm_screen_flush_damage(impl_->screen);
+    impl_->flushDamageLocked();
+    impl_->currentReply = nullptr;
+}
+
+bool VtermCore::mouseReporting() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->mouseModes != 0;
+}
+
+bool VtermCore::altscreen() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->altscreen;
 }
 
 } // namespace platform

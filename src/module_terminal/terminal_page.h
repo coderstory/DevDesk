@@ -132,6 +132,12 @@ private:
     TerminalSearchState search_;
     // 拖选/滚轮输入路由（M2 Task 1：从 compose 抽出的纯状态机）
     TerminalInputRouter input_;
+    // M2 Task 8：链接悬停 + 鼠标上报路由态
+    bool linkHoverHand_ = false;   // 悬停命中链接且按住快捷修饰键（光标 Hand 判据，跨帧）
+    bool modShift_ = false;        // 最近一次键盘/指针事件的 Shift 位（ScrollEvent 不带修饰键）
+    int reportedButton_ = -1;      // 已上报给应用的按下键（左0/中1/右2；-1=无），保证 release 配对
+    int hoverRow_ = 0;             // 最近指针所在 cell（滚轮上报没有坐标，取最近值）
+    int hoverCol_ = 0;
     // M2 Task 2：多击判定（双击选词/三击选行）+ 右键菜单状态
     std::chrono::steady_clock::time_point lastClickAt_{};
     CellPos lastClickPos_{};

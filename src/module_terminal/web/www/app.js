@@ -81,6 +81,27 @@
   var renderer = new WT.TermRenderer(canvas, textLayer, canvasScroll);
   renderer.setPalette('dark');
 
+  /* 测试/诊断钩子（window.__wt）：记录最近一次输入与打开的目标，供 e2e 断言。
+   * sendInput 是网页侧唯一输入出口，链接/拖文件/键带都从这里走。 */
+  var wtHooks = {
+    client: client,
+    renderer: renderer,
+    state: function () { return state; },
+    __lastInput: null,
+    __lastPaste: false,
+    __lastOpen: null
+  };
+  window.__wt = wtHooks;
+  function sendInput(text) {
+    wtHooks.__lastInput = text;
+    client.sendInput(text);
+  }
+  function pasteInput(text) {
+    wtHooks.__lastInput = text;
+    wtHooks.__lastPaste = true;
+    return client.paste(text);
+  }
+
   /* ---------- 自检（?selftest=1） ---------- */
   if (q.get('selftest') === '1' && window.WTCrypto) {
     var st = window.WTCrypto.selfTest();
@@ -92,6 +113,7 @@
 
   /* ---------- 隐藏输入：软键盘与 IME ---------- */
   var kbd = document.createElement('input');
+  kbd.id = 'kbd-capture';
   kbd.type = 'text';
   kbd.autocomplete = 'off';
   kbd.setAttribute('autocapitalize', 'off');
@@ -110,18 +132,29 @@
     setTimeout(function () { composedJustEnded = false; }, 0);
     var v = e.data != null ? e.data : kbd.value;
     kbd.value = '';
-    if (v) client.sendInput(v);
+    if (v) sendInput(v);
   });
   kbd.addEventListener('input', function () {
     if (composing) return;
     if (composedJustEnded) { kbd.value = ''; return; } // compositionend 后部分浏览器补发 input
     var v = kbd.value; kbd.value = '';
-    if (v) client.sendInput(v);
+    if (!v) return;
+    // 软键盘路径：Ctrl 锁存时单字母转 C0 控制码（物理键盘走下面的 document keydown）
+    if (ctrlLatched && sendLatchedLetter(v)) return;
+    sendInput(v);
   });
   kbd.addEventListener('keydown', function (e) {
     if (composing) return;
     var b = WT.keyToBytes(e);
-    if (b) { e.preventDefault(); client.sendInput(b); }
+    if (b) { e.preventDefault(); sendInput(b); }
+  });
+  /* Ctrl 锁存+字母：任何焦点位置都发控制码（kbd 的 keydown 对普通字母返回 null，
+   * 这里 preventDefault 阻止后续 input 事件，不会重复发送）。 */
+  document.addEventListener('keydown', function (e) {
+    if (!ctrlLatched || e.ctrlKey || e.metaKey || e.altKey) return;
+    var ae = document.activeElement;
+    if (ae && ae !== kbd && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || '')) return;
+    if (sendLatchedLetter(e.key)) { e.preventDefault(); e.stopPropagation(); }
   });
 
   /* ---------- 长按选择模式 ---------- */
@@ -156,6 +189,84 @@
   canvasScroll.addEventListener('pointerup', endPress);
   canvasScroll.addEventListener('pointercancel', function () { clearTimeout(pressTimer); pressStart = null; });
 
+  /* ---------- 行内链接点击（M3-2） ----------
+   * 三端矩阵：手机网页不做链接点击（触屏误触率高）；COARSE 拦掉打开与悬停态。
+   * COARSE 只按粗指针/触屏判定——窄窗口仍是桌面端，行为不变（拖拽另用 NO_DRAG）。
+   * 桌面端：拖动选择、长按（≥500ms）、已有选区都不打开；命中按文本层坐标换行/列。 */
+  var COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+    (navigator.maxTouchPoints || 0) > 0;
+  var NO_DRAG = COARSE || innerWidth <= 768;  // 计划全局约束：触屏或窄屏不启用拖拽类交互
+  var linkPress = null;
+  var linkUnderline = $('link-underline');
+  function hideLinkHover() {
+    if (linkUnderline) linkUnderline.hidden = true;
+    canvasScroll.classList.remove('link-hover');
+  }
+  canvasScroll.addEventListener('pointerdown', function (e) {
+    linkPress = { x: e.clientX, y: e.clientY, at: Date.now() };
+  });
+  canvasScroll.addEventListener('click', function (e) {
+    var p = linkPress;
+    linkPress = null;
+    if (COARSE) return;            // 手机网页：不做链接点击（spec 三端矩阵）
+    if (currentView !== 'terminal' || selecting || !p) return;
+    var dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (Math.sqrt(dx * dx + dy * dy) > 8) return;   // 拖动（含拖选）不触发
+    if (Date.now() - p.at >= 500) return;           // 长按交给选择/系统菜单
+    var sel = window.getSelection && window.getSelection();
+    if (sel && sel.toString().length > 0) return;
+    var hit = renderer.linkAtPoint(e.clientX, e.clientY);
+    if (!hit) return;
+    wtHooks.__lastOpen = hit.target;
+    window.open(hit.target, '_blank', 'noopener');
+  });
+  canvasScroll.addEventListener('pointermove', function (e) {
+    if (COARSE || e.pointerType === 'touch' || selecting) { hideLinkHover(); return; }
+    var hit = renderer.linkAtPoint(e.clientX, e.clientY);
+    if (!hit) { hideLinkHover(); return; }
+    var r = hit.rect;
+    linkUnderline.style.left = r.left + 'px';
+    linkUnderline.style.top = (r.top + r.height - 2) + 'px';
+    linkUnderline.style.width = r.width + 'px';
+    linkUnderline.hidden = false;
+    canvasScroll.classList.add('link-hover');
+  });
+  canvasScroll.addEventListener('pointerleave', hideLinkHover);
+
+  /* ---------- 拖文件插入路径（M3-3） ----------
+   * 与粘贴弹窗同一通道（bracketed paste）；只接终端区，其它区域丢入不插入。
+   * 注：浏览器沙箱不暴露绝对路径时退化为文件名（File.path 仅桌面壳/扩展提供）。 */
+  function shellQuote(p) { return "'" + String(p).replace(/'/g, "'\\''") + "'"; }
+  function dragHasFiles(e) {
+    var types = e.dataTransfer && e.dataTransfer.types;
+    if (!types) return false;
+    for (var i = 0; i < types.length; i++) if (types[i] === 'Files') return true;
+    return false;
+  }
+  canvasScroll.addEventListener('dragover', function (e) {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    canvasScroll.classList.add('drop-active');
+  });
+  canvasScroll.addEventListener('dragleave', function (e) {
+    if (e.target === canvasScroll) canvasScroll.classList.remove('drop-active');
+  });
+  canvasScroll.addEventListener('drop', function (e) {
+    if (!dragHasFiles(e)) return;   // 标签拖拽等内部拖放不插入路径
+    e.preventDefault();
+    canvasScroll.classList.remove('drop-active');
+    var files = (e.dataTransfer && e.dataTransfer.files) || [];
+    var parts = [];
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var p = f.path || f.webkitRelativePath || f.name;
+      if (p) parts.push(shellQuote(p));
+    }
+    if (!parts.length) return;
+    pasteInput(parts.join(' '));
+  });
+
   /* ---------- 视图路由 ---------- */
   function setView(name) {
     currentView = name;
@@ -187,7 +298,8 @@
 
   function setConn(kind) {
     connDot.className = 'dot' + (kind === 'warn' ? ' warn' : kind === 'err' ? ' err' : '');
-    connText.textContent = kind === 'warn' ? '重连中' : kind === 'err' ? '已断开' : '已连接';
+    var text = kind === 'warn' ? '重连中' : kind === 'err' ? '已断开' : '已连接';
+    if (connText.textContent !== text) connText.textContent = text; // aria-live：变了才播报
   }
 
   function applyState(s) {
@@ -439,10 +551,38 @@
 
   /* ---------- tab 顶栏 ---------- */
   var lastTap = { id: null, at: 0 };
+  // COARSE（触屏/粗指针）与 NO_DRAG（另含窄屏）在链接区已判定
+  var tabOrder = [];        // 本地显示顺序（服务端 tab 顺序不由网页改；仅覆盖展示）
+  var dragTabId = null;
+  var tabMenuFor = null;
+
+  function orderedTabs(s) {
+    var tabs = (s && s.tabs) || [];
+    if (NO_DRAG || tabOrder.length === 0) return tabs.slice();
+    var pos = {};
+    for (var i = 0; i < tabOrder.length; i++) pos[tabOrder[i]] = i;
+    return tabs.slice().sort(function (a, b) {
+      var pa = pos[a.id], pb = pos[b.id];
+      if (pa === undefined && pb === undefined) return 0;
+      if (pa === undefined) return 1;
+      if (pb === undefined) return -1;
+      return pa - pb;
+    });
+  }
+  function moveTab(fromId, toId) {
+    if (NO_DRAG || !fromId || fromId === toId) return;
+    var ids = orderedTabs(state).map(function (t) { return t.id; });
+    var from = ids.indexOf(fromId), to = ids.indexOf(toId);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    tabOrder = ids;
+    renderTabs(state);
+  }
   function renderTabs(s) {
     tabsEl.innerHTML = '';
-    for (var i = 0; i < s.tabs.length; i++) {
-      var t = s.tabs[i];
+    var list = orderedTabs(s);
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
       var on = t.id === s.activeId;
       var tab = document.createElement('div');
       tab.className = 'tab' + (on ? ' on' : '');
@@ -450,6 +590,7 @@
       tab.setAttribute('tabindex', '0');
       tab.setAttribute('data-id', t.id);
       tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (!NO_DRAG) tab.setAttribute('draggable', 'true');
       var label = document.createElement('span');
       label.className = 'tab-label';
       label.textContent = t.title;
@@ -464,6 +605,34 @@
         });
         tab.addEventListener('dblclick', function () { beginRename(id, el); });
         tab.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') client.selectTab(id); });
+        if (NO_DRAG) return;
+        tab.addEventListener('dragstart', function (ev) {
+          dragTabId = id;
+          el.classList.add('dragging');
+          if (ev.dataTransfer) {
+            ev.dataTransfer.effectAllowed = 'move';
+            try { ev.dataTransfer.setData('text/plain', id); } catch (e) { /* 部分浏览器只读 */ }
+          }
+        });
+        tab.addEventListener('dragend', function () {
+          el.classList.remove('dragging');
+          dragTabId = null;
+        });
+        tab.addEventListener('dragover', function (ev) {
+          if (!dragTabId) return;
+          ev.preventDefault();
+          if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+          el.classList.add('drop-target');
+        });
+        tab.addEventListener('dragleave', function () { el.classList.remove('drop-target'); });
+        tab.addEventListener('drop', function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();   // 不落到画布的文件拖放处理器
+          el.classList.remove('drop-target');
+          var from = dragTabId;
+          dragTabId = null;
+          moveTab(from, id);
+        });
       })(t.id, tab);
       if (on) {
         var x = document.createElement('button');
@@ -476,8 +645,43 @@
       tabsEl.appendChild(tab);
       if (on) tab.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     }
-    emptyEl.hidden = s.tabs.length > 0;
+    tabOrder = list.map(function (t) { return t.id; });
+    emptyEl.hidden = list.length > 0;
   }
+
+  /* ---------- 标签右键菜单：关闭其他（M3-5，触屏不启用） ---------- */
+  var tabMenu = $('tab-menu');
+  var tabMenuScrim = $('tab-menu-scrim');
+  var tabCloseOthers = $('tab-close-others');
+  function closeTabMenu() {
+    tabMenu.hidden = true;
+    tabMenuScrim.hidden = true;
+    tabMenuFor = null;
+  }
+  function openTabMenu(id, x, y) {
+    tabMenuFor = id;
+    tabMenu.style.left = Math.max(4, Math.min(x, innerWidth - 148)) + 'px';
+    tabMenu.style.top = Math.max(4, Math.min(y, innerHeight - 60)) + 'px';
+    tabMenu.hidden = false;
+    tabMenuScrim.hidden = false;
+  }
+  tabsEl.addEventListener('contextmenu', function (e) {
+    if (COARSE) return; // 触屏长按不启用
+    var tab = e.target && e.target.closest ? e.target.closest('.tab') : null;
+    if (!tab) return;
+    e.preventDefault();
+    openTabMenu(tab.getAttribute('data-id'), e.clientX, e.clientY);
+  });
+  tabMenuScrim.addEventListener('click', closeTabMenu);
+  tabMenu.addEventListener('click', function (e) {
+    var id = tabMenuFor;
+    closeTabMenu();
+    if (e.target === tabCloseOthers && id) {
+      var ids = ((state && state.tabs) || []).map(function (t) { return t.id; })
+        .filter(function (tid) { return tid !== id; });
+      for (var i = 0; i < ids.length; i++) client.closeTab(ids[i]);
+    }
+  });
   function beginRename(id, tabEl) {
     var label = tabEl.querySelector('.tab-label');
     if (!label || tabEl.querySelector('input')) return;
@@ -570,7 +774,7 @@
   $('paste-send').addEventListener('click', function () {
     var text = pasteText.value;
     if (!text) { closePaste(); return; }
-    var ok = client.paste(text);
+    var ok = pasteInput(text);
     if (ok === false) { pasteErr.hidden = false; return; }
     closePaste();
   });
@@ -665,17 +869,46 @@
   document.addEventListener('fullscreenchange', syncFsBtn);
   document.addEventListener('webkitfullscreenchange', syncFsBtn);
 
-  /* ---------- 键带 F-28 ---------- */
+  /* ---------- 键带 F-28 / M3-1 ---------- */
   var keybarCollapsed = false;
+  var ctrlLatched = false;
+  var keyCtrl = $('key-ctrl');
   function shouldShowKeybar() {
     if (q.get('keys') === '1') return true;
     return (navigator.maxTouchPoints || 0) > 0 && innerWidth <= 768;
   }
   function syncKeybar() { keybar.hidden = !shouldShowKeybar(); }
-  $('key-esc').addEventListener('pointerdown', function (e) { e.preventDefault(); });
-  $('key-tab').addEventListener('pointerdown', function (e) { e.preventDefault(); });
-  $('key-esc').addEventListener('click', function () { focusKeyboard(); client.sendInput('\x1b'); });
-  $('key-tab').addEventListener('click', function () { focusKeyboard(); client.sendInput('\x09'); });
+  function setCtrlLatched(on) {
+    ctrlLatched = !!on;
+    keyCtrl.classList.toggle('latched', ctrlLatched);
+    keyCtrl.setAttribute('aria-pressed', ctrlLatched ? 'true' : 'false');
+  }
+  /* A–Z → C0（Ctrl+A = \x01 … Ctrl+Z = \x1a）；非字母返回 null */
+  function ctrlByteFor(ch) {
+    if (!ch || ch.length !== 1) return null;
+    var c = ch.toUpperCase();
+    if (c < 'A' || c > 'Z') return null;
+    return String.fromCharCode(c.charCodeAt(0) - 64);
+  }
+  function sendLatchedLetter(ch) {
+    var b = ctrlByteFor(ch);
+    if (!b) return false;
+    // 锁存保持，直到再点一次 Ctrl 解除（M3-1 需求：再点解除；锁存态可见）
+    sendInput(b);
+    return true;
+  }
+  ['key-esc', 'key-tab', 'key-ctrl', 'key-up', 'key-down'].forEach(function (id) {
+    $(id).addEventListener('pointerdown', function (e) { e.preventDefault(); });
+  });
+  $('key-esc').addEventListener('click', function () { focusKeyboard(); sendInput('\x1b'); });
+  $('key-tab').addEventListener('click', function () { focusKeyboard(); sendInput('\x09'); });
+  $('key-up').addEventListener('click', function () { focusKeyboard(); sendInput('\x1b[A'); });
+  $('key-down').addEventListener('click', function () { focusKeyboard(); sendInput('\x1b[B'); });
+  keyCtrl.addEventListener('click', function () {
+    // 键盘激活时不要把焦点抢走（沿用 Esc/Tab 的 focusKeyboard，但按钮仍可 Tab 到达）
+    if (document.activeElement !== keyCtrl) focusKeyboard();
+    setCtrlLatched(!ctrlLatched);
+  });
   $('keybar-toggle').addEventListener('click', function () {
     keybarCollapsed = !keybarCollapsed;
     keybar.classList.toggle('collapsed', keybarCollapsed);
@@ -876,6 +1109,4 @@
   } else {
     client.connect().catch(function () {});
   }
-
-  window.__wt = { client: client, renderer: renderer, state: function () { return state; } };
 })();

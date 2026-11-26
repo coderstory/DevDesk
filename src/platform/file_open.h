@@ -22,6 +22,10 @@ std::string selectOpenFileArg(const std::vector<std::string>& utf8Args);
 // Windows ShellExecuteW → 资源管理器；macOS /usr/bin/open → Finder；其他 xdg-open。
 core::Result<void> openDirectory(const std::string& path);
 
+// 打开 URL 或文件路径（M2 Task 7 终端链接点击）：mac /usr/bin/open、Win ShellExecuteW、
+// 其他 xdg-open。不做存在性校验（URL 无本地路径）；失败返回错误由调用方提示。
+core::Result<void> openPathOrUrl(const std::string& target);
+
 // ── 待打开文件队列（进程内 / 主线程 / 一次性取走）──
 // 用途：接住不进 argv 的系统「打开文件」请求——macOS 的 Finder 双击 / 右键
 // 「打开方式」走 LaunchServices 的 odoc Apple Event，需由 Cocoa 桥回调入队。

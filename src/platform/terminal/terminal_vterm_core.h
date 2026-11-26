@@ -65,6 +65,21 @@ public:
     // 详见 .cpp 内 shortcut 注释）。
     bool bracketedPasteEnabled() const;
 
+    // ---- 鼠标上报（DECSET 1000/1002/1003 跟踪 + libvterm SGR 编码）----
+    // 行列一律 0 基（与 TerminalFrame 系一致；libvterm 输入侧同口径，见 .cpp 内换算注）。
+    // 指针移动：buttonDown = 指针是否按住（拖动判定由 libvterm 自己的按钮位决定）。
+    // 上报字节（SGR 鼠标序列）走与键盘/DSR 应答同一条 output 通道 → *replyOut
+    //（可空 = 丢弃；后端/测试按需取走再写回 pty）。
+    void mouseMove(int row, int col, bool buttonDown, std::string* replyOut = nullptr);
+    // 按键：button 0=左 1=中 2=右（+1 映射 libvterm 1/2/3）、4=上滚 5=下滚（原样）；
+    // pressed 按下/松开各一次；越界按钮号丢弃。
+    void mouseButton(int row, int col, int button, bool pressed,
+                     std::string* replyOut = nullptr);
+    // 应用已请求鼠标上报（DECSET 1000/1002/1003 任一开启；页面据此决定是否接指针事件）
+    bool mouseReporting() const;
+    // 当前是否备屏（VTERM_PROP_ALTSCREEN 镜像）
+    bool altscreen() const;
+
     // pimpl 状态体（定义收在 .cpp；public 嵌套因 C 回调桥需 cast 访问）
     struct Impl;
 

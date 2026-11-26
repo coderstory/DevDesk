@@ -85,6 +85,11 @@ public:
         return s_->selectionText(rowStart, colStart, rowEnd, colEnd, out);
     }
 
+    // 鼠标上报（mouseMove/mouseButton/mouseReporting/altscreen）：本平台**保持接口默认**
+    // （空操作 / false）——Swift/Corta 桥没有 DECSET 1000/1002/1003 跟踪，也没有
+    // SGR 鼠标序列的编码出口，页面侧 reporting()=false 即不接指针事件。能力缺口
+    // 留待桥侧补齐，不在本文件用 #ifdef 或假状态绕过。
+
 private:
     std::unique_ptr<SwiftBridgeSession> s_;
 };

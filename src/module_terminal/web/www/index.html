@@ -82,7 +82,8 @@
     <div class="canvas-wrap" id="canvas-wrap">
       <div class="canvas-scroll" id="canvas-scroll">
         <canvas id="term-canvas"></canvas>
-        <pre id="text-layer" aria-hidden="true"></pre>
+        <pre id="text-layer" role="log" aria-live="polite" aria-label="终端输出"></pre>
+        <div class="link-underline" id="link-underline" hidden></div>
       </div>
       <div class="skeleton" id="skeleton">
         <!-- 条宽在 app.css .skeleton i:nth-child（CSP style-src 'self' 禁内联 style 属性，不得写回） -->
@@ -105,14 +106,17 @@
     </div>
 
     <footer class="bottombar">
-      <button class="paste" id="btn-paste">粘贴</button>
+      <button class="paste" id="btn-paste" aria-label="打开粘贴面板">粘贴</button>
       <span class="pending-badge" id="pending-badge" hidden></span>
-      <div class="conn"><i class="dot" id="conn-dot"></i><span id="conn-text">已连接</span></div>
+      <div class="conn"><i class="dot" id="conn-dot"></i><span id="conn-text" aria-live="polite">已连接</span></div>
     </footer>
 
     <div class="keybar" id="keybar" hidden>
-      <button class="key" id="key-esc" type="button">Esc</button>
-      <button class="key" id="key-tab" type="button">Tab</button>
+      <button class="key" id="key-esc" type="button" aria-label="Esc 键">Esc</button>
+      <button class="key" id="key-tab" type="button" aria-label="Tab 键">Tab</button>
+      <button class="key" id="key-ctrl" type="button" aria-label="Ctrl 锁存" aria-pressed="false">Ctrl</button>
+      <button class="key" id="key-up" type="button" aria-label="上方向键">&#8593;</button>
+      <button class="key" id="key-down" type="button" aria-label="下方向键">&#8595;</button>
       <button class="key-toggle" id="keybar-toggle" type="button" aria-label="收起键带">&#8964;</button>
     </div>
 
@@ -122,6 +126,12 @@
       <button role="menuitem" data-act="fullscreen">全屏</button>
       <div class="sep"></div>
       <button role="menuitem" data-act="logout" class="danger">退出登录</button>
+    </div>
+
+    <!-- 标签右键菜单（M3-5，桌面非触屏）：关闭其他 -->
+    <div class="menu-scrim" id="tab-menu-scrim" hidden></div>
+    <div class="menu tab-menu" id="tab-menu" role="menu" aria-label="标签操作" hidden>
+      <button role="menuitem" id="tab-close-others">关闭其他</button>
     </div>
   </div>
 

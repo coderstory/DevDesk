@@ -89,4 +89,26 @@ core::Result<void> openDirectory(const std::string& path) {
             std::to_string(static_cast<long>(GetLastError())) + ")");
 }
 
+core::Result<void> openPathOrUrl(const std::string& target) {
+    if (target.empty()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError, "目标为空");
+    }
+    const std::wstring wtarget = platform::detail::utf8ToWide(target);
+    if (wtarget.empty()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+                                        "目标 UTF-8 转换失败");
+    }
+    SHELLEXECUTEINFOW info = {};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_FLAG_NO_UI;
+    info.lpVerb = L"open";
+    info.lpFile = wtarget.c_str();
+    info.nShow = SW_SHOW;
+    if (ShellExecuteExW(&info)) return core::Result<void>::ok();
+    return core::Result<void>::fail(
+        core::ErrorCode::Internal,
+        "ShellExecuteExW 打开链接失败 (GetLastError=" +
+            std::to_string(static_cast<long>(GetLastError())) + ")");
+}
+
 } // namespace platform::file_open
