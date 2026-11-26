@@ -274,7 +274,7 @@ public:
     std::string name() const override { return "todo.update"; }
 
     std::string schemaJson() const override {
-        return R"({"name":"todo.update","description":"更新任务内容字段（标题/描述/优先级/截止时间），只传需要改的字段；改列改序请用 todo.move","input_schema":{"type":"object","properties":{"id":{"type":"integer","description":"任务 id（必填）"},"title":{"type":"string"},"description":{"type":"string","description":"传 null 清空描述"},"priority":{"type":"integer","description":"0=无 1=低 2=中 3=高"},"dueAt":{"type":"integer","description":"Unix 秒；传 null 清除"}},"required":["id"]}})";
+        return R"({"name":"todo.update","description":"更新任务内容字段（标题/描述/优先级/截止时间），只传需要改的字段；改列请使用移动任务工具","input_schema":{"type":"object","properties":{"id":{"type":"integer","description":"任务 id（必填）"},"title":{"type":"string"},"description":{"type":"string","description":"传 null 清空描述"},"priority":{"type":"integer","description":"0=无 1=低 2=中 3=高"},"dueAt":{"type":"integer","description":"Unix 秒；传 null 清除"}},"required":["id"]}})";
     }
 
     Result<ToolResult> execute(const ToolArgs& args) override {

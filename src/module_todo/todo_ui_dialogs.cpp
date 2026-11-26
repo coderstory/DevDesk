@@ -6,6 +6,7 @@
 
 #include <core/component_theme.h>
 #include <core/router.h>
+#include <core/str_util.h>
 #include <core/theme.h>
 #include <core/ui_geometry.h>
 #include <ui_kit/dialog_form.h>
@@ -706,17 +707,16 @@ Task DetailDialog::collect(const std::vector<Task>& tasks) const {
     }
     updated.priority = priority;
     updated.dueAt = dueAt;
-    // completed_at 是事实记录：已完成的任务保存详情时保留原完成时刻，只有
-    // 「原本未完成 → 本次勾上」才置 now。否则每次编辑都会把完成时间改成当下，
-    // 完成时间显示错，且下次冷启动逃过自动归档（归档判据 = completed_at < 今日零点）。
+    // completed_at 是事实记录：完成态没变就保留原值，不得重写成 now。否则
+    // 每次编辑都会把完成时间改成当下（显示错），且下次冷启动逃过自动归档
+    //（archiveDoneTasksBeforeToday 判据 = completed_at < 今日零点）。
     const bool wasCompleted = orig != nullptr && orig->completedAt.has_value();
-    if (!completed) {
-        updated.completedAt = std::nullopt;
-    } else if (wasCompleted) {
-        updated.completedAt = orig->completedAt;
+    if (orig != nullptr && wasCompleted == completed) {
+        updated.completedAt = orig->completedAt;  // 完成态没变：完成时间是事实，不得重写
     } else {
-        updated.completedAt =
-            std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)));
+        updated.completedAt = completed
+            ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
+            : std::nullopt;
     }
     updated.tags = tags;
     updated.docPath = docPath;
@@ -727,6 +727,10 @@ Task DetailDialog::collect(const std::vector<Task>& tasks) const {
 
 // 表单原样落库；false = 保存失败（已 setStatus 报错），调用方保持弹窗打开
 bool DetailDialog::save(const DialogHost& host) const {
+    if (core::str::trimAscii(title).empty()) {
+        if (host.warn) host.warn("标题不能为空");
+        return false;  // 弹窗保持打开，不改库
+    }
     return host.updateTask(collect(*host.tasks));
 }
 

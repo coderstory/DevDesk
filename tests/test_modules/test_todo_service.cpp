@@ -1515,3 +1515,21 @@ REGISTER_TEST(todo_svc_move_task_from_kind_query_fail_explicit,
     DOCTEST_CHECK_EQ(rows.value()[0].getInt64("completed_at").valueOr(-1), sentinel);
     return true;
 })
+
+REGISTER_TEST(todo_service_update_missing_task_fails,
+              "todo_service: updateTask 目标不存在 → fail(NotFound) 而非静默成功", {
+    TestEnv env("update_missing_task");
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    auto made = env.svc->createTask(cols.value()[0].id, "将被删");
+    DOCTEST_REQUIRE(made.isOk());
+    DOCTEST_REQUIRE(env.svc->deleteTask(made.value().id).isOk());
+    module::todo::Task ghost;
+    ghost.id = made.value().id;
+    ghost.title = "ghost";
+    auto r = env.svc->updateTask(ghost);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::NotFound);
+    return true;
+})
