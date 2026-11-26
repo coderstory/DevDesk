@@ -9780,3 +9780,73 @@ REGISTER_TEST(md_root_group_context_menu,
     mod->onStop();
     return true;
 })
+
+// 批次 A-6：关最后一个标签此前直接 clear + 置 dirty=false，防抖窗口内的键入与
+// 保存失败的内容被无声丢弃。修法 = 关最后一个标签前先 saveEditor，失败则不关。
+REGISTER_TEST(md_close_last_tab_saves_dirty_editor,
+              "markdown: 关最后一个标签前先落盘（脏稿不静默丢弃）", {
+    test_support::MdHeadlessEnv env("devdesk_md_ui_", "closelast", "ui_test.db");
+    DOCTEST_REQUIRE(test_support::writeTextFile(env.dir / "only.md", "# 唯一\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame("c0");
+    const auto* row = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(row->onClick != nullptr);
+    row->onClick();
+    frame("c1");
+    DOCTEST_REQUIRE(ui.find("md.note.tab.0") != nullptr);
+
+    // 键入制造脏态：走编辑器输入命中面的 onTextInput（与既有用例同缝）
+    core::TextInputEvent ev;
+    ev.text = "脏";
+    {
+        // 每帧取一次节点：recompose 会换树，跨帧持有旧指针 = UAF/空回调
+        const auto* hit = ui.find("md.editor.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        hit->onTextInput(ev);
+    }
+    frame("c2");
+    {
+        const auto* hit = ui.find("md.editor.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        hit->onTextInput(ev);
+    }
+    frame("c3");
+
+    // 关最后一个标签：修好后应先落盘再关（文件里有脏字），最差也不丢
+    const auto* closeBtn = ui.find("md.note.tab.0.close.bg");
+    DOCTEST_REQUIRE(closeBtn != nullptr);
+    DOCTEST_REQUIRE(closeBtn->onClick != nullptr);
+    closeBtn->onClick();
+    frame("c4");
+
+    // 断言：文件内容应已含键入（保存成功）或标签仍在（保存失败）——
+    // 二选一，绝不允许「标签没了且文件还是旧内容」
+    std::string onDisk;
+    {
+        std::ifstream ifs(env.dir / "only.md", std::ios::binary);
+        onDisk.assign(std::istreambuf_iterator<char>(ifs),
+                      std::istreambuf_iterator<char>());
+    }
+    const bool savedNew = onDisk.find("脏") != std::string::npos;
+    const bool tabKept = ui.find("md.note.tab.0") != nullptr;
+    DOCTEST_CHECK(savedNew || tabKept);
+
+    mod->onStop();
+    return true;
+})

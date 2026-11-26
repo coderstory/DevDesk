@@ -246,6 +246,16 @@ void MarkdownModule::closeTab(const std::string& path) {
     if (it == openNotes_.end()) return;
     // need501 §3.5：关闭激活 tab → 激活右移邻 tab（同下标=原右邻；右缘无=末个=原左邻）
     const auto idx = static_cast<std::size_t>(std::distance(openNotes_.begin(), it));
+    // 关最后一个标签前先落盘：此前直接 clear + 置 dirty=false，防抖窗口内的键入
+    // 与保存失败的内容被无声丢弃（「关个标签，写的东西没了」）。保存失败则保持
+    // 标签与 dirty 不动，让用户看到状态栏失败提示再决定。
+    const bool isLastTab = (openNotes_.size() == 1);
+    if (path == currentPath_ && isLastTab && editorDirty_) {
+        saveEditor();
+        if (saveFailed_ || editorDirty_) {
+            return;  // 落盘没成功：不关标签，避免静默丢稿
+        }
+    }
     openNotes_.erase(it);
     if (path == currentPath_) {
         if (!openNotes_.empty()) {
