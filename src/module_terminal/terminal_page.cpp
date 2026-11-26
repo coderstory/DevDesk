@@ -1330,6 +1330,15 @@ GridLayout TerminalPage::compose(
                                             .color(isActive ? t.colors.textPrimary
                                                             : t.colors.textSecondary)
                                             .verticalAlign(eui::VerticalAlign::Center);
+                                        // M2 Task 6（mac 补齐后）：后台会话响铃提示——
+                                        // 非激活标签上挂一枚小圆点，切过去即清。
+                                        if (!isActive && s != nullptr && s->bells > 0) {
+                                            ui.rect(id + ".bell")
+                                                .position(w - 12.0f - 22.0f, (kTabH - 6.0f) * 0.5f)
+                                                .size(6.0f, 6.0f)
+                                                .radius(3.0f)
+                                                .color(t.colors.warning);
+                                        }
                                         // 关闭钮视觉 16×16（激活常显/非激活 hover 淡入；
                                         // 红警示 §4.1.3 只看关闭钮自身 hover——P2-5：
                                         // 悬停 TAB 其余区域不得红，红底由 hit 三态自带）

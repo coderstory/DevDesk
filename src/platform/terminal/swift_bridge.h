@@ -46,6 +46,8 @@ public:
                        int32_t* cursorCol, std::vector<TerminalCell>& out);
     // exited=true 时 exitCode 有效
     bool exited(int32_t* exitCode) const;
+    // bell 边沿（Corta takeBell：一次一真）。M2 Task 6 补齐 mac 侧。
+    bool takeBell();
     int32_t pendingGeneration() const;
     int32_t scrollbackCount();
     bool scrollbackLineText(int32_t index, std::string& out);

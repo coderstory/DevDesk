@@ -176,6 +176,11 @@ bool SwiftBridgeSession::exited(int32_t* exitCode) const {
     return true;
 }
 
+bool SwiftBridgeSession::takeBell() {
+    if (!impl_ || impl_->session.isNone()) return false;
+    return impl_->session.getSome().takeBell();
+}
+
 int32_t SwiftBridgeSession::pendingGeneration() const {
     if (impl_->session.isNone()) return 0;
     return impl_->session.getSome().pendingGeneration();

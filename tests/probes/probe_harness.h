@@ -31,6 +31,12 @@
 #include <png.h>
 
 #include <cstring>
+#include <filesystem>
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <cstdlib>
 #include <filesystem>
 #include <system_error>
@@ -171,9 +177,41 @@ inline DisplayCapability probeDisplayCapability() {
 /// 窗口后端生命周期（GLFW），成对调用。
 /// 无显示环境 → 打印可进 CI 日志的原因 + 以 77 退出（ctest 记 Skipped）；
 /// 其它初始化失败 → 返回 false（调用方返回非零 → ctest 记 Failed）。
+// 并行探针（2026-11-27）：ctest -j 下多个探针进程同跑，各自的数据根必须隔离，
+// 否则共用 <repo>/build/... 或真实 DevDesk 数据根会互相覆盖。默认给每个进程一个
+// pid 唯一的临时根；探针自己显式设置 DEVDESK_DATA_ROOT 的（scoped env）优先级更高。
+inline void isolateProbeDataRoot() {
+    if (const char* cur = std::getenv("DEVDESK_DATA_ROOT"); cur != nullptr && *cur != '\0') {
+        return; // 探针自带隔离
+    }
+#if defined(_WIN32)
+    const int pid = static_cast<int>(::_getpid());
+#else
+    const int pid = static_cast<int>(::getpid());
+#endif
+    std::error_code ec;
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path(ec) / "devdesk-probe" /
+        ("data-" + std::to_string(pid));
+    if (!ec) {
+        std::filesystem::create_directories(root, ec);
+        if (!ec) {
+#if defined(_WIN32)
+            ::_putenv_s("DEVDESK_DATA_ROOT", root.string().c_str());
+#else
+            ::setenv("DEVDESK_DATA_ROOT", root.string().c_str(), 1);
+#endif
+        }
+    }
+}
+
 inline bool initializeWindowBackend() {
     // splash 测试缝：probe 进程同样活不过 splash 2.3s 时序，禁掉后 compose 路径
     // 不会拍到 splash
+    isolateProbeDataRoot();
+    // 探针不在 Dock 里露图标（macOS）：探针是开发期工具，并发跑时几十个图标闪屏。
+    // EUI 的 accessory 策略，其他平台空操作；探针不依赖 AppKit 激活（输入走 runtime 队列）。
+    ::core::platform::setDockVisible(false);
     ::ui_kit::setSplashDisabledForTests(true);
     const DisplayCapability cap = probeDisplayCapability();
     switch (classifyDisplayCapability(cap)) {

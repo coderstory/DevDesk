@@ -58,6 +58,12 @@ public:
     int scrollbackCount() override { return scrollbackN; }
     bool scrollbackLine(int, std::string&) override { return false; }
     bool selectionText(int, int, int, int, std::string&) override { return false; }
+    uint32_t takeBells() override {
+        const uint32_t out = pendingBells;
+        pendingBells = 0;
+        return out;
+    }
+    uint32_t pendingBells = 0;
     // bug249 输出/退出唤醒缝：与平台后端同形状（reader 线程调一次 → 宿主出这一帧）
     std::function<void()> notify_;
     int notifyCalls = 0;
@@ -685,3 +691,20 @@ REGISTER_TEST(terminalMoveSessionReorder,
     return true;
 })
 
+
+REGISTER_TEST(terminalBellBadge,
+              "terminal controller: 后台 bell 累计并在切到该会话时清零（M2 Task 6）", {
+    FakeBackend backend;
+    terminal::SessionController c;
+    c.setBackend(&backend);
+    const int a = c.startSession();
+    const int b = c.startSession();
+    c.setActive(a);
+    backend.last->pendingBells = 2; // 模拟两次响铃
+    c.pollAll();
+    DOCTEST_CHECK_EQ(c.at(b)->bells, 2u);
+    DOCTEST_CHECK_EQ(c.at(a)->bells, 0u);
+    c.setActive(b); // 查看即清
+    DOCTEST_CHECK_EQ(c.at(b)->bells, 0u);
+    return true;
+})

@@ -69,6 +69,8 @@ public:
     // M2 Task 6：OSC 0/2 标题与 bell（默认空实现 = 该平台后端未接）
     virtual std::string title() const { return {}; }
     virtual uint32_t bellCount() const { return 0; }
+    // 自上次调用以来新增的 bell 次数（edge 语义；页面据此在标签上提示）。默认 0。
+    virtual uint32_t takeBells() { return 0; }
     virtual void setOutputNotify(std::function<void()> notify) { (void)notify; }
     virtual bool supportsOutputNotify() const { return false; }
     // 鼠标上报（0 基行列）：页面把指针事件交给后端，后端翻译成 VT 序列写入子进程。

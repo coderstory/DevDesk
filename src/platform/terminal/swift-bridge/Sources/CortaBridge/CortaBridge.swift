@@ -190,6 +190,11 @@ public final class CortaBridgeSession: @unchecked Sendable {
         session.isAlternateScreenActive
     }
 
+    /// bell 边沿（Corta 的 takeBell 一次一真；无响铃返回 false）
+    public func takeBell() -> Bool {
+        session.takeBell()
+    }
+
     // MARK: - 快照（主线程拉取）
 
     /// 拉取平铺缓冲。返回 false = 网格超 capacity（溢出契约，不部分拷贝）。

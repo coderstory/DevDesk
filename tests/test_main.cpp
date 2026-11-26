@@ -17,6 +17,7 @@
 #include "toast_notice_bridge.h"
 #include "platform/notification.h"
 #include "ui_kit/splash.h"
+#include <core/platform/platform.h>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -332,6 +333,8 @@ std::uint64_t fnv1a64(const std::string& s) {
 //   子串     → 只跑描述里含该子串的测试（如 "streaming"）
 //   --log    → 打开控制台日志 + Debug 级别（排查流式/代理问题时用）
 int main(int argc, char** argv) {
+    // 测试进程不在 Dock 里露图标（macOS accessory 策略；其他平台空操作）。
+    ::core::platform::setDockVisible(false);
     using Clock = std::chrono::steady_clock;
     std::signal(SIGSEGV, segvHandler);
     std::signal(SIGABRT, segvHandler);

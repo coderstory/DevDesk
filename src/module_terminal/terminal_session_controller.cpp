@@ -213,6 +213,8 @@ void SessionController::closeSession(int index) {
 }
 
 void SessionController::setActive(int index) {
+    // 切到某会话 = 已查看，清掉它的 bell 提示
+    if (Session* s = at(index); s != nullptr) s->bells = 0;
     if (index < 0 || index >= static_cast<int>(sessions_.size())) return;
     activeIndex_ = index;
 }
@@ -279,6 +281,8 @@ void SessionController::pollAll() {
     drainSpawnOutcomes_(); // bug406：后台建会话结果先接入，本帧即可渲染新会话
     for (Session& s : sessions_) {
         if (s.state != SessionState::Running || !s.handle) continue;
+        // bell 是边沿量：每次巡检都取，不受「本帧有无新输出」影响
+        s.bells += s.handle->takeBells();
         const int gen = s.handle->pendingGeneration();
         if (gen == s.lastGeneration) {
             // 已退出但帧未收割的面（generate 不再变的退出）也要补收割

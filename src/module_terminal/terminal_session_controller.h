@@ -65,6 +65,7 @@ struct Session {
     float scrollRemainder = 0.0f;
     int titleNumber = 0;       // 「终端 N」，进程内递增不复用
     std::string title;         // 网页改名后的展示名；空 = 用「终端 N」
+    uint32_t bells = 0;        // 未查看的 bell 次数（后台完成提示；切到该会话即清零）
 };
 
 class SessionController {

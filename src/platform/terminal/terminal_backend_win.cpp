@@ -756,6 +756,12 @@ public:
     // M2 Task 6：OSC 0/2 标题与 bell（libvterm 解析；vterm_ 终止后为空 → 空值）
     std::string title() const override { return vterm_ ? vterm_->title() : std::string(); }
     uint32_t bellCount() const override { return vterm_ ? vterm_->bellCount() : 0; }
+    uint32_t takeBells() override {
+        const uint32_t now = bellCount();
+        const uint32_t delta = now >= lastBellSeen_ ? now - lastBellSeen_ : now;
+        lastBellSeen_ = now;
+        return delta;
+    }
 
     // 鼠标上报：转译层产 SGR 序列，与键盘同走写队列 → writer 线程 WriteFile → ConPTY。
     // vterm_ 生命周期规则同 title/bellCount：terminate() 后为空即忽略（UI 线程调用）。
@@ -829,6 +835,7 @@ private:
     std::shared_ptr<SessionShared> shared_;
     std::shared_ptr<ShutdownTask> task_;
     VtermCore* vterm_ = nullptr; // 非拥有：实体内存在 task_->vterm（task_ 保活）
+    uint32_t lastBellSeen_ = 0;  // takeBells 差值基线
     std::atomic<bool> terminated_{false};
 };
 

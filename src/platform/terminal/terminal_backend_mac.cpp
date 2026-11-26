@@ -61,6 +61,13 @@ public:
 
     void terminate() override { s_->stop(); }
 
+    uint32_t takeBells() override {
+        if (s_->takeBell()) ++pendingBells_;
+        const uint32_t out = pendingBells_;
+        pendingBells_ = 0;
+        return out;
+    }
+
     bool exited(int32_t* exitCode) override { return s_->exited(exitCode); }
 
     TerminalFrame poll() override {
@@ -100,6 +107,7 @@ public:
 
 private:
     std::unique_ptr<SwiftBridgeSession> s_;
+    uint32_t pendingBells_ = 0; // takeBells 聚合（Corta 一次一真）
 };
 
 class MacTerminalBackend : public TerminalBackend {

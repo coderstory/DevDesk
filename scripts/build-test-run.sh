@@ -3,7 +3,11 @@
 # 输出固定结构（阶段标题 + ✅/❌ 结果行）：构建正常只打尾部、失败才打错误摘要；测试只打
 # [FAIL] 行 + Total/Passed/Failed 统计。
 # 用法：./scripts/build-test-run.sh [--clean] [--release] [--dev] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串] [--probes-on] [--target 目标名] [--parallel-tests]
-#   --parallel-tests  doctest 段并行分片（need505）：N 片进程并发（N=DEVDESK_TEST_SHARDS，
+#   测试并行（2026-11-27 老板令，默认开、无需开关）：doctest 按 --shard 分片并发
+#   （N=min(6,核数)，DEVDESK_TEST_SHARDS 覆写）；UI probe 走 ctest -j（并发
+#   min(6,核数)，DEVDESK_TEST_JOBS 覆写），每个探针独立进程 + pid 隔离数据根。
+#   --parallel-tests 兼容保留（已默认），--no-parallel-tests 可临时退回串行。
+#   历史说明：--parallel-tests  doctest 段并行分片（need505）：N 片进程并发（N=DEVDESK_TEST_SHARDS，
 #                     默认 6），--shard=i/N 哈希分桶，每片独立进程=独立数据根；输出仍汇总
 #                     一行 Total，失败打「片 N：用例名」。默认关——CI 与现有调用方零变化；
 #                     片内顺序+fail-fast 语义不变，probe 段/守卫链不受影响
@@ -216,7 +220,7 @@ fi
 # 构建类型：默认 Debug；--release 或 DEVDESK_BUILD_TYPE 切别的类型。只认 Debug / Release
 # 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
-CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""; DEV_MODE=0; BUILD_TARGET=""; PARALLEL_TESTS=0
+CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""; DEV_MODE=0; BUILD_TARGET=""; PARALLEL_TESTS=1
 # 取值 flag 用「内层 shift 吃值 + 循环尾 shift 吃 flag 名」——不能在 for arg in "$@" 里
 # shift：for 的迭代列表在循环入口展开一次，shift 只动位置参数不动列表，每轮只前进一个，
 # 带值 flag 会错位一格吃进前一个 flag（曾把 --verify-app-str 的值解析成 --install）。
@@ -225,7 +229,8 @@ while [ $# -gt 0 ]; do
     --clean)    CLEAN=1 ;;
     --release)  BUILD_TYPE="Release" ;;
     --dev)      DEV_MODE=1 ;;
-    --parallel-tests) PARALLEL_TESTS=1 ;;
+    --parallel-tests) PARALLEL_TESTS=1 ;;  # 已默认开；保留兼容
+    --no-parallel-tests) PARALLEL_TESTS=0 ;;
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
@@ -776,6 +781,20 @@ else
 fi
 
 # 3. 测试（直接跑 devdesk_tests：输出格式稳定，Total/Passed/Failed 必有）
+# 2026-11-27 老板令：doctest 分片与 UI probe 同时跑（两类测试互不依赖、各自独立
+# 进程/窗体/数据根）。probe 先起后台，doctest 跑完后再收 probe 结果。
+PROBE_PID=""; PROBE_LOG=""
+if [ "$RUN_TEST" = "1" ] && [ "$BUILD_PROBES" != "0" ] && [ -z "$FILTER" ]; then
+  _pncpu=$( (command -v sysctl >/dev/null 2>&1 && sysctl -n hw.ncpu) \
+           || (command -v nproc >/dev/null 2>&1 && nproc) || echo 6 ) 2>/dev/null
+  _pdef=$(( _pncpu < 6 ? _pncpu : 6 ))
+  PROBE_JOBS="${DEVDESK_TEST_JOBS:-$_pdef}"
+  PROBE_LOG="$BUILD_DIR_ABS/testtmp/probes-$$.log"
+  mkdir -p "$BUILD_DIR_ABS/testtmp"
+  ( cd "$BUILD_DIR" && ctest -L probe -j "$PROBE_JOBS" --output-on-failure ) >"$PROBE_LOG" 2>&1 &
+  PROBE_PID=$!
+fi
+
 if [ "$RUN_TEST" = "1" ]; then
   echo "── 测试 ──"
   # DEVDESK_TEST_TMPDIR 未设时默认导出绝对路径：tests/doctest.h 的兜底是相对 cwd 的
@@ -793,14 +812,19 @@ if [ "$RUN_TEST" = "1" ]; then
     # 的是定点排查集合，片级哈希会把它打散、其余片 0 命中退 2 → 并行路径必红（假红）。
     # 串行跑同一集合语义等价且无此洞——回退是唯一两全落点。
     echo "⏭ --filter 与 --parallel-tests 并用：回退串行跑同一过滤集合（过滤定点集不需要分片）"
-    PARALLEL_TESTS=0
+    PARALLEL_TESTS=1
   fi
   if [ "$PARALLEL_TESTS" = "1" ]; then
     # need505 并行分片：N 进程并发跑 --shard=i/N，汇总一行 Total。红绿判定仍只认退出
     # 码——任何片 rc 非 0 一律红（含 0 命中/崩溃/坏参数），片内 fail-fast 语义不变。
     # SHARDS 非正整数硬退 2：0/负/非数值会让 seq 生成 0 个片 →「Total: 0」被上层
     # 当全绿（假绿洞与「过滤 0 命中」同类，宁红勿绿）。
-    SHARD_N="${DEVDESK_TEST_SHARDS:-6}"
+    # 2026-11-27 老板令：并行默认开、不需要开关。默认片数 = min(6, CPU 核数)，
+    # 可用 DEVDESK_TEST_SHARDS 覆写（=1 即串行，调试用）。
+    _ncpu=$( (command -v sysctl >/dev/null 2>&1 && sysctl -n hw.ncpu) \
+             || (command -v nproc >/dev/null 2>&1 && nproc) || echo 6 ) 2>/dev/null
+    _def_shards=$(( _ncpu < 6 ? _ncpu : 6 ))
+    SHARD_N="${DEVDESK_TEST_SHARDS:-$_def_shards}"
     case "$SHARD_N" in
       ''|*[!0-9]*|0)
         echo "❌ DEVDESK_TEST_SHARDS 必须是正整数（收到: \"$SHARD_N\"）——拒绝按 0 片跑出 Total: 0 假绿"
@@ -867,6 +891,10 @@ if [ "$RUN_TEST" = "1" ]; then
     else
       echo "❌ 测试有失败（退出码 $TEST_RC；上方为 FAIL 摘要；要看完整输出跑: ${TEST_BIN}）"
     fi
+    if [ -n "$PROBE_PID" ]; then
+      kill "$PROBE_PID" 2>/dev/null || true
+      wait "$PROBE_PID" 2>/dev/null || true
+    fi
     exit 1
   fi
   echo "✅ 测试全绿"
@@ -902,7 +930,15 @@ if [ "$RUN_TEST" = "1" ]; then
     # **总数也从本次运行的输出里取**（汇总行 "... out of N" 的 N = 本次 -L probe 匹配到的
     #   全部条数，**含跳过项**；恒等于 `ctest -N` 的 Total Tests）。不必再跑一次 -N ——
     #   那一次会把 Testing/Temporary/LastTest.log 清成 121 字节，跳过原因就永远捞不到了。
-    PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe --output-on-failure 2>&1) || true
+    # 2026-11-27 老板令：UI 探针默认并行（每个探针是独立进程/独立窗体；数据根已由
+    # probe_harness 按 pid 隔离）。默认并发 = min(6, CPU 核数)，DEVDESK_TEST_JOBS 覆写。
+    if [ -n "$PROBE_PID" ]; then
+      wait "$PROBE_PID" 2>/dev/null || true
+      PROBE_OUT=$(cat "$PROBE_LOG" 2>/dev/null || true)
+      rm -f "$PROBE_LOG"
+    else
+      PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe --output-on-failure 2>&1) || true
+    fi
     echo "$PROBE_OUT" | grep -E "tests passed|tests failed" | tail -1 || true
     # 跳过数：ctest 把跳过项列在 "The following tests did not run:" 段里，
     # 形如 "  2 - t_skip (Skipped)"。逐条数 (Skipped) 行，不靠百分比反推。
