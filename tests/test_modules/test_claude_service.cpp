@@ -1454,8 +1454,9 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
 
     // sidecar 声明 ANTHROPIC_MODEL 是托管键。NEW_KEY 不能省：它保证确实写了一次库，
     // 否则整次 no-op 会让「未被覆盖」白白通过。
-    test_support::writeRawConfigRow(
-        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+    test_support::writeRawSecretRow(
+        &tdb.handle(), module::claude::settings_sync::kSidecarSecretService,
+        module::claude::settings_sync::kSidecarConfigKey,
         R"({"managedKeys": {"ANTHROPIC_MODEL": ""}, "envSnapshot": {}})");
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_MODEL": "from-settings",

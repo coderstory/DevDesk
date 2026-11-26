@@ -18,13 +18,18 @@ struct Profile;
 
 namespace settings_sync {
 
-// sidecar（接管前 settings.json 的 env 快照）的 app_config 键名
+// sidecar（接管前 settings.json 的 env 快照）在 app_secrets 的 (service, account)。
+// 为什么不是 app_config：快照里的 envSnapshot 含用户原始 ANTHROPIC_AUTH_TOKEN /
+// API_KEY，而 app_config 整表随 GitHub 同步上传（sql_dump defaultSkipTables 不含）
+// → token 会明文推到远端仓。app_secrets 在 skip 表内且值经保护后端加密。
+inline constexpr const char* kSidecarSecretService = "claude.settings_sync";
 inline constexpr const char* kSidecarConfigKey = "claude.settings_snapshot";
 
 // 注入点：生产用 defaultPaths()，测试传临时目录 + 临时库句柄，不碰真实 ~/.claude
 struct Paths {
     std::filesystem::path settingsFile;  // ~/.claude/settings.json
-    // sidecar 落点 = app_config 表的 kSidecarConfigKey 行。nullptr = 数据库未就绪：
+    // sidecar 落点 = app_secrets 的 (kSidecarSecretService, kSidecarConfigKey)。
+    // nullptr = 数据库未就绪：
     // 按「无快照」处理并 WARN，不静默当成没接管过（会让 restore 把用户 settings.json 留在代理形态）
     core::data::SqliteDb* db = nullptr;
     // 上层覆盖检测要读的文件（managed + project 层；user 层就是 settingsFile 自身，不列）

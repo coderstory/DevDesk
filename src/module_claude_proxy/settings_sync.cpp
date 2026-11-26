@@ -8,6 +8,7 @@
 
 #include "claude_service.h"
 #include "core/app_config.h"
+#include "core/secrets_store.h"
 #include "core/atomic_write.h"
 #include "core/database.h"   // core::appDatabase()
 #include "core/fs_text.h"
@@ -81,12 +82,17 @@ bool sidecarDbMissing(const Paths& paths) {
 
 bool sidecarExists(const Paths& paths) {
     if (sidecarDbMissing(paths)) return false;
-    auto has = core::appconfig::has(*paths.db, kSidecarConfigKey);
-    if (has.isFail()) {
-        LOG_WARN("settings_sync: sidecar 存在性探测失败: " + has.errorMessage());
+    // secrets_store 无 has()：用 get() 的 NotFound 判定（缺失 = 不存在，
+    // 其余错误按「存在但读不了」处理，与旧 appconfig::has 失败口径一致返回 false）
+    auto got = core::secrets_store::get(*paths.db, kSidecarSecretService,
+                                        kSidecarConfigKey);
+    if (got.isFail()) {
+        if (got.errorCode() != core::ErrorCode::NotFound) {
+            LOG_WARN("settings_sync: sidecar 存在性探测失败: " + got.errorMessage());
+        }
         return false;
     }
-    return has.value();
+    return true;
 }
 
 // 读 sidecar。返回结构与 parseJsonObjectFile 同款（exists / ok / error / obj）
@@ -96,7 +102,8 @@ ParsedDoc parseSidecar(const Paths& paths) {
         out.ok = true;
         return out;
     }
-    auto raw = core::appconfig::get(*paths.db, kSidecarConfigKey);
+    auto raw = core::secrets_store::get(*paths.db, kSidecarSecretService,
+                                        kSidecarConfigKey);
     if (raw.isFail()) {
         if (raw.errorCode() == core::ErrorCode::NotFound) {
             out.ok = true;   // 键不存在 → 调用方按空对象处理
@@ -124,6 +131,11 @@ ParsedDoc parseSidecar(const Paths& paths) {
     return out;
 }
 
+// sidecar 落在 app_secrets 而非 app_config：快照里的 envSnapshot 含用户原始
+// ANTHROPIC_AUTH_TOKEN / API_KEY，而 app_config 整表随 GitHub 同步上传（sql_dump
+// defaultSkipTables 不含它）→ token 会被明文推到远端仓。app_secrets 在 skip 表内
+// 且值经分平台保护后端加密。键名沿用 kSidecarConfigKey 作 account、service 固定，
+// 旧版在 app_config 的行由 migrateLegacySidecar 一次性搬走。
 core::Result<void> writeSidecar(const Paths& paths,
                                 const std::string& text) {
     if (paths.db == nullptr) {
@@ -131,12 +143,14 @@ core::Result<void> writeSidecar(const Paths& paths,
             core::ErrorCode::NotFound,
             "应用数据库未就绪，sidecar 快照无法保存");
     }
-    return core::appconfig::set(*paths.db, kSidecarConfigKey, text);
+    return core::secrets_store::set(*paths.db, kSidecarSecretService,
+                                    kSidecarConfigKey, text);
 }
 
 void removeSidecar(const Paths& paths) {
     if (sidecarDbMissing(paths)) return;
-    auto erased = core::appconfig::erase(*paths.db, kSidecarConfigKey);
+    auto erased = core::secrets_store::erase(*paths.db, kSidecarSecretService,
+                                            kSidecarConfigKey);
     if (erased.isFail()) {
         LOG_WARN("settings_sync: sidecar 删除失败（不影响还原结果）: " +
                  erased.errorMessage());
@@ -296,8 +310,31 @@ Paths defaultPaths() {
     return p;
 }
 
+// 一次性迁移：旧版 sidecar 存 app_config 表（随 GitHub 同步外泄 token），现落
+// app_secrets。首次接管时把旧行搬过去并删旧键——幂等（旧键不存在即 no-op）。
+void migrateLegacySidecar(const Paths& paths) {
+    if (sidecarDbMissing(paths)) return;
+    auto legacy = core::appconfig::get(*paths.db, kSidecarConfigKey);
+    if (legacy.isFail()) return;  // 没有旧行
+    auto moved = core::secrets_store::set(*paths.db, kSidecarSecretService,
+                                          kSidecarConfigKey, legacy.value());
+    if (moved.isFail()) {
+        LOG_WARN("settings_sync: 旧 sidecar 迁移到 app_secrets 失败（保留旧行）: " +
+                 moved.errorMessage());
+        return;
+    }
+    auto cleaned = core::appconfig::erase(*paths.db, kSidecarConfigKey);
+    if (cleaned.isFail()) {
+        LOG_WARN("settings_sync: 旧 sidecar 行删除失败（新位置已写好，幂等重试）: " +
+                 cleaned.errorMessage());
+    }
+}
+
 SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     SyncResult out;
+
+    // 旧版 sidecar 在 app_config（会随同步外泄 token）→ 搬到 app_secrets
+    migrateLegacySidecar(paths);
 
     // 托管 env（纯函数，规则见 provider_config.h）
     const auto managed = buildProxyEnv(profile.modelsConfigJson,

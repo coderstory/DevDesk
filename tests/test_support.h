@@ -7,6 +7,7 @@
 #include "doctest.h" // test_temp::tempPath —— 临时路径唯一化（pid + 进程内序号）
 
 #include "core/app_config.h"
+#include "core/secrets_store.h"
 #include "core/database.h"
 #include "core/llm_profile_source.h"
 #include "core/router.h"
@@ -606,6 +607,27 @@ inline bool configRowExists(core::data::SqliteDb* db, const char* key) {
     if (db == nullptr) return false;
     auto v = core::appconfig::has(*db, key);
     return v.isOk() && v.value();
+}
+
+// app_secrets 版：claude 接管快照等含凭据的 sidecar 已迁此表（不随 dump 外泄）
+inline std::string readRawSecretRow(core::data::SqliteDb* db,
+                                    const char* service, const char* account) {
+    if (db == nullptr) return std::string();
+    auto v = core::secrets_store::get(*db, service, account);
+    return v.isOk() ? v.value() : std::string();
+}
+
+inline void writeRawSecretRow(core::data::SqliteDb* db, const char* service,
+                              const char* account, const std::string& text) {
+    if (db == nullptr) return;
+    (void)core::secrets_store::set(*db, service, account, text);
+}
+
+inline bool secretRowExists(core::data::SqliteDb* db, const char* service,
+                            const char* account) {
+    if (db == nullptr) return false;
+    auto v = core::secrets_store::get(*db, service, account);
+    return v.isOk();
 }
 
 // 把一段「手改过的配置 JSON」按**顶层键**分发进 app_config 表的各行（顶层键 =

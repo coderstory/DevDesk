@@ -14,6 +14,7 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/sql_dump.h"
 #include "platform/json.h"
 #include "provider_config.h"
 #include "settings_sync.h"
@@ -44,7 +45,8 @@ constexpr const char* kSyncTempDirPrefix = "devdesk_test_sync_";
 // 临时 db 文件名前缀（tempDbPath / TestDb 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_sync_db_";
 
-// sidecar（接管前 settings.json 的 env 快照）是 app_config 表的一行（键 kSidecarConfigKey）
+// sidecar（接管前 settings.json 的 env 快照）现落 app_secrets 表 (kSidecarSecretService, kSidecarConfigKey)
+// —— 含 ANTHROPIC_AUTH_TOKEN 等凭据，不能进随 dump 外泄的 app_config
 // ——故每个用例除了临时 settings.json 目录，还得有一份已 migrate 的库供 sidecar 落行。
 // 命名对应：目录 d → 库 sdb，目录 d2 → 库 sdb2；同一用例内两个目录不能共用一份库
 //（sidecar 只有一行，共用会让两个 Paths 互相看见对方的快照）。
@@ -201,7 +203,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
         DOCTEST_CHECK_EQ(env.at("DISABLE_AUTOUPDATER"), std::string("1"));
         DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                          std::string("claude-sonnet-4-5"));
-        DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+        DOCTEST_CHECK(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
     }
 
     // 还原契约：同名托管键恢复用户原值，接管前不存在的键被删除，其余不动
@@ -217,7 +219,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
         DOCTEST_CHECK_EQ(env.at("DISABLE_AUTOUPDATER"), std::string("1"));
         DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                          std::string("claude-sonnet-4-5"));
-        DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+        DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
     }
     // original 故意不参与断言：还原后格式被 pretty 归一，只有 env 值逐键等价才成立，
     // 字节级比较必然不等。这行 (void) 只是消未用告警，不是「忘了断言」
@@ -255,7 +257,7 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
     }
     // 但 sidecar 仍记录它（还原语义：旧托管键仍归 DevDesk 管）
     {
-        const auto sidecarText = test_support::readRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey);
+        const auto sidecarText = test_support::readRawSecretRow(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey);
         DOCTEST_CHECK(sidecarText.find("ANTHROPIC_DEFAULT_SONNET_MODEL") !=
                       std::string::npos);
         DOCTEST_CHECK(sidecarText.find("ANTHROPIC_DEFAULT_OPUS_MODEL") !=
@@ -301,7 +303,7 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     const auto env = readEnv(paths.settingsFile);
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
     return true;
 })
 
@@ -320,17 +322,17 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
     DOCTEST_CHECK(!r.ok);
     DOCTEST_CHECK(!r.error.empty());
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), broken);
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
 
     // sidecar 损坏时 takeOver 同样中止（不把上次托管键误当用户原值）
     d.write(paths.settingsFile, "{}");
-    test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
+    test_support::writeRawSecretRow(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey, "{broken");
     DOCTEST_CHECK(!settings_sync::takeOver(p, 8888, paths).ok);
 
     // sidecar 损坏时 restore 报错并保留文件（供人工恢复）
     auto rr = settings_sync::restore(paths);
     DOCTEST_CHECK(!rr.ok);
-    DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
     return true;
 })
 
@@ -401,7 +403,7 @@ REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                      std::string("claude-sonnet-4-5"));
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));  // 不新增 sidecar
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));  // 不新增 sidecar
     return true;
 })
 
@@ -424,7 +426,7 @@ REGISTER_TEST(sync_restore_without_sidecar_noop,
     auto r = settings_sync::restore(paths);
     DOCTEST_REQUIRE(r.ok);
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);  // 逐字节不变
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
 
     // settings.json 不存在 / 无 env 块 → 同样 no-op（不创建文件、不改内容）
     test_support::TempDir d2("noop2", kSyncTempDirPrefix);
@@ -543,7 +545,7 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
     const auto env = readEnv(paths.settingsFile);
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
 
     DOCTEST_CHECK(settings_sync::recoverPendingSnapshot(paths).ok);
 
@@ -685,7 +687,7 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
     // 运行中切 profile：settings.json 恢复可读、sidecar 损坏 → 接管仍失败，
     // 但切换必须成功（DB 已切），失败原因经 lastSyncWarnings 可见
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
-    test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
+    test_support::writeRawSecretRow(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey, "{broken");
     auto b = svc.createProfile("接管失败B", "https://gw2.example.com",
                                "sk-ind-test-fedcba9876543210", "");
     DOCTEST_REQUIRE(b.isOk());
@@ -728,7 +730,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     {
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") != env.end());
-        DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+        DOCTEST_CHECK(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
         DOCTEST_CHECK(svc.isClaudeCodeManaged());
     }
 
@@ -745,7 +747,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
     DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
     DOCTEST_CHECK(!svc.isClaudeCodeManaged());
     DOCTEST_CHECK(!svc.isProxyRunning());
     return true;
@@ -850,22 +852,23 @@ REGISTER_TEST(sync_switch_off_no_write,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
     DOCTEST_CHECK(!svc.isClaudeCodeManaged());
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
 
     // 路径 3：stopProxy → 不还原（未接管过，同样不动文件）
     svc.stopProxy();
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
-    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK_FALSE(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
 
     // 遗留 sidecar（上次没走完还原）+ 开关关闭 → 补还原同样跳过，快照留给
     // 下次开启接管时处理（不代改用户文件）
-    test_support::writeRawConfigRow(
-        &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+    test_support::writeRawSecretRow(
+        &sdb.handle(), module::claude::settings_sync::kSidecarSecretService,
+        module::claude::settings_sync::kSidecarConfigKey,
             R"({"managedKeys": {"ANTHROPIC_BASE_URL": ""},)"
             R"( "envSnapshot": {"MY_KEY": "user"}})");
     svc.recoverPendingSettingsRestore();
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
-    DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK(test_support::secretRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey));
 
     return true;
 })
@@ -1016,8 +1019,9 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
     }
     // sidecar 存在 → 取 managedKeys 键集（对象 shape，非数组）
     {
-        test_support::writeRawConfigRow(
-            &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+        test_support::writeRawSecretRow(
+            &sdb.handle(), module::claude::settings_sync::kSidecarSecretService,
+            module::claude::settings_sync::kSidecarConfigKey,
                 R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_MODEL": ""},)"
                 R"( "envSnapshot": {"MY_KEY": "user"}})");
         auto r = readSettingsEnvForSync(paths);
@@ -1030,7 +1034,7 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
     // sidecar 损坏 → 空集 + 不失败、不阻断（反向读是只读路径，坏 sidecar 不该
     // 把用户挡在切换之外）
     {
-        test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
+        test_support::writeRawSecretRow(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey, "{broken");
         auto r = readSettingsEnvForSync(paths);
         DOCTEST_REQUIRE(r.ok);
         DOCTEST_CHECK(r.present);
@@ -1049,8 +1053,9 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
     d.write(paths.settingsFile,
             R"({"env": {"MY_KEY": "user", "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888", "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"}, "statusLine": "user-s"})");
     // 手工造只有 managedKeys + envSnapshot 的 sidecar（无 nonEnv 字段）
-    test_support::writeRawConfigRow(
-        &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+    test_support::writeRawSecretRow(
+        &sdb.handle(), module::claude::settings_sync::kSidecarSecretService,
+        module::claude::settings_sync::kSidecarConfigKey,
             R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": ""}, "envSnapshot": {"MY_KEY": "user"}})");
 
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
@@ -1072,8 +1077,9 @@ REGISTER_TEST(sync_restore_legacy_nonenv_snapshot,
     d.write(paths.settingsFile,
             R"({"env": {}, "statusLine": "managed-s", "hooks": {"h": 1}, "permissions": {"p": 1}})");
     // 旧 sidecar 形态：nonEnvKeys 记托管键，nonEnvSnapshot 只记原本存在的键原值
-    test_support::writeRawConfigRow(
-        &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+    test_support::writeRawSecretRow(
+        &sdb.handle(), module::claude::settings_sync::kSidecarSecretService,
+        module::claude::settings_sync::kSidecarConfigKey,
         R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": ""}, "envSnapshot": {}, "nonEnvKeys": {"statusLine": "", "hooks": ""}, "nonEnvSnapshot": {"statusLine": "user-s"}})");
 
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
@@ -1125,7 +1131,7 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     // 损坏（每次 syncTakeOver 都失败）→ 每次切 profile 都把 warnings_ **整体
     // 重写**一遍 = 修复前读者拿活引用时的重分配窗口
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
-    test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
+    test_support::writeRawSecretRow(&sdb.handle(), module::claude::settings_sync::kSidecarSecretService, module::claude::settings_sync::kSidecarConfigKey, "{broken");
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     DOCTEST_REQUIRE(!svc.lastSyncWarnings().empty());   // 预置：读者开局即有内容
@@ -1176,5 +1182,40 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     }
 
     svc.stopProxy();
+    return true;
+})
+
+// 批次 A-7：sidecar 曾存 app_config 表（整表随 GitHub 同步上传），而它的
+// envSnapshot 含用户原始 ANTHROPIC_AUTH_TOKEN。迁到 app_secrets（dump skip 表 +
+// 加密保护）后，应满足：① 快照确实落在 app_secrets；② app_config 无残留；
+// ③ 整库 dump 输出里搜不到 token 明文。
+REGISTER_TEST(sync_sidecar_not_in_dump,
+              "settings_sync: 接管快照不进 dump（token 不外泄，A-7）", {
+    using namespace module::claude;
+    test_support::TempDir d("xset7", kSyncTempDirPrefix);
+    SyncDb sdb("sync_xset7");
+    auto paths = makePaths(d, sdb.handle());
+    // 用户 env 里带真实 token（模拟接管前状态）
+    d.write(paths.settingsFile,
+            R"({"env": {"ANTHROPIC_AUTH_TOKEN": "sk-ant-SECRET-LEAK-CANARY", "MY_KEY": "user"}})");
+
+    Profile p;
+    p.modelsConfigJson = R"({"main": {"model": "claude-sonnet-4-5"}})";
+    p.extraEnvJson = "{}";
+    auto r = settings_sync::takeOver(p, 8899, paths);
+    DOCTEST_REQUIRE(r.ok);
+
+    // ① 落在 app_secrets
+    DOCTEST_CHECK(test_support::secretRowExists(
+        &sdb.handle(), settings_sync::kSidecarSecretService,
+        settings_sync::kSidecarConfigKey));
+    // ② app_config 无残留（旧位置）
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(
+        &sdb.handle(), settings_sync::kSidecarConfigKey));
+    // ③ 整库 dump 里搜不到 token 明文
+    auto dump = core::sql_dump::exportToString(sdb.handle(),
+                                              core::sql_dump::defaultSkipTables());
+    DOCTEST_REQUIRE(dump.isOk());
+    DOCTEST_CHECK(dump.value().find("SECRET-LEAK-CANARY") == std::string::npos);
     return true;
 })
