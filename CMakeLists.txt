@@ -550,6 +550,21 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying app icons to build directory"
 )
 
+# macOS 运行时窗口图标走独立的 icon-macos.png（含 Dock 规范留白，内容 79.1%）。
+# 理由：macOS Dock 与 Windows 任务栏的图标格子语义不同——Dock 用统一格子绘制，
+# 苹果自家图标内容只占约 80%，满幅图在同格里显得大一圈（2026-11-27 老板实测
+# 「Dock 栏应用图标偏大」）；Windows 无此约定（微软 App Icon 指南不含内容占比
+# 要求，只规定 48×48 网格与圆角半径），故 icon.png 对 Windows 保持满幅不动。
+# 覆盖方式 = macOS 专属 POST_BUILD 用同名覆盖（EUI dsl_app 默认 iconPathValue
+# 恒 "assets/icon.png"，不必改 C++），执行序在上一段之后 → 同名覆盖确定生效。
+if(APPLE)
+    add_custom_command(TARGET DevDesk POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/assets/icon-macos.png"
+            "$<TARGET_FILE_DIR:DevDesk>/assets/icon.png"
+        COMMENT "Copying macOS padded app icon (Dock 留白规范)")
+endif()
+
 # 图标源文件变更必须触发重链：上述两段 POST_BUILD 只在 DevDesk 链接时执行，
 # 增量构建只改 assets/ 里的图标而不重链 → build/assets 停留旧图。挂 LINK_DEPENDS
 # 使链接规则依赖全部 5 个图标源文件：源变 → 重链 → POST_BUILD 必跑。
@@ -561,7 +576,8 @@ set(DEVDESK_ICON_SOURCES
     "${CMAKE_SOURCE_DIR}/assets/tray-icon-template@2x.png"
     "${CMAKE_SOURCE_DIR}/assets/tray-icon-win.ico"
     "${CMAKE_SOURCE_DIR}/assets/icon.ico"
-    "${CMAKE_SOURCE_DIR}/assets/icon.png")
+    "${CMAKE_SOURCE_DIR}/assets/icon.png"
+    "${CMAKE_SOURCE_DIR}/assets/icon-macos.png")
 set_property(TARGET DevDesk APPEND PROPERTY LINK_DEPENDS "${DEVDESK_ICON_SOURCES}")
 
 # 随包字体（need:132 字体统一线）：6 文件平铺 assets 根——EUI resolveFontFilePath

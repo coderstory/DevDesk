@@ -78,7 +78,16 @@ fi
 # 补留白那步失败只降级为「满幅图标 + 明确警告」，不阻断打包（图标属外观，不该拦部署）。
 ICON_OUT="$APP_DIR/Contents/Resources/AppIcon.icns"
 ICON_SRC_ICNS="$PROJECT_DIR/installer/macos/AppIcon.icns"
-ICON_SRC_PNG="$BUILD_DIR/assets/icon.png"
+# 优先取 icon-macos.png（源图已含 Dock 规范留白：内容 79.1% ≈ 824/1024 档）。
+# 2026-11-27 起两端图标拆分：icon.png 对 Windows 保持满幅 96.1%（微软指南不含
+# 内容占比要求），macOS 专用图放 icon-macos.png，避免互相迁就。
+# 缺失 icon-macos.png 才回退 icon.png 走下方「补白脚本」旧路径。
+ICON_SRC_PNG="$BUILD_DIR/assets/icon-macos.png"
+ICON_PREPADDED=1
+if [ ! -f "$ICON_SRC_PNG" ]; then
+    ICON_SRC_PNG="$BUILD_DIR/assets/icon.png"
+    ICON_PREPADDED=0
+fi
 ICON_PAD_HELPER="$PROJECT_DIR/doc/scripts/pad_icon_canvas.py"
 ICON_PYTHON="${DEVDESK_PYTHON:-python3}"
 if [ -f "$ICON_SRC_ICNS" ]; then
@@ -95,7 +104,14 @@ elif [ -f "$ICON_SRC_PNG" ] && command -v sips >/dev/null 2>&1 && command -v ico
     # sips 的 --padColor 只吃 6 位十六进制 = 只能补不透明色，补不了透明留白，故走 Pillow。
     ICON_MASTER="$ICONSET_ROOT/icon-master-1024.png"
     ICON_RESIZE_SRC="$ICON_SRC_PNG"
-    if [ -f "$ICON_PAD_HELPER" ] && command -v "$ICON_PYTHON" >/dev/null 2>&1 \
+    if [ "$ICON_PREPADDED" = "1" ]; then
+        # 源图已含留白（icon-macos.png，内容 79.1%）：只放大到 1024 画布，不再补白。
+        # 再补一次会变成双重留白（内容压到 ~63%，Dock 里显得过小）。
+        if sips -z 1024 1024 "$ICON_SRC_PNG" --out "$ICON_MASTER" >/dev/null 2>&1; then
+            ICON_RESIZE_SRC="$ICON_MASTER"
+            echo "ℹ️  图标源已含 Dock 留白（icon-macos.png），仅放大到 1024 画布"
+        fi
+    elif [ -f "$ICON_PAD_HELPER" ] && command -v "$ICON_PYTHON" >/dev/null 2>&1 \
        && "$ICON_PYTHON" "$ICON_PAD_HELPER" "$ICON_SRC_PNG" "$ICON_MASTER" --target-px 824 >/dev/null 2>&1; then
         ICON_RESIZE_SRC="$ICON_MASTER"
         echo "ℹ️  图标已补画布留白（内容 824/1024，Dock 里与其他应用等大）"
