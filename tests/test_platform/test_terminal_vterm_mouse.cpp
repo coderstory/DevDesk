@@ -89,8 +89,9 @@ REGISTER_TEST(vtermMouseWheel, "vterm core: 滚轮 4/5 → SGR 64/65", {
     core.mouseButton(3, 5, 4, true, &reply);  // 上滚按下
     DOCTEST_CHECK(has(reply, "\x1b[<64;6;4M"));
     reply.clear();
-    core.mouseButton(3, 5, 4, false, &reply);  // 上滚松开
-    DOCTEST_CHECK(has(reply, "\x1b[<64;6;4m"));
+    // 滚轮抬手不产出（xterm/mac 桥同语义；libvterm 会编码出 Mm 双发，已在入口拦住）
+    core.mouseButton(3, 5, 4, false, &reply);
+    DOCTEST_CHECK(reply.empty());
     reply.clear();
     core.mouseButton(3, 5, 5, true, &reply);  // 下滚按下
     DOCTEST_CHECK(has(reply, "\x1b[<65;6;4M"));

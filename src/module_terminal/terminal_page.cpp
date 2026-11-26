@@ -353,7 +353,9 @@ GridLayout TerminalPage::compose(
             tabTitles_[static_cast<size_t>(i)] =
                 (s != nullptr && !s->title.empty())
                     ? s->title
-                    : ("终端 " + std::to_string(s ? s->titleNumber : i + 1));
+                    : (s != nullptr && !s->oscTitle.empty()
+                           ? s->oscTitle
+                           : ("终端 " + std::to_string(s ? s->titleNumber : i + 1)));
         }
     }
     std::vector<float> tabW(static_cast<size_t>(sessionCount), 0.0f);
@@ -689,7 +691,8 @@ GridLayout TerminalPage::compose(
                     lastClickPos_ = hit;
                     // Shift+点击：有选区时把头部延伸到点击处（终端惯例）
                     if (e.modifiers.shift && input_.hasSelection()) {
-                        input_.dragTo(hit);
+                        // Shift+点击：尾部延伸到落点（dragTo 只在拖动中有效，用 selectRange）
+                        input_.selectRange(input_.anchor(), hit);
                         (void)copySelection();
                         return;
                     }
@@ -1191,6 +1194,9 @@ GridLayout TerminalPage::compose(
                     .clip()
                     .content([&] {
                         float x = -tabScroll_;
+                        // 每帧按会话数重建（关标签后不残留旧项，拖拽判定的 mid 才准）
+                        tabX_.assign(static_cast<size_t>(std::max(0, sessionCount)), 0.0f);
+                        tabW_.assign(static_cast<size_t>(std::max(0, sessionCount)), 0.0f);
                         for (int i = 0; i < sessionCount; i++) {
                             const Session* s = controller.at(i);
                             const bool isActive = i == controller.activeIndex();
@@ -1201,10 +1207,6 @@ GridLayout TerminalPage::compose(
                                     tabTitles_[static_cast<size_t>(i)]; // bug248：复用缓存
                                 const float titleW = std::min(
                                     ui_kit::cachedTextWidth(title, titleFs, 400) + 2.0f, kTabTitleMaxW);
-                                if (static_cast<int>(tabX_.size()) <= i) {
-                                    tabX_.resize(static_cast<size_t>(i) + 1);
-                                    tabW_.resize(static_cast<size_t>(i) + 1);
-                                }
                                 tabX_[static_cast<size_t>(i)] = x;
                                 tabW_[static_cast<size_t>(i)] = w;
                                 ui.stack(id)
@@ -1238,13 +1240,15 @@ GridLayout TerminalPage::compose(
                                             // 参与判定（阈值同时喂给 EUI 的 click/drag 互斥），
                                             // 且只在落点越过某邻标签中线时换位一次
                                             .dragThreshold(tabDragPx)
-                                            .onDrag([this, ctrl, i, tabDragPx](
+                                            .onDrag([this, ctrl, i, tabDragPx, scale = screen.scale](
                                                         const core::dsl::DragEvent& d) {
                                                 if (std::fabs(d.totalX) < tabDragPx) return;
                                                 if (i >= static_cast<int>(tabX_.size())) return;
-                                                const float dropX =
-                                                    tabX_[static_cast<size_t>(i)] +
-                                                    static_cast<float>(d.totalX);
+                                                // d.totalX 是物理 px（EUI 契约），布局坐标是逻辑 px
+                                                const float logicalDx =
+                                                    static_cast<float>(d.totalX) /
+                                                    (scale > 0.0f ? scale : 1.0f);
+                                                const float dropX = tabDragStartX_ + logicalDx;
                                                 int target = i;
                                                 for (int k = 0; k < static_cast<int>(tabX_.size());
                                                      ++k) {
@@ -1258,8 +1262,11 @@ GridLayout TerminalPage::compose(
                                             // （TAB 惯例）。onClick 依赖「press/release 同目标 +
                                             // 未发生过位移」，手势链上任一环节抢走都不触发；按下
                                             // 路径不依赖 release，单击切换稳定。双击改名语义不变。
-                                            .onPress([this, ctrl, i](const eui::PointerEvent&,
+                                            .onPress([this, ctrl, i](const eui::PointerEvent& ev,
                                                                      const eui::Rect&) {
+                                                tabDragStartX_ =
+                                                    static_cast<float>(ev.x) /
+                                                    (screen.scale > 0.0f ? screen.scale : 1.0f);
                                                 const auto now = std::chrono::steady_clock::now();
                                                 const double dt = std::chrono::duration<double>(
                                                                       now - lastTabClickAt_)

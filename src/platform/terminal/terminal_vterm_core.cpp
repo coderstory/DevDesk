@@ -569,6 +569,9 @@ void VtermCore::mouseMove(int row, int col, bool buttonDown, std::string* replyO
 
 void VtermCore::mouseButton(int row, int col, int button, bool pressed,
                             std::string* replyOut) {
+    // 滚轮是瞬时事件：只报按下（xterm 同语义；libvterm 4/5 的 pressed=false 也会编码，
+    // 会和 mac 桥/xterm 产生 `Mm` 双发差异）——抬轮直接忽略。
+    if (button >= 4 && !pressed) return;
     // 契约按钮号 → libvterm（mouse.c:73-84 只认 1..8）：
     // 0/1/2 = 左/中/右 → 1/2/3；4/5 = 上/下滚原样（libvterm 4=上 5=下）
     int libButton = 0;

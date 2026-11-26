@@ -279,10 +279,12 @@ const Session* SessionController::at(int index) const {
 
 void SessionController::pollAll() {
     drainSpawnOutcomes_(); // bug406：后台建会话结果先接入，本帧即可渲染新会话
-    for (Session& s : sessions_) {
+    for (size_t si = 0; si < sessions_.size(); ++si) {
+        Session& s = sessions_[si];
         if (s.state != SessionState::Running || !s.handle) continue;
         // bell 是边沿量：每次巡检都取，不受「本帧有无新输出」影响
         s.bells += s.handle->takeBells();
+        if (static_cast<int>(si) == activeIndex_) s.bells = 0; // 正在看的会话不提示
         const int gen = s.handle->pendingGeneration();
         if (gen == s.lastGeneration) {
             // 已退出但帧未收割的面（generate 不再变的退出）也要补收割
@@ -298,10 +300,11 @@ void SessionController::pollAll() {
         s.lastGeneration = gen;
         s.frame = s.handle->poll();
         // M2 Task 6：OSC 0/2 标题 → 标签名（空值/未接后端保持原名；改名代数触发页缓存重建）
-        const std::string oscTitle = s.handle->title();
-        if (!oscTitle.empty() && oscTitle != s.title) {
-            s.title = oscTitle;
-            ++titleRevision_;
+        // OSC 标题只写 oscTitle：用户改名（title）优先，不能被每帧 OSC 覆盖
+        const std::string handleTitle = s.handle->title();
+        if (!handleTitle.empty() && handleTitle != s.oscTitle) {
+            s.oscTitle = handleTitle;
+            if (s.title.empty()) ++titleRevision_; // 展示名实际变化才刷新缓存
         }
         int32_t code = 0;
         if (s.handle->exited(&code)) {

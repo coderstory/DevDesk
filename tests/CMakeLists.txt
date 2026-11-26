@@ -777,6 +777,9 @@ foreach(_probe_source ${_devdesk_probe_sources})
         add_test(NAME ${_probe_name} COMMAND ${_probe_name})
     endif()
     set_tests_properties(${_probe_name} PROPERTIES LABELS "probe")
+    # 并行探针：每个探针独立数据根（覆盖不走 probe_harness 的探针）
+    set_tests_properties(${_probe_name} PROPERTIES
+        ENVIRONMENT "DEVDESK_DATA_ROOT=${CMAKE_BINARY_DIR}/probe-data/${_probe_name}")
     # 无显示环境（CI runner 不在 WindowServer / 桌面会话里）→ 探针以
     # probe::kSkipExitCode(77) 退出，这里把它登记成 ctest 的 Skipped 而非
     # Failed。**判据在 tests/probes/probe_harness.h 的金丝雀逻辑里**（裸 GLFW

@@ -64,7 +64,8 @@ struct Session {
     int scrollOffset = 0;      // scrollback 回滚偏移（每会话记忆，0=贴底）
     float scrollRemainder = 0.0f;
     int titleNumber = 0;       // 「终端 N」，进程内递增不复用
-    std::string title;         // 网页改名后的展示名；空 = 用「终端 N」
+    std::string title;         // 用户/网页改名（优先展示）；空 = 回落到 oscTitle / 「终端 N」
+    std::string oscTitle;      // OSC 0/2 上报的窗口标题（TUI/shell 自行设置；不覆盖用户改名）
     uint32_t bells = 0;        // 未查看的 bell 次数（后台完成提示；切到该会话即清零）
 };
 

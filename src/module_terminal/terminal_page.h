@@ -142,6 +142,7 @@ private:
     std::chrono::steady_clock::time_point lastClickAt_{};
     CellPos lastClickPos_{};
     int clickStreak_ = 0;
+    float tabDragStartX_ = 0.0f; // 标签拖拽起点（按下帧逻辑 x）
     // M2 Task 4：标签改名/右键/拖拽排序
     std::vector<float> tabX_;
     std::vector<float> tabW_;

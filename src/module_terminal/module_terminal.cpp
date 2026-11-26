@@ -6,6 +6,7 @@
 
 #include "core/database.h"
 #include "core/logging.h"
+#include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
 #include "platform/terminal/terminal_backend.h"
@@ -81,7 +82,11 @@ void TerminalModule::requestQuitConfirm() { page_.requestQuitConfirm(); }
 bool terminalQuitGuard() {
     if (g_terminalModule == nullptr) return true;
     if (!g_terminalModule->needsQuitConfirm()) return true;
-    // 有 Running 会话：弹页内确认并拦截本次退出；确认后关全部会话再 requestExit
+    // 有 Running 会话：确认卡画在终端页里，用户可能停在别的页（Router 只画当前页），
+    // 先导航到终端页，否则「退不掉且无任何可见反馈」。
+    if (::core::Router* router = ::core::appRouter(); router != nullptr) {
+        router->navigateTo(::core::PageId::Terminal);
+    }
     g_terminalModule->requestQuitConfirm();
     return false;
 }

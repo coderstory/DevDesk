@@ -811,8 +811,8 @@ if [ "$RUN_TEST" = "1" ]; then
     # --filter 与 --parallel-tests 并用回退串行（审计 2026-11-24 第 3 条）：过滤词圈定
     # 的是定点排查集合，片级哈希会把它打散、其余片 0 命中退 2 → 并行路径必红（假红）。
     # 串行跑同一集合语义等价且无此洞——回退是唯一两全落点。
-    echo "⏭ --filter 与 --parallel-tests 并用：回退串行跑同一过滤集合（过滤定点集不需要分片）"
-    PARALLEL_TESTS=1
+    echo "⏭ --filter 与并行分片并用：回退串行跑同一过滤集合（过滤定点集不需要分片）"
+    PARALLEL_TESTS=0
   fi
   if [ "$PARALLEL_TESTS" = "1" ]; then
     # need505 并行分片：N 进程并发跑 --shard=i/N，汇总一行 Total。红绿判定仍只认退出
