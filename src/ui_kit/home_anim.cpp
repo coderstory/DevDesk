@@ -137,11 +137,11 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
         .build();
     // 上标签（垫板内水平居中，风格与主行统一）
     const float labelW =
-        core::TextPrimitive::measureTextWidth("RECENT · 最近打开", {}, 15.0f, 600.0f);
+        core::TextPrimitive::measureTextWidth("TODAY · 今日一句", {}, 15.0f, 600.0f);
     ui.text("home.anim.typer.label")
         .position(px + (plateW - labelW) * 0.5f, py - 26.0f)
         .size(labelW + 8.0f, 18.0f)
-        .text("RECENT · 最近打开")
+        .text("TODAY · 今日一句")
         .fontSize(15.0f)
         .fontWeight(600)
         .color(eui::Color("#6B7280"))

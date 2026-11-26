@@ -57,12 +57,17 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 |---|---|
 | `--clean` | 全量重建（默认增量） |
 | `--release` | Release，构建目录切到 `build-release/`（与 Debug 互不覆盖） |
-| `--dev` | **开发内循环**（成本纪律 2026-11-01）：增量构建 + 定向 filter（无 filter 则纯构建）——doctest 全量/probe/守卫链/启动全不跑；**收口/QA/发版必须不带它完整跑一次** |
+| `--dev` | **开发内循环**（2026-11-26 老板令）：增量构建 + 定向 filter；**开发阶段只编译不跑用例**（测试代码同批写全）——doctest 全量/probe/守卫链/启动全不跑；**N 个功能全部开发完毕后只不带它完整跑一次**，之后修复阶段只跑定向 filter |
 | `--no-test` / `--no-run` | 跳过测试 / 不启动 app（守卫链仍跑） |
 | `--install` | 仅 macOS：重组 `.app` 装到 `/Applications`，装完校验 sha256 |
 | `--filter X` | 只跑描述含 X 的用例（支持 `file:子串` 按源文件圈定） |
 
-**构建/测试成本纪律（2026-11-01 老板令：禁止「再跑一遍全量当安全证明」的认知偏差）**：开发内循环一律 `--dev`（±`--filter`）——改了什么测什么；同一环节不重复构建（上环节产物未失效直接复用）；**全量 doctest+probe+守卫链只在阶段节点跑**（阶段性用户需求完成 / 需求全开发完毕 / bug 全修完 / 发版——单条需求、单批次开发完不触发）；验证的价值在断言与证据物，不在跑的次数。
+**开发/测试节奏（2026-11-26 老板令，取代 2026-11-01「阶段节点跑全量」口径）**：
+- **开发阶段只做编码**：业务功能与测试代码同批写完；每个功能块只保证**构建通过**（`--dev --no-test --no-run`，测试目标一并编译），不逐任务跑用例、不跑红绿。
+- **N 个功能全部开发完毕后，只跑一次全量**：doctest + probe + 守卫链（`bash scripts/build-test-run.sh`，不带 `--dev`）。一个开发批次只允许一次全量。
+- **全量之后的修复阶段只跑定向用例**（`--filter 用例名` / `--filter file:子串`），不再重复全量。
+- **例外**：发版/CI 门禁，或改动涉及构建接线/平台底座，才允许再加一次全量，并在汇报中写明原因。
+- **禁止直接调用 `cmake` / `cmake --build` / `ctest`**（门禁硬阻断）：构建与测试一律经 `scripts/build-test-run.sh`；UI probe 走既有 `ctest -L probe` 例外；并发构建用 `scripts/with-build-lock.sh` 串行。
 
 **本机安装/更新口径（2026-11-03 老板令）**：没有特别说明时**不走 Release、不打包**——关闭 app 后直接把 Debug 产物（`build/DevDesk.exe` + `build/assets/` + `THIRD-PARTY-NOTICES.md`）覆盖复制到用户安装目录 `%LOCALAPPDATA%\Programs\DevDesk\`，装完校验并重启。Debug 产物不存在/过期就先 `bash scripts/build-test-run.sh --dev` 构建。**Release 构建与安装包（`scripts/package-windows.sh` / Inno）后续只在 CI 做**，或用户当次明确要求时才做。
 

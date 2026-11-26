@@ -99,6 +99,35 @@ inline float reviewTabW(float measuredTextW) {
 // M11 配置组头摘要宽：x+240 起，右让 chevron 40 + 隙 60。
 inline float groupSumW(float w) { return w - 340.0f; }
 
+// bug476：配置视图「安装镜像源」组几何（compose 与单测同一口径）。坐标为组体
+// 顶相对逻辑 px（compose 经 scaled），动作钮与输入框恒 8px 间隙。
+struct MirrorGroupGeometry {
+    float bodyH;
+    float hintY;
+    float label1Y;
+    float input1Y;
+    float label2Y;
+    float input2Y;
+    float noteY;
+    float inputW;
+    float actionX;  // 相对组内容左缘 x
+    float actionW;
+};
+inline MirrorGroupGeometry mirrorGroupGeometry(float innerW) {
+    MirrorGroupGeometry g;
+    g.bodyH = 236.0f;
+    g.hintY = 16.0f;
+    g.label1Y = 42.0f;
+    g.input1Y = 66.0f;
+    g.label2Y = 118.0f;
+    g.input2Y = 142.0f;
+    g.noteY = 194.0f;
+    g.inputW = innerW - 104.0f;
+    g.actionX = 16.0f + innerW - 96.0f;
+    g.actionW = 88.0f;
+    return g;
+}
+
 // M13 提案卡右端摘要：窄窗档 190→120（佐证先饿，#195 §7）。
 inline constexpr float kProposalMetaNarrowW = 560.0f;
 inline float proposalMetaW(float w) { return w < kProposalMetaNarrowW ? 120.0f : 190.0f; }

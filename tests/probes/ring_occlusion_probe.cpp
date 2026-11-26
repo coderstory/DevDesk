@@ -42,7 +42,12 @@ namespace {
 struct Rgb {
     int r, g, b;
 };
-bool isBlackish(const Rgb& c) { return c.r <= 60 && c.g <= 60 && c.b <= 60; }
+// 非整数 DPI 缩放（本机 125%）下 1.5 逻辑px 中线落在两个物理像素之间：线被
+// 抗锯齿摊成 75%/50% 覆盖，单点采样已是灰边（r≈61/122）。取线覆盖列里最暗
+// 的一列，阈值放到 90 容纳该覆盖度；线真被盖住时该列仍是亮底（>200）。
+bool isDarkLine(const Rgb& c) {
+    return c.r >= 0 && c.r <= 90 && c.g <= 90 && c.b <= 90;
+}
 
 // 树内 max-z 元素诊断（subtreeMaxZIndex 达上界的元素 id 列表，截断）
 void collectMaxZ(const core::dsl::Element* e, int maxZ, std::string& out) {
@@ -141,7 +146,15 @@ int main(int argc, char* argv[]) {
         int black = 0, total = 0;
         for (float ly = y0; ly < y1; ly += 1.0f) {
             ++total;
-            if (isBlackish(sample(rgba, iw, x, ly))) ++black;
+            Rgb darkest{255, 255, 255};
+            for (float lx = x - 0.5f; lx <= x + 0.5f; lx += 0.5f) {
+                const Rgb c = sample(rgba, iw, lx, ly);
+                if (c.r >= 0 && c.r + c.g + c.b <
+                                    darkest.r + darkest.g + darkest.b) {
+                    darkest = c;
+                }
+            }
+            if (isDarkLine(darkest)) ++black;
         }
         std::cout << "scan " << tag << " total=" << total << " black=" << black
                   << "\n";

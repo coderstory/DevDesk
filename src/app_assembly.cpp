@@ -8,7 +8,6 @@
 #include "core/database.h"
 #include "core/notepad_file_types.h"  // 扩展名单一真源（漏斗/托盘/第二实例判据）
 #include "mcp_service_bridge.h"
-#include "module_markdown/md_file_open.h"  // captureFileIntoNotesDir（C-3 .md 漏斗改道）
 #include "module_notepad/notepad_module.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
@@ -247,8 +246,7 @@ void setOsOpenFunnel(std::function<void(const std::string& path)> funnel) {
 
 bool secondInstancePathsNeedMainWindow(const std::vector<std::string>& paths) {
     for (const auto& path : paths) {
-        // need:380 C-3：.md/.markdown → 主窗笔记页承接，主窗必须在场
-        if (core::notepad::isMarkdownExtension(path)) return true;
+        // bug:544：.md/.markdown 同走独立记事本窗（C-3 改道已撤销），不唤主窗
         if (!core::notepad::isNotepadExtension(path)) return true;
     }
     return false;
@@ -281,33 +279,19 @@ void resetSecondInstanceFilesForTest() {
 }
 
 // 记事本改造 need:273：pathHasMarkdownExtension / dispatchPageForFile 已退役——
-// 扩展名判据统一 core::notepad::isNotepadExtension 单一真源。need:380 wave5-d
-// C-3 修订：OS 双击 .md 改由主窗笔记页承接（见 dispatchFileOpen），其余清单
-// 扩展名仍送达记事本窗。
+// 扩展名判据统一 core::notepad::isNotepadExtension 单一真源。bug:544：need:380
+// C-3「OS 双击 .md 改道主窗笔记页」已撤销，.md/.markdown 回独立记事本窗。
 
 void dispatchFileOpen(::core::Router* router, const std::string& path,
                       const std::filesystem::path& notesDir) {
     if (router == nullptr || path.empty()) return;
+    // 签名保留（调用方稳定）：notesDir 自 bug:544 起本函数不再使用——.md 亦进
+    // 记事本窗，OS 漏斗不拷贝进笔记目录（应用内笔记 "open:" 通道不经本函数）。
+    (void)notesDir;
     // OS 语义漏斗。判据=调用点即漏斗：全仓 OS 入口（main 启动 argv / Apple
     // Event / 第二实例 drain）都汇于本函数。
-    // need:380 wave5-d C-3：.md/.markdown → 主窗笔记页承接（Router "open:<相对
-    // 路径>" 负载，md_file_open.h 既有通道）；目录外文件拷贝进笔记目录
-    //（captureFileIntoNotesDir）。笔记页未注册（模块被关）→ 兜底记事本窗，
-    // 打开能力不因模块门控丢失。
-    if (core::notepad::isMarkdownExtension(path) &&
-        router->isRegistered(::core::PageId::Markdown)) {
-        auto rel = module::markdown::captureFileIntoNotesDir(notesDir, path);
-        if (rel.isOk()) {
-            router->navigateTo(::core::PageId::Markdown, "open:" + rel.value());
-            return;
-        }
-        LOG_WARN("文件打开分发：笔记目录装载失败，落笔记页 — " + path +
-                 " (" + rel.errorMessage() + ")");
-        router->navigateTo(::core::PageId::Markdown);
-        return;
-    }
-    // 记事本清单扩展名 → 独立记事本窗（查重聚焦/新窗在 session 层内收）；
-    // 记事本窗不依赖任何 Router 注册态（独立窗不进 Router）。
+    // 记事本清单扩展名（含 .md/.markdown）→ 独立记事本窗（查重聚焦/新窗在
+    // session 层内收）；记事本窗不依赖任何 Router 注册态（独立窗不进 Router）。
     if (core::notepad::isNotepadExtension(path)) {
         module::notepad::openNotepadWindow(path);
         return;
@@ -326,8 +310,6 @@ void dispatchFileOpen(::core::Router* router, const std::string& path,
 // handleAppleEventOpenFile 冷启送达）共用，不复制两份。温开门槛内聚在此：主窗
 // 首帧 compose 后送达 = 温开，不再 arm（调用方无须自行判断）。
 void armTrayForNotepadAssociation(const std::string& path, const char* channel) {
-    // need:380 C-3：.md → 主窗笔记页承接，主窗不得保持托盘态
-    if (core::notepad::isMarkdownExtension(path)) return;
     if (!core::notepad::isNotepadExtension(path)) return;
     if (!mainWindowStartupArmingWindowOpen()) return;  // 温开不抢隐藏
     g_minimizedStartupPending = true;

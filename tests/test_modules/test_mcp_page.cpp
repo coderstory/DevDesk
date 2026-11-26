@@ -858,6 +858,25 @@ struct MemoryBridgeGuard {
     MemoryBridgeGuard& operator=(const MemoryBridgeGuard&) = delete;
 };
 
+// 「破坏性工具」桥 recording 桩（同 MemoryBridgeGuard：RAII 复位防串扰）。
+bool g_allowDestructive = false;
+bool allowDestructiveRec() { return g_allowDestructive; }
+core::Result<void> setAllowDestructiveRec(bool on) {
+    g_allowDestructive = on;
+    return core::Result<void>::ok();
+}
+struct DestructiveBridgeGuard {
+    DestructiveBridgeGuard() {
+        app::mcp::setDestructiveHandlers(&allowDestructiveRec,
+                                         &setAllowDestructiveRec);
+    }
+    ~DestructiveBridgeGuard() {
+        app::mcp::setDestructiveHandlers(nullptr, nullptr);
+    }
+    DestructiveBridgeGuard(const DestructiveBridgeGuard&) = delete;
+    DestructiveBridgeGuard& operator=(const DestructiveBridgeGuard&) = delete;
+};
+
 // 开关轨道色：checked == tokens.primary（SwitchStyle.on），unchecked 为灰混合。
 bool trackIsPrimary(const core::dsl::Element* track) {
     const auto& t = core::theme::current();
@@ -949,10 +968,101 @@ REGISTER_TEST(mcp_page_memory_module_row,
     return true;
 })
 
+// 防：破坏性工具行缺件 / 开关不读桥 / 失败反馈缺失或视觉不回弹 / 图标误用记忆行码点。
+REGISTER_TEST(mcp_page_destructive_row,
+              "mcp_page: 破坏性工具行 64 高/标题说明/开关；桥失败红字回弹；桥成功点亮", {
+    core::mcp::McpToolRegistry reg;
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    {
+        eui::Ui ui;  // 默认桩（未装配）：开关 = 关
+        composeFrame(mod, ui, screen, "mcp_drow_1");
+        const auto* row = ui.find("mcp.module.destructive");
+        DOCTEST_REQUIRE(row != nullptr);
+        DOCTEST_CHECK_EQ(row->width.value, 1136.0f);
+        DOCTEST_CHECK_EQ(row->height.value, 64.0f);
+        const auto* title = ui.find("mcp.module.destructive.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("破坏性工具"));
+        const auto* desc = ui.find("mcp.module.destructive.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("MCP 客户端") != std::string::npos);
+        const auto* toggle = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        const auto* track = ui.find("mcp.module.destructive.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_FALSE(trackIsPrimary(track));  // 默认桩 = 关
+        // 图标必须是警示三角（fa-triangle-exclamation），不得与记忆行 fa-brain 撞码点
+        const auto* icon = ui.find("mcp.module.destructive.icon");
+        DOCTEST_REQUIRE(icon != nullptr);
+        DOCTEST_CHECK_EQ(icon->text, eui::utf8(0xF071));
+        const auto* memIcon = ui.find("mcp.module.memory.icon");
+        DOCTEST_REQUIRE(memIcon != nullptr);
+        DOCTEST_CHECK(icon->text != memIcon->text);
+    }
+    {
+        eui::Ui ui;  // 桥未装配时点击：setAllowDestructive fail → 红字 + 轨道回弹
+        composeFrame(mod, ui, screen, "mcp_drow_2");
+        const auto* toggle2 = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle2 != nullptr);
+        DOCTEST_REQUIRE(toggle2->onClick != nullptr);
+        toggle2->onClick();
+        composeFrame(mod, ui, screen, "mcp_drow_3");
+        const auto* desc = ui.find("mcp.module.destructive.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("保存失败") != std::string::npos);
+        const auto& t = core::theme::current();
+        DOCTEST_CHECK(desc->textColor.r == t.colors.errorText.r);
+        const auto* track = ui.find("mcp.module.destructive.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_FALSE(trackIsPrimary(track));  // 回弹
+    }
+    {
+        DestructiveBridgeGuard guard;
+        g_allowDestructive = false;
+        eui::Ui ui;  // 桥已装配：点击 → 成功 → 下一帧点亮、红字让位回说明
+        composeFrame(mod, ui, screen, "mcp_drow_4");
+        const auto* toggle2 = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle2 != nullptr);
+        DOCTEST_REQUIRE(toggle2->onClick != nullptr);
+        toggle2->onClick();
+        DOCTEST_CHECK_TRUE(g_allowDestructive);  // onChange(true) 真到达桥
+        composeFrame(mod, ui, screen, "mcp_drow_5");
+        const auto* track = ui.find("mcp.module.destructive.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_TRUE(trackIsPrimary(track));  // 点亮
+        const auto* desc = ui.find("mcp.module.destructive.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("保存失败") == std::string::npos);
+    }
+    return true;
+})
+
 // ── need244：「安装到 Claude Code」按钮 ──
 // 防的事故：三钮重叠遮挡、服务未运行仍可点安装（写出连不上的地址）、
 // 没有 ~/.claude.json 时凭空创建文件、装/卸后按钮态不刷新。
 namespace {
+
+// need244 点击链夹具：贴近真实 ~/.claude.json 形态（自身状态 + 既有 server，无 devdesk）
+const char* kCcClickFixture = R"({
+  "numStartups": 183,
+  "machineID": "abc123",
+  "installMethod": "npm",
+  "userID": "u-demo",
+  "firstStartTime": "2026-01-02T03:04:05.000Z",
+  "hasCompletedOnboarding": true,
+  "projects": {"/tmp/a": {"allowedTools": ["Read", "Write"], "history": [{"display": "hi"}]}},
+  "oauthAccount": {"emailAddress": "demo@example.com", "organizationName": "demo"},
+  "customApiKeyResponses": {"approved": [], "rejected": []},
+  "tipsHistory": {"new-user-warmup": 1},
+  "autoUpdates": false,
+  "mcpServers": {
+    "codegraph": {"type": "stdio", "command": "codegraph", "args": ["serve"]},
+    "rea": {"type": "http", "url": "http://127.0.0.1:7777/mcp"},
+    "fetch": {"type": "stdio", "command": "fetch"}
+  }
+})";
 
 // 隔离用户真实 ~/.claude.json：DEVDESK_CLAUDE_CONFIG_DIR 覆盖到临时目录，
 // 目录里按需放/不放 .claude.json（paths::claudeConfigFile 的覆盖契约）
@@ -1172,17 +1282,12 @@ REGISTER_TEST(mcp_page_host_btn_gating,
 // 整份复制进隔离目录后走**真按钮点击**（onClick → toggleClaudeInstall →
 // installServerFile/removeServerFile），断言安装/卸载两侧内容。不碰真文件。
 REGISTER_TEST(mcp_page_claude_click_on_real_config_copy,
-              "mcp_page: need244 真点击安装/卸载（真实 105KB 配置副本），其余 51 个顶层键与既有 server 全保", {
-    // 审计 P1-2：真文件定位走生产契约（Win 用 USERPROFILE）；必须在 CcConfigGuard
-    // 之前取——守卫设置 DEVDESK_CLAUDE_CONFIG_DIR 后 paths 会指到隔离目录
-    const std::filesystem::path real = core::paths::claudeConfigFile();
-    if (!std::filesystem::exists(real)) {
-        DOCTEST_SKIP("本机无 ~/.claude.json");
-    }
-    const std::string original = core::readTextFile(real);
-    if (original.size() <= 1000) {
-        DOCTEST_SKIP("真配置过小，样本不具代表性");  // 审计 P2-15：硬阈值改跳过
-    }
+              "mcp_page: need244 真点击安装/卸载（自洽夹具副本），其余顶层键与既有 server 全保", {
+    // 2026-11-25 改为自洽夹具（kCcClickFixture）：本机真实 ~/.claude.json 已被
+    // 运行中的 App 装上 devdesk（8931），页头初始态变「从 Claude Code 卸载」、真点击
+    // 走卸载而非安装（环境漂移，非实现回归）。夹具保留原防回归判据：安装只加
+    // devdesk，其余顶层键/既有 server 全保；卸载回到原状。
+    const std::string original = kCcClickFixture;
 
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;

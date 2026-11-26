@@ -192,6 +192,27 @@ if command -v ccache >/dev/null 2>&1; then
   CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 fi
 
+# 链接器：Windows 侧优先 lld（需 CMake ≥3.29 的 CMAKE_LINKER_TYPE；缺 lld 或版本
+# 不足则显式 BFD——不显式指定会残留上次的 LLD 缓存值，每次增量都误判「链接器变化」
+# 再 configure 一遍）。macOS 保持 Apple ld64，不在这里改。
+LINKER_ARGS=()
+DESIRED_LINKER_TYPE=""
+if [ "$DEVDESK_OS" = "windows" ]; then
+  # 取版本：管道失败（cmake 不在 PATH）时置空，走 BFD 分支，不因 set -e/pipefail 静默退出。
+  CMAKE_VER="$(cmake --version 2>/dev/null | sed -n '1s/^cmake version \([0-9][0-9.]*\).*$/\1/p' || true)"
+  LINKER_TYPE_OK=0
+  if [ -n "$CMAKE_VER" ] && [ "$(printf '3.29\n%s\n' "$CMAKE_VER" | sort -V | head -n1)" = "3.29" ]; then
+    LINKER_TYPE_OK=1
+  fi
+  if [ "$LINKER_TYPE_OK" = "1" ] && command -v ld.lld >/dev/null 2>&1; then
+    LINKER_ARGS=(-DCMAKE_LINKER_TYPE=LLD)
+    DESIRED_LINKER_TYPE="LLD"
+  else
+    LINKER_ARGS=(-DCMAKE_LINKER_TYPE=BFD)
+    DESIRED_LINKER_TYPE="BFD"
+  fi
+fi
+
 # 构建类型：默认 Debug；--release 或 DEVDESK_BUILD_TYPE 切别的类型。只认 Debug / Release
 # 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
@@ -483,7 +504,7 @@ if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
 fi
 NEED_CONF_LIVE=0
 if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
-  CACHED_LIVE="$(grep -m1 "^DEVDESK_BUILD_LIVE_TOOLS:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r')"
+  CACHED_LIVE="$(grep -m1 "^DEVDESK_BUILD_LIVE_TOOLS:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r' || true)"
   if [ "$CACHED_LIVE" != "$BUILD_LIVE_CMAKE" ]; then
     echo "── live 开关变化（缓存 ${CACHED_LIVE:-无} → 本次 ${BUILD_LIVE_CMAKE}），补一次 configure ──"
     NEED_CONF_LIVE=1
@@ -491,13 +512,22 @@ if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
 elif [ -f "$BUILD_DIR/build.ninja" ]; then
   NEED_CONF_LIVE=1
 fi
-if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ] || [ "$NEED_CONF_PROBES" = "1" ] || [ "$NEED_CONF_LIVE" = "1" ]; then
+NEED_CONF_LINKER=0
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+  CACHED_LINKER="$(grep -m1 "^CMAKE_LINKER_TYPE:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r' || true)"
+  if [ "$CACHED_LINKER" != "$DESIRED_LINKER_TYPE" ]; then
+    echo "── 链接器变化（缓存 ${CACHED_LINKER:-默认} → 本次 ${DESIRED_LINKER_TYPE:-默认}），补一次 configure ──"
+    NEED_CONF_LINKER=1
+  fi
+fi
+if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ] || [ "$NEED_CONF_PROBES" = "1" ] || [ "$NEED_CONF_LIVE" = "1" ] || [ "$NEED_CONF_LINKER" = "1" ]; then
   CONF_OUT=$(cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DEUI_NEO_DIR="$EUI_DIR" \
     -DDEVDESK_BUILD_PROBES="$BUILD_PROBES_CMAKE" \
     -DDEVDESK_PROBE_SUBSET="$BUILD_PROBE_SUBSET" \
     -DDEVDESK_BUILD_LIVE_TOOLS="$BUILD_LIVE_CMAKE" \
     "${CCACHE_ARGS[@]}" \
+    "${LINKER_ARGS[@]}" \
     "${OPENSSL_ARGS[@]}" 2>&1) || {
     echo "$CONF_OUT" | tail -30
     echo "❌ configure 失败（上方为错误摘要）"; exit 1; }

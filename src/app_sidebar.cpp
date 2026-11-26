@@ -250,10 +250,11 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     // 40 / macOS 系统标题栏 30，compose 的 bodyScreen 已统一扣除）。离散三档、档位
     // 切换无过渡动画：
     //   正常档 H≥712：topPad 32 / brandNavGap 28 / gap 4 / itemH 40（导航起点见
-    //     navStart）、钮 40 / 预留区 56（§10.2；bug144/146 两轮放大定稿 dd0f28db）
+    //     navStart）、钮 34.6 / 预留区 50.6（§10.2；bug144/146 两轮放大定稿 dd0f28db）
     //   紧凑档 680≤H<712：16 / 16 / 4 / 40（起点 88；最小窗 1200×720 → H=680 落此
-    //     档）、钮 36 / 预留区 52
-    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80）、钮 36 / 预留区 52
+    //     档）、钮 31.2 / 预留区 47.2
+    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80）、钮 31.2 / 预留区 47.2
+    // 2026-11-25 老板令：面积缩小 25%（直径 ×0.866）——三档钮径与预留区同步下缩。
     // logo 不再随高三档写死（bug165 v3 = need241 §9.3，见下方公式）；钮径/预留区
     // 仍随高三档（两态一致不回退）。压缩顺序：先压品牌区上下留白 → 再压行距 →
     // 最后压行高。分档几何用常量不走 token：矮窗帧 theme::setWindowHeight 会重建
@@ -263,20 +264,21 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     float brandNavGap = 28.0f;
     float gap = 4.0f;
     float itemH = ui_kit::kNavItemH;  // 40（正常/紧凑档）
-    float toggleSize = 40.0f;     // 2026-11-06 老板三轮实测：32→36→40（mac 观感仍偏小）
-    float toggleZoneH = 56.0f;    // 预留区随钮同步 +4（钮径 + 上下各 8）
+    float toggleSize = 34.6f;     // 2026-11-06 老板三轮实测：32→36→40（mac 观感仍偏小）
+    // 2026-11-25 老板令：面积缩小 25%（直径 ×0.866）→ 40→34.6
+    float toggleZoneH = 50.6f;    // 预留区随钮同步（钮径 + 上下各 8）
     if (availH < 680.0f) {
         topPad = 12.0f;
         brandNavGap = 12.0f;
         gap = 2.0f;
         itemH = 36.0f;
-        toggleSize = 36.0f;
-        toggleZoneH = 52.0f;
+        toggleSize = 31.2f;       // 36 ×0.866（面积 -25%）
+        toggleZoneH = 47.2f;
     } else if (availH < 712.0f) {
         topPad = 16.0f;
         brandNavGap = 16.0f;
-        toggleSize = 36.0f;
-        toggleZoneH = 52.0f;
+        toggleSize = 31.2f;       // 36 ×0.866（面积 -25%）
+        toggleZoneH = 47.2f;
     }
     // bug165（need241 设计 §9.3）：logo 随窗口自适应 = clamp(min(宽度档, 高度档),
     // 40, 64)，手动折叠态（72px 带）追加上限 48。宽度档按窗口逻辑宽 W（本函数

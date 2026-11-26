@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  need#545 桌面宠物「小绿灵」原型：参数与 docs/design/2026-11-25-need545-desktop-pet-design.md 对齐。
+  零外部依赖：样式/脚本内联，无图片、无字体文件、无网络请求。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌宠「小绿灵」原型 — need#545</title>
+<style>
+  :root{
+    --primary:#36D399;
+    --primary-light:#07C160;
+    --ink:#06251A;
+    --blush:#DE8FB4;
+    --body-top:#5BE3B4;
+    --body-bottom:#2FBF8B;
+    --leaf:#7CEFC7;
+    --outline:rgba(11,91,60,.28);
+    --leaf-outline:rgba(11,91,60,.35);
+    --shell-bg:#141A17;
+    --shell-panel:#1D2622;
+    --shell-border:#2E3A34;
+    --shell-text:#E9F2ED;
+    --shell-muted:#93A69C;
+    --ui-radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    background:var(--shell-bg);color:var(--shell-text);
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  /* ── demo 外壳（非设计对象） ── */
+  .topbar{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:12px 18px;border-bottom:1px solid var(--shell-border);
+    background:var(--shell-panel);
+  }
+  .topbar h1{font-size:15px;margin:0 12px 0 0;font-weight:600;letter-spacing:.02em}
+  .topbar .hint{font-size:12px;color:var(--shell-muted);margin-right:auto}
+  .btn{
+    appearance:none;border:1px solid var(--shell-border);background:#26332D;color:var(--shell-text);
+    font-size:12px;padding:6px 11px;border-radius:8px;cursor:pointer;
+    transition:background .15s ease,border-color .15s ease,transform .08s ease;
+  }
+  .btn:hover{background:#2F3E37}
+  .btn:active{transform:scale(.97)}
+  .btn[aria-pressed="true"]{border-color:var(--primary);color:#0C1A14;background:var(--primary)}
+  .btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+
+  .workspace{flex:1;display:flex;min-height:0}
+  .stageWrap{flex:1;position:relative;padding:18px;min-width:0}
+  .stage{
+    position:relative;width:100%;height:100%;border-radius:16px;overflow:hidden;
+    border:1px solid var(--shell-border);
+    background:
+      radial-gradient(1200px 700px at 70% 20%, rgba(54,211,153,.10), transparent 60%),
+      linear-gradient(160deg,#0E2A22 0%,#061713 60%,#0A2019 100%);
+    transition:background .25s ease;
+  }
+  .stage[data-wallpaper="light"]{
+    background:
+      radial-gradient(1200px 700px at 70% 20%, rgba(7,193,96,.10), transparent 60%),
+      linear-gradient(160deg,#EAF3EE 0%,#F7FBF8 60%,#E4F0E9 100%);
+  }
+  .stage::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background-image:radial-gradient(rgba(255,255,255,.10) 1px, transparent 1px);
+    background-size:26px 26px;opacity:.35;
+  }
+  .stage[data-wallpaper="light"]::before{
+    background-image:radial-gradient(rgba(6,37,26,.12) 1px, transparent 1px);
+  }
+  .stageLabel{
+    position:absolute;left:16px;top:14px;font-size:11px;letter-spacing:.12em;
+    color:rgba(233,242,237,.52);pointer-events:none;
+  }
+  .stage[data-wallpaper="light"] .stageLabel{color:rgba(6,37,26,.46)}
+
+  /* ── 主窗示意 ── */
+  .mainWindow{
+    position:absolute;left:6%;top:14%;width:min(620px,62%);height:min(400px,72%);
+    background:#FFFFFF;border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.35);
+    display:flex;flex-direction:column;overflow:hidden;
+    transition:opacity .26s ease,transform .26s cubic-bezier(.2,.7,.3,1);
+    color:#1F2937;
+  }
+  .mainWindow.hiddenMain{opacity:0;transform:translateY(24px) scale(.98);pointer-events:none}
+  .mwTitle{
+    height:40px;display:flex;align-items:center;gap:8px;padding:0 14px;
+    background:#F5FAF7;border-bottom:1px solid #E5E7EB;font-size:12px;color:#4B5563;
+  }
+  .mwDots{display:flex;gap:6px;margin-right:8px}
+  .mwDots i{width:10px;height:10px;border-radius:50%;background:#D6E2DB;display:block}
+  .mwBody{flex:1;display:flex;min-height:0}
+  .mwSide{width:148px;background:#EBF6EF;padding:14px;font-size:11px;color:#4B5563}
+  .mwSide b{display:block;color:#157A4E;font-size:12px;margin-bottom:10px}
+  .mwSide span{display:block;padding:6px 8px;border-radius:6px;background:#fff;margin-bottom:6px}
+  .mwMain{flex:1;padding:18px}
+  .mwMain h2{font-size:15px;margin:0 0 6px;color:#1F2937}
+  .mwMain p{font-size:11px;color:#6B6D80;margin:0 0 16px;line-height:1.6}
+  .skel{height:10px;border-radius:5px;background:#EEF2EF;margin-bottom:10px}
+  .skel:nth-child(3){width:82%}
+  .skel:nth-child(4){width:64%}
+  .skel:nth-child(5){width:70%}
+  .mwBadge{
+    position:absolute;right:12px;bottom:10px;font-size:10px;color:#8AA096;
+  }
+
+  /* ── 桌宠窗（160×160，参数对齐设计文档） ── */
+  .pet{
+    position:absolute;right:24px;bottom:16px;width:160px;height:160px;
+    cursor:grab;touch-action:none;user-select:none;
+    transition:opacity .32s cubic-bezier(.215,.61,.355,1);
+    z-index:5;
+  }
+  .pet.fadeOut{opacity:0;pointer-events:none}
+  .pet.dragging{cursor:grabbing}
+  .pet.zoom2{transform:scale(2);transform-origin:right bottom}
+
+  .char{position:absolute;inset:0;animation:breathe 3200ms ease-in-out infinite}
+  .charInner{position:absolute;inset:0}
+  .pet.paused .char{animation-play-state:paused}
+  .pet.paused .glowOuter,.pet.paused .glowInner{animation-play-state:paused}
+
+  @keyframes breathe{
+    0%{transform:translateY(0)}
+    50%{transform:translateY(-1.5px)}
+    100%{transform:translateY(0)}
+  }
+  @keyframes haloBreathe{
+    0%{box-shadow:0 0 22px 3px rgba(54,211,153,.42)}
+    50%{box-shadow:0 0 26px 3px rgba(54,211,153,.34)}
+    100%{box-shadow:0 0 22px 3px rgba(54,211,153,.42)}
+  }
+  @keyframes innerBreathe{
+    0%{opacity:.10}
+    50%{opacity:.13}
+    100%{opacity:.10}
+  }
+  @keyframes groundBreathe{
+    0%{left:52px;width:56px;opacity:.14}
+    50%{left:53px;width:54px;opacity:.11}
+    100%{left:52px;width:56px;opacity:.14}
+  }
+  @keyframes hop{
+    0%{transform:translateY(0)}
+    36%{transform:translateY(-4px)}
+    100%{transform:translateY(0)}
+  }
+
+  .glowOuter{
+    position:absolute;left:40px;top:38px;width:80px;height:80px;border-radius:40px;
+    background:transparent;pointer-events:none;
+    box-shadow:0 0 22px 3px rgba(54,211,153,.42);
+    animation:haloBreathe 3200ms ease-in-out infinite;
+    transition:box-shadow .12s ease;
+  }
+  .glowInner{
+    position:absolute;left:32px;top:32px;width:96px;height:96px;border-radius:48px;
+    background:rgba(54,211,153,.10);pointer-events:none;
+    animation:innerBreathe 3200ms ease-in-out infinite;
+  }
+  .pet.glowOff .glowOuter{display:none}
+  .pet.glowOff .glowInner{display:none}
+
+  .ground{
+    position:absolute;left:52px;top:122px;width:56px;height:10px;border-radius:5px;
+    background:rgba(0,0,0,.14);pointer-events:none;filter:blur(1px);
+    box-shadow:0 0 6px 0 rgba(0,0,0,.08);
+    animation:groundBreathe 3200ms ease-in-out infinite;
+  }
+
+  .body{
+    position:absolute;left:40px;top:38px;width:80px;height:80px;border-radius:40px;
+    background:linear-gradient(180deg,var(--body-top) 0%,var(--body-bottom) 100%);
+    border:1.5px solid var(--outline);
+    transition:left 70ms cubic-bezier(.25,.46,.45,.94),top 70ms cubic-bezier(.25,.46,.45,.94),
+               width 70ms cubic-bezier(.25,.46,.45,.94),height 70ms cubic-bezier(.25,.46,.45,.94);
+  }
+  .stem{
+    position:absolute;left:78px;top:28px;width:4px;height:10px;border-radius:2px;
+    background:rgba(11,91,60,.90);
+    transition:left 70ms cubic-bezier(.25,.46,.45,.94),top 70ms cubic-bezier(.25,.46,.45,.94),
+               width 70ms cubic-bezier(.25,.46,.45,.94),height 70ms cubic-bezier(.25,.46,.45,.94);
+  }
+  .leaf{
+    position:absolute;left:82px;top:20px;width:16px;height:9px;border-radius:4.5px;
+    background:var(--leaf);border:1px solid var(--leaf-outline);
+    transition:left 70ms cubic-bezier(.25,.46,.45,.94),top 70ms cubic-bezier(.25,.46,.45,.94),
+               width 70ms cubic-bezier(.25,.46,.45,.94),height 70ms cubic-bezier(.25,.46,.45,.94);
+  }
+  .eye{
+    position:absolute;width:16px;height:18px;border-radius:8px;background:var(--ink);
+    transition:all 90ms cubic-bezier(.25,.46,.45,.94);
+  }
+  .eye.left{left:58px;top:62px}
+  .eye.right{left:86px;top:62px}
+  .highlight{
+    position:absolute;width:5px;height:5px;border-radius:2.5px;background:rgba(255,255,255,.90);
+    transition:all 90ms cubic-bezier(.25,.46,.45,.94);
+  }
+  .highlight.left{left:61px;top:65px}
+  .highlight.right{left:89px;top:65px}
+  .blush{
+    position:absolute;width:12px;height:5px;border-radius:2.5px;background:rgba(222,143,180,.55);
+    transition:all 70ms cubic-bezier(.25,.46,.45,.94);
+  }
+  .blush.left{left:46px;top:86px}
+  .blush.right{left:102px;top:86px}
+  .mouth{
+    position:absolute;left:75px;top:88px;width:10px;height:3px;border-radius:1.5px;
+    background:rgba(6,37,26,.78);
+    transition:all 70ms cubic-bezier(.25,.46,.45,.94);
+  }
+
+  /* 按压态几何（设计文档 §4.3） */
+  .pet.pressed .body{left:38px;top:42px;width:84px;height:76px}
+  .pet.pressed .stem{left:76px;top:32px;height:9px}
+  .pet.pressed .leaf{left:80px;top:25px}
+  .pet.pressed .eye.left{left:56px;top:65px;height:17px;border-radius:8.5px}
+  .pet.pressed .eye.right{left:88px;top:65px;height:17px;border-radius:8.5px}
+  .pet.pressed .highlight.left{left:59px;top:68px}
+  .pet.pressed .highlight.right{left:91px;top:68px}
+  .pet.pressed .blush.left{left:44px;top:89px}
+  .pet.pressed .blush.right{left:104px;top:89px}
+  .pet.pressed .mouth{top:91px}
+  .pet.pressed .glowOuter{animation:none;box-shadow:0 0 24px 3px rgba(54,211,153,.55)}
+  .pet.returning .body,
+  .pet.returning .stem,
+  .pet.returning .leaf,
+  .pet.returning .eye,
+  .pet.returning .highlight,
+  .pet.returning .blush,
+  .pet.returning .mouth{
+    transition:all 160ms cubic-bezier(.34,1.56,.64,1);
+  }
+  .pet.returning .glowOuter{
+    animation:none;box-shadow:0 0 24px 3px rgba(54,211,153,.42);
+    transition:box-shadow 300ms cubic-bezier(.215,.61,.355,1);
+  }
+
+  /* 眨眼 */
+  .pet.blink .eye{height:2.5px;top:70px;border-radius:1.25px}
+  .pet.blink .highlight{opacity:0}
+  .pet.tap .charInner{animation:hop 300ms cubic-bezier(.33,.9,.45,1)}
+
+  /* 入场 / 退场 */
+  .pet.entering{animation:petIn .32s cubic-bezier(.2,.8,.3,1)}
+  @keyframes petIn{
+    0%{opacity:0;transform:translateY(6px) scale(.98)}
+    100%{opacity:1;transform:translateY(0) scale(1)}
+  }
+  .pet.fadeOut{opacity:0;transition:opacity .18s ease}
+
+  /* 尺寸标注（演示用） */
+  .annotations{position:absolute;inset:0;pointer-events:none;display:none}
+  .pet.showAnnotations .annotations{display:block}
+  .annWin{position:absolute;inset:0;outline:1px dashed rgba(54,211,153,.45)}
+  .annBody{position:absolute;left:40px;top:38px;width:80px;height:80px;border-radius:40px;outline:1px dashed rgba(54,211,153,.85)}
+  .annTag{position:absolute;font:10px/1.4 ui-monospace,Consolas,monospace;color:#9BE8C9;background:rgba(6,23,19,.72);padding:1px 5px;border-radius:4px;white-space:nowrap}
+  .annTag.win{left:4px;top:4px}
+  .annTag.body{left:88px;top:42px}
+  .annTag.edge{right:4px;top:120px}
+
+  /* ── 设置卡示意 ── */
+  .settingsCard{
+    position:absolute;right:18px;top:18px;width:300px;
+    background:#FFFFFF;border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,.22);
+    color:#1F2937;padding:14px 16px 12px;
+  }
+  .settingsCard h3{font-size:13px;margin:0 0 10px;color:#1F2937;font-weight:600}
+  .setRow{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #F0F4F2}
+  .setRow:first-of-type{border-top:none}
+  .setRow .lbl{width:92px;font-size:12px;font-weight:600;color:#1F2937;flex:none}
+  .setRow .desc{flex:1;font-size:11px;color:#6B6D80;line-height:1.35}
+  .switch{
+    appearance:none;width:44px;height:24px;border-radius:12px;background:#D7E3DC;
+    border:none;position:relative;cursor:pointer;flex:none;
+    transition:background .18s ease;
+  }
+  .switch::after{
+    content:"";position:absolute;left:2px;top:2px;width:20px;height:20px;border-radius:10px;
+    background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);
+    transition:transform .18s cubic-bezier(.2,.8,.3,1);
+  }
+  .switch[aria-checked="true"]{background:var(--primary-light)}
+  .switch[aria-checked="true"]::after{transform:translateX(20px)}
+  .switch:focus-visible{outline:2px solid var(--primary-light);outline-offset:2px}
+  .setNote{font-size:10px;color:#8AA096;margin-top:8px;line-height:1.5}
+
+  /* ── 读数 / toast ── */
+  .readout{
+    position:absolute;left:16px;bottom:16px;font:11px/1.6 ui-monospace,Consolas,monospace;
+    color:#B9D9C9;background:rgba(6,23,19,.66);border:1px solid rgba(54,211,153,.18);
+    border-radius:10px;padding:8px 10px;pointer-events:none;max-width:330px;
+  }
+  .readout b{color:#7CEFC7;font-weight:600}
+  .toast{
+    position:absolute;left:50%;bottom:88px;transform:translateX(-50%) translateY(8px);
+    background:#0B1D17;color:#DFF7EC;border:1px solid rgba(54,211,153,.35);
+    border-radius:999px;padding:8px 16px;font-size:12px;opacity:0;pointer-events:none;
+    transition:opacity .2s ease,transform .2s ease;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  @media (max-width:900px){
+    .settingsCard{width:260px}
+    .setRow .desc{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>桌宠「小绿灵」原型</h1>
+  <span class="hint">need#545 ｜ demo 仅视觉校准，参数以设计文档为准</span>
+  <button class="btn" id="btnBlink">眨一次眼</button>
+  <button class="btn" id="btnClick">模拟单击</button>
+  <button class="btn" id="btnBreath" aria-pressed="true">呼吸</button>
+  <button class="btn" id="btnGlow" aria-pressed="true">光晕</button>
+  <button class="btn" id="btnWallpaper">切换壁纸：深</button>
+  <button class="btn" id="btnZoom" aria-pressed="false">放大 2×</button>
+  <button class="btn" id="btnAnno" aria-pressed="false">尺寸标注</button>
+</div>
+
+<div class="workspace">
+  <div class="stageWrap">
+    <div class="stage" id="stage" data-wallpaper="dark">
+      <div class="stageLabel">桌面（示意）：壁纸为任意内容，桌宠置顶独立窗</div>
+
+      <!-- 主窗示意 -->
+      <div class="mainWindow hiddenMain" id="mainWindow" aria-hidden="true">
+        <div class="mwTitle">
+          <span class="mwDots"><i></i><i></i><i></i></span>
+          DevDesk — 主窗口（示意）
+          <span class="mwBadge">窗口恢复由统一唤起路径完成</span>
+        </div>
+        <div class="mwBody">
+          <div class="mwSide">
+            <b>DevDesk</b>
+            <span>首页</span><span>笔记</span><span>待办</span><span>设置</span>
+          </div>
+          <div class="mwMain">
+            <h2>主窗口已在前台</h2>
+            <p>点击桌宠后：可见但被遮挡 → 前置；最小化 → 解除最小化；托盘隐藏 → 从托盘恢复。桌宠始终保持在所有窗口之上。</p>
+            <div class="skel"></div><div class="skel"></div><div class="skel"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 设置 → 通用卡示意（第 4 行 = 桌面宠物） -->
+      <div class="settingsCard" id="settingsCard">
+        <h3>通用</h3>
+        <div class="setRow">
+          <span class="lbl">开机自启动</span>
+          <span class="desc">开机后自动运行并最小化到托盘</span>
+          <button class="switch" role="switch" aria-checked="false" aria-label="开机自启动（示意）"></button>
+        </div>
+        <div class="setRow">
+          <span class="lbl">动态背景</span>
+          <span class="desc">主窗口背景液态流质动画</span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="动态背景（示意）"></button>
+        </div>
+        <div class="setRow">
+          <span class="lbl">留白动画</span>
+          <span class="desc">点阵波纹 + 打字机组合动效</span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="留白动画（示意）"></button>
+        </div>
+        <div class="setRow">
+          <span class="lbl">桌面宠物</span>
+          <span class="desc">右下角小绿灵，单击唤起主窗口</span>
+          <button class="switch" role="switch" aria-checked="true" id="petSwitch" aria-label="桌面宠物"></button>
+        </div>
+        <div class="setNote">仅本行可操作；前 3 行为示意。桌宠默认关，开关即时生效。</div>
+      </div>
+
+      <!-- 桌宠窗 -->
+      <div class="pet" id="pet" title="左键单击：唤起主窗口；按住拖动：移动">
+        <div class="char" id="charLayer">
+          <div class="charInner" id="hopLayer">
+            <div class="glowOuter" id="glowOuter"></div>
+            <div class="glowInner" id="glowInner"></div>
+            <div class="ground"></div>
+            <div class="body"></div>
+            <div class="stem"></div>
+            <div class="leaf"></div>
+            <div class="eye left"></div>
+            <div class="eye right"></div>
+            <div class="highlight left"></div>
+            <div class="highlight right"></div>
+            <div class="blush left"></div>
+            <div class="blush right"></div>
+            <div class="mouth"></div>
+          </div>
+        </div>
+        <div class="annotations">
+          <div class="annWin"></div>
+          <div class="annBody"></div>
+          <div class="annTag win">窗口 160×160</div>
+          <div class="annTag body">身体 80×80</div>
+          <div class="annTag edge">光晕边距 40</div>
+        </div>
+      </div>
+
+      <div class="readout" id="readout"></div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var pet = document.getElementById('pet');
+  var stage = document.getElementById('stage');
+  var glowOuter = document.getElementById('glowOuter');
+  var mainWindow = document.getElementById('mainWindow');
+  var petSwitch = document.getElementById('petSwitch');
+  var toastEl = document.getElementById('toast');
+  var readout = document.getElementById('readout');
+  var btnBreath = document.getElementById('btnBreath');
+  var btnGlow = document.getElementById('btnGlow');
+  var btnWallpaper = document.getElementById('btnWallpaper');
+  var btnZoom = document.getElementById('btnZoom');
+  var btnAnno = document.getElementById('btnAnno');
+
+  var S = {
+    enabled: true,
+    breathing: true,
+    glow: true,
+    zoom: 1,
+    mainVisible: false,
+    pressed: false,
+    dragging: false,
+    blink: false,
+    moved: false,
+    lastTapAt: 0,
+    dragOffsetX: 0,
+    dragOffsetY: 0,
+    startX: 0,
+    startY: 0,
+    pointerId: null
+  };
+
+  var BLINK_IN_MIN = 4000, BLINK_IN_MAX = 7000;
+  var BLINK_CLOSE = 90, BLINK_HOLD = 50, BLINK_OPEN = 110;
+  var TAP_SUPPRESS_MS = 300;
+  var DRAG_THRESHOLD = 4;
+
+  function toast(text){
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(function(){ toastEl.classList.remove('show'); }, 1800);
+  }
+
+  function stateName(){
+    if (!S.enabled) return 'S0 未启用';
+    if (S.dragging) return 'S5 拖拽（呼吸暂停）';
+    if (S.pressed) return 'S4 按压';
+    if (S.blink) return 'S3 眨眼';
+    return 'S2 待机呼吸';
+  }
+
+  function updateReadout(){
+    var blur = S.pressed ? 24 : 22;
+    var alpha = S.pressed ? 0.55 : 0.42;
+    readout.innerHTML =
+      '状态：<b>' + stateName() + '</b><br>' +
+      '窗口 160×160 ｜ 身体 80×80 ｜ 光晕边距 40<br>' +
+      '光晕 blur ' + blur + 'px · α' + alpha.toFixed(2) +
+      ' ｜ 缩放 ' + S.zoom + '× ｜ 壁纸 ' + (stage.dataset.wallpaper === 'dark' ? '深' : '浅');
+  }
+
+  // ── 眨眼：随机 4–7s，20% 双眨 ──
+  var blinkTimer = null;
+  function scheduleBlink(){
+    clearTimeout(blinkTimer);
+    var wait = BLINK_IN_MIN + Math.random() * (BLINK_IN_MAX - BLINK_IN_MIN);
+    blinkTimer = setTimeout(function(){
+      doBlink();
+      if (Math.random() < 0.2){
+        blinkTimer = setTimeout(function(){ doBlink(); scheduleBlink(); }, 380 + 140);
+      } else {
+        scheduleBlink();
+      }
+    }, wait);
+  }
+  function doBlink(){
+    if (!S.enabled || S.pressed || S.dragging || S.blink) return;
+    S.blink = true;
+    pet.classList.add('blink');
+    updateReadout();
+    setTimeout(function(){
+      pet.classList.remove('blink');
+      S.blink = false;
+      updateReadout();
+    }, BLINK_CLOSE + BLINK_HOLD + BLINK_OPEN);
+  }
+
+  // ── 主窗模拟 ──
+  function showMainWindow(reason){
+    S.mainVisible = true;
+    mainWindow.classList.remove('hiddenMain');
+    mainWindow.setAttribute('aria-hidden', 'false');
+    toast('主窗口已唤起' + (reason ? '：' + reason : ''));
+  }
+  function hideMainWindow(){
+    S.mainVisible = false;
+    mainWindow.classList.add('hiddenMain');
+    mainWindow.setAttribute('aria-hidden', 'true');
+  }
+
+  // ── 按压 / 拖拽 ──
+  function setPressed(on){
+    S.pressed = on;
+    pet.classList.toggle('pressed', on);
+    pet.classList.toggle('paused', on || S.dragging);
+    updateReadout();
+  }
+
+  pet.addEventListener('pointerdown', function(e){
+    if (e.button !== 0 || !S.enabled) return;   // 右键无动作
+    e.preventDefault();
+    S.pointerId = e.pointerId;
+    pet.setPointerCapture(e.pointerId);
+    S.startX = e.clientX;
+    S.startY = e.clientY;
+    S.moved = false;
+    S.dragging = false;
+    var r = pet.getBoundingClientRect();
+    // 2× 演示缩放时把屏幕位移换算回逻辑坐标，避免抓取偏移
+    S.dragOffsetX = (e.clientX - r.left) / S.zoom;
+    S.dragOffsetY = (e.clientY - r.top) / S.zoom;
+    setPressed(true);
+  });
+
+  pet.addEventListener('pointermove', function(e){
+    if (S.pointerId !== e.pointerId || !S.enabled) return;
+    var dx = e.clientX - S.startX;
+    var dy = e.clientY - S.startY;
+    if (!S.dragging && Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD){
+      S.dragging = true;
+      S.moved = true;
+      pet.classList.add('dragging');
+      pet.classList.remove('returning');
+      setPressed(false);
+      pet.classList.add('paused');
+      updateReadout();
+    }
+    if (S.dragging){
+      var stageRect = stage.getBoundingClientRect();
+      var x = e.clientX - stageRect.left - S.dragOffsetX;
+      var y = e.clientY - stageRect.top - S.dragOffsetY;
+      pet.style.left = x + 'px';
+      pet.style.top = y + 'px';
+      pet.style.right = 'auto';
+      pet.style.bottom = 'auto';
+    }
+  });
+
+  pet.addEventListener('pointerup', function(e){
+    if (S.pointerId !== e.pointerId) return;
+    S.pointerId = null;
+    var wasDragging = S.dragging;
+    S.dragging = false;
+    pet.classList.remove('dragging');
+
+    if (wasDragging){
+      clampPetIntoStage();
+      pet.classList.remove('paused');
+      if (!S.pressed) updateReadout();
+      toast('位置已保存（演示仅内存）');
+      return;
+    }
+
+    // 单击：回弹 + 小跳 + 唤起主窗；300ms 内二次点击忽略
+    setPressed(false);
+    pet.classList.add('returning');
+    setTimeout(function(){ pet.classList.remove('returning'); }, 170);
+    pet.classList.add('tap');
+    setTimeout(function(){ pet.classList.remove('tap'); }, 330);
+    pet.classList.remove('paused');
+
+    var now = Date.now();
+    if (now - S.lastTapAt < TAP_SUPPRESS_MS){
+      updateReadout();
+      return;   // 连点防抖：不重复上跳/唤起
+    }
+    S.lastTapAt = now;
+
+    if (!S.mainVisible) showMainWindow('托盘隐藏 / 最小化 / 被遮挡均由统一路径恢复');
+    else showMainWindow('主窗已在前台，再次置前');
+    updateReadout();
+  });
+
+  pet.addEventListener('pointercancel', function(){
+    S.pointerId = null;
+    S.dragging = false;
+    pet.classList.remove('dragging');
+    setPressed(false);
+    pet.classList.remove('paused');
+    updateReadout();
+  });
+
+  pet.addEventListener('contextmenu', function(e){ e.preventDefault(); });  // 右键无动作
+
+  function clampPetIntoStage(){
+    var stageRect = stage.getBoundingClientRect();
+    var w = pet.offsetWidth, h = pet.offsetHeight;
+    var left = parseFloat(pet.style.left || '0');
+    var top = parseFloat(pet.style.top || '0');
+    var margin = 8;
+    var maxLeft = Math.max(margin, stageRect.width - w - margin);
+    var maxTop = Math.max(margin, stageRect.height - h - margin);
+    left = Math.min(Math.max(margin, left), maxLeft);
+    top = Math.min(Math.max(margin, top), maxTop);
+    pet.style.left = left + 'px';
+    pet.style.top = top + 'px';
+    pet.style.right = 'auto';
+    pet.style.bottom = 'auto';
+  }
+
+  // ── 设置开关：开/关即时生效 ──
+  function setEnabled(on, fromSwitch){
+    if (S.enabled === on) return;
+    S.enabled = on;
+    petSwitch.setAttribute('aria-checked', String(on));
+    if (on){
+      pet.style.display = 'block';
+      // 回到默认位（演示简化；真实实现恢复持久化位置）
+      pet.style.left = '';
+      pet.style.top = '';
+      pet.style.right = '24px';
+      pet.style.bottom = '16px';
+      pet.classList.remove('fadeOut');
+      pet.classList.add('entering');
+      setTimeout(function(){ pet.classList.remove('entering'); }, 340);
+      if (fromSwitch) toast('桌面宠物已开启');
+      scheduleBlink();
+    } else {
+      pet.classList.add('fadeOut');
+      toast('桌面宠物已关闭（180ms 渐隐后关窗）');
+      setTimeout(function(){
+        if (!S.enabled){
+          pet.style.display = 'none';
+          clearTimeout(blinkTimer);
+        }
+      }, 190);
+    }
+    updateReadout();
+  }
+  petSwitch.addEventListener('click', function(){
+    setEnabled(petSwitch.getAttribute('aria-checked') !== 'true', true);
+  });
+
+  // ── 控件 ──
+  document.getElementById('btnBlink').addEventListener('click', function(){
+    if (!S.enabled){ toast('桌宠未启用'); return; }
+    doBlink();
+  });
+
+  document.getElementById('btnClick').addEventListener('click', function(){
+    if (!S.enabled){ toast('桌宠未启用'); return; }
+    // 模拟一次完整按压-抬起序列
+    setPressed(true);
+    setTimeout(function(){
+      setPressed(false);
+      pet.classList.add('returning');
+      setTimeout(function(){ pet.classList.remove('returning'); }, 170);
+      pet.classList.add('tap');
+      setTimeout(function(){ pet.classList.remove('tap'); }, 330);
+      if (!S.mainVisible) showMainWindow('模拟单击');
+      else showMainWindow('模拟单击（主窗已在前台）');
+      updateReadout();
+    }, 90);
+  });
+
+  btnBreath.addEventListener('click', function(){
+    S.breathing = !S.breathing;
+    pet.classList.toggle('paused', !S.breathing || S.pressed || S.dragging);
+    btnBreath.setAttribute('aria-pressed', String(S.breathing));
+    toast(S.breathing ? '呼吸已开启（3.2s 周期）' : '呼吸已暂停（拖拽/按压仍暂停）');
+    updateReadout();
+  });
+
+  btnGlow.addEventListener('click', function(){
+    S.glow = !S.glow;
+    pet.classList.toggle('glowOff', !S.glow);
+    btnGlow.setAttribute('aria-pressed', String(S.glow));
+    toast(S.glow ? '光晕已开启（外晕 22px + 内晕 96×96）' : '光晕已关闭（对比轮廓识别度）');
+    updateReadout();
+  });
+
+  btnWallpaper.addEventListener('click', function(){
+    var next = stage.dataset.wallpaper === 'dark' ? 'light' : 'dark';
+    stage.dataset.wallpaper = next;
+    btnWallpaper.textContent = '切换壁纸：' + (next === 'dark' ? '深' : '浅');
+    toast(next === 'dark' ? '深壁纸：光晕负责可见性' : '浅壁纸：轮廓描边负责可见性');
+    updateReadout();
+  });
+
+  btnZoom.addEventListener('click', function(){
+    S.zoom = S.zoom === 1 ? 2 : 1;
+    pet.classList.toggle('zoom2', S.zoom === 2);
+    btnZoom.setAttribute('aria-pressed', String(S.zoom === 2));
+    btnZoom.textContent = S.zoom === 2 ? '恢复 1×' : '放大 2×';
+    updateReadout();
+  });
+
+  btnAnno.addEventListener('click', function(){
+    var on = !pet.classList.contains('showAnnotations');
+    pet.classList.toggle('showAnnotations', on);
+    btnAnno.setAttribute('aria-pressed', String(on));
+  });
+
+  // 初始：演示从「托盘隐藏」开始，点击桌宠可唤起主窗
+  hideMainWindow();
+  petSwitch.setAttribute('aria-checked', 'true');
+  scheduleBlink();
+  updateReadout();
+
+  // 主窗「隐藏到托盘」再演示一次（双击设置卡标题不生效；用按钮更明确）
+  document.getElementById('settingsCard').addEventListener('dblclick', function(){
+    hideMainWindow();
+    toast('已模拟：主窗隐藏到托盘，桌宠保持不变');
+  });
+
+  // ── 渲染自证（仅 ?selftest=1 时写入隐藏节点，供无头浏览器断言） ──
+  if (location.search.indexOf('selftest=1') >= 0){
+    var cs = function(el, prop){ return getComputedStyle(el).getPropertyValue(prop); };
+    var body = pet.querySelector('.body');
+    var eye = pet.querySelector('.eye.left');
+    var sw = petSwitch;
+    var lines = [];
+    var check = function(name, ok, detail){
+      lines.push((ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' [' + detail + ']' : ''));
+    };
+    check('窗口 160×160', pet.offsetWidth === 160 && pet.offsetHeight === 160,
+          pet.offsetWidth + '×' + pet.offsetHeight);
+    check('身体 80×80', cs(body, 'width') === '80px' && cs(body, 'height') === '80px',
+          cs(body, 'width') + '×' + cs(body, 'height'));
+    check('光晕 blur 22', cs(glowOuter, 'box-shadow').indexOf('22px') >= 0,
+          cs(glowOuter, 'box-shadow'));
+    check('眼 16×18', cs(eye, 'width') === '16px' && cs(eye, 'height') === '18px',
+          cs(eye, 'width') + '×' + cs(eye, 'height'));
+    check('开关 44×24', cs(sw, 'width') === '44px' && cs(sw, 'height') === '24px',
+          cs(sw, 'width') + '×' + cs(sw, 'height'));
+    var petRect = pet.getBoundingClientRect(), stageRect = stage.getBoundingClientRect();
+    var borderR = parseFloat(cs(stage, 'border-right-width')) || 0;
+    var borderB = parseFloat(cs(stage, 'border-bottom-width')) || 0;
+    check('默认位 右24 / 下16',
+          Math.abs((stageRect.right - borderR - petRect.right) - 24) < 1 &&
+          Math.abs((stageRect.bottom - borderB - petRect.bottom) - 16) < 1,
+          Math.round(stageRect.right - borderR - petRect.right) + '/' +
+          Math.round(stageRect.bottom - borderB - petRect.bottom));
+    check('身体渐变', cs(body, 'background-image').indexOf('91, 227, 180') >= 0,
+          cs(body, 'background-image'));
+    var out = document.createElement('div');
+    out.id = 'selftest';
+    out.style.display = 'none';
+    out.textContent = lines.join(' | ');
+    document.body.appendChild(out);
+  }
+})();
+</script>
+</body>
+</html>

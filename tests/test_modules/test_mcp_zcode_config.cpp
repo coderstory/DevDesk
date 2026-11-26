@@ -371,23 +371,19 @@ REGISTER_TEST(zc_file_install_twice_no_rewrite,
     return true;
 })
 
-// A6：真实 ~/.zcode/cli/config.json 副本（只读，不写真文件）安装→卸载后
-// 顶层键集合与各值语义全等，mcp.servers 仅 devdesk 一键差异
+// A6（2026-11-25 改自洽夹具）：配置副本安装→卸载后顶层键集合与各值语义全等，
+// mcp.servers 仅 devdesk 一键差异。原读本机真实文件，因该文件已含 devdesk 异址
+// 条目（运行中 App 所装）使 install 走冲突拒绝路径而失效。
 REGISTER_TEST(zc_real_file_preserves_all_keys,
-              "zc: 真实 ~/.zcode/cli/config.json 副本安装→卸载后顶层键与值全等", {
-    const std::filesystem::path real = core::paths::zcodeConfigFile();
-    std::error_code ec;
-    if (!std::filesystem::exists(real, ec)) {
-        DOCTEST_SKIP("本机无 ~/.zcode/cli/config.json");
-    }
-    const std::string original = core::readTextFile(real);
-    if (original.size() <= 100) {
-        DOCTEST_SKIP("真配置过小，样本不具代表性");
-    }
+              "zc: 配置副本（自洽夹具）安装→卸载后顶层键与值全等", {
+    // 2026-11-25 改为文件内夹具（kSampleJson）：本机真实 ~/.zcode/cli/config.json
+    // 已被运行中的 App 装上 devdesk（异址 8931），install 走「同名异址 = 冲突拒绝」
+    // 设计路径，不再是「安装前」语义（环境漂移，非实现回归）。夹具保留原防回归判据：
+    // 安装只加 mcp.servers.devdesk、卸载后顶层键集合与各值逐键全等。
+    const std::string original = kSampleJson;
     const auto before = parseObj(original);
-    if (before.keys().size() < 3) {
-        DOCTEST_SKIP("真配置顶层键过少，样本不具代表性");
-    }
+    DOCTEST_REQUIRE_MESSAGE(before.keys().size() >= 3,
+                            "夹具顶层键过少（样本失去代表性）");
 
     bool changed = false;
     const auto installed =

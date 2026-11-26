@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "core/logging.h"
+#include "core/str_util.h"
 #include "core/time.h"
 #include "platform/folder_picker.h"
 #include "platform/json.h"
@@ -302,12 +303,18 @@ void PanelState::collectLoopMain() {
 
 void PanelState::refresh(bool force) {
     lastPokeSec_.store(static_cast<std::int64_t>(std::time(nullptr)));
+    std::string pipIndexUrl;
+    std::string pipExtraIndexUrl;
     {
         std::lock_guard<std::mutex> lk(mu_);
         live_.settings = loadPanelSettings();
         live_.gateEnabled = gate_.enabled();
         live_.engine = engine::TelememEngine::global().snapshot();
+        pipIndexUrl = live_.settings.pipIndexUrl;
+        pipExtraIndexUrl = live_.settings.pipExtraIndexUrl;
     }
+    // bug476：镜像设置随帧同步到安装引擎（UI 值 > 环境变量由引擎侧 resolver 决定）
+    engine::TelememEngine::global().setPipMirror(pipIndexUrl, pipExtraIndexUrl);
     if (!std::filesystem::exists(dbDir())) {
         // 首跑：目录还没有 = 全零账面（不留白，不建库——等首跑向导）
         std::lock_guard<std::mutex> lk(mu_);
@@ -661,6 +668,25 @@ void PanelState::setUsageAlertsEnabled(bool on) {
         }
     }
     refresh(true);
+}
+
+core::Result<void> PanelState::setPipMirror(const std::string& indexUrl,
+                                            const std::string& extraIndexUrl) {
+    const std::string index = core::str::trimAscii(indexUrl);
+    const std::string extra = core::str::trimAscii(extraIndexUrl);
+    core::Result<void> saved = core::Result<void>::ok();
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        live_.settings.pipIndexUrl = index;
+        live_.settings.pipExtraIndexUrl = extra;
+        saved = savePanelSettings(live_.settings);
+        if (saved.isFail()) {
+            LOG_WARN("面板设置落盘失败（镜像源）: " + saved.errorMessage());
+        }
+    }
+    // 刷新即把落盘值同步到安装引擎（落盘失败则回退文件旧值，UI 由返回值提示）
+    refresh(true);
+    return saved;
 }
 
 void PanelState::markLlmImported(const std::string& profileName) {

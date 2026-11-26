@@ -1,5 +1,5 @@
 // tests/test_modules/test_terminal_web_bridge.cpp
-// need#490 W4 会话桥：尺寸钳制/桌面尺寸恢复/tab 同步/退出态/设置单一真源与目录校验。
+// need#490 W4 会话桥：尺寸钳制/桌面尺寸恢复/tab 同步/退出态/设置单一真源（保存不校验目录，need#452）。
 #include "doctest.h"
 #include "module_terminal/terminal_session_controller.h"
 #include "module_terminal/web/web_session_bridge.h"
@@ -189,7 +189,7 @@ REGISTER_TEST(webBridgeSizeRestore,
 })
 
 REGISTER_TEST(webBridgeSettingsSingleSource,
-              "web bridge: writeSettings 校验目录→写内存→持久化→广播/重绘（失败回滚）", {
+              "web bridge: writeSettings 保存不校验目录→写内存→持久化→广播/重绘；仅持久化失败回滚", {
     using namespace terminal::web;
     Fixture f;
     const std::filesystem::path dir = test_temp::tempPath("terminal_web_bridge_dir");
@@ -206,20 +206,28 @@ REGISTER_TEST(webBridgeSettingsSingleSource,
     DOCTEST_CHECK_EQ(f.events.size(), 1u);
     DOCTEST_CHECK(f.events[0].type == WebEventType::Settings);
 
-    // 非法目录：拒绝且不改内存/不落库
+    // need#452 契约（设计 §9）：保存不校验目录——条目是快捷方式不是承诺，不可进入的
+    // 目录照存、不报错不回滚；可用性由启动侧严格校验（test_terminal_settings 的
+    // workDirUsableForSpawn 用例覆盖）。网页改写 startupDir = 设默认，sanitize 并入列表。
     terminal::TerminalSettings bad = next;
     bad.startupDir = "Z:/definitely/not/exist/terminal_dir";
-    auto rejected = f.bridge->writeSettings(bad);
-    DOCTEST_CHECK(rejected.isFail());
-    DOCTEST_CHECK_EQ(f.settings.startupDir, dir.string());
-    DOCTEST_CHECK_EQ(f.saveCalls, 1);
+    auto stored = f.bridge->writeSettings(bad);
+    DOCTEST_CHECK(stored.isOk());
+    DOCTEST_CHECK_EQ(f.settings.startupDir, bad.startupDir);
+    DOCTEST_CHECK_EQ(f.settings.startupDirs.size(), 1u);
+    DOCTEST_CHECK_EQ(f.settings.startupDirs[0], bad.startupDir);
+    DOCTEST_CHECK_EQ(f.saveCalls, 2);
+    DOCTEST_CHECK_EQ(f.repaintCalls, 2);
+    DOCTEST_CHECK_EQ(f.events.size(), 2u);
+    DOCTEST_CHECK(f.events[1].type == WebEventType::Settings);
 
     // 持久化失败：回滚内存
     f.saveFails = true;
-    terminal::TerminalSettings next2 = next;
+    terminal::TerminalSettings next2 = bad;
     next2.fontSize = 20;
     auto failed = f.bridge->writeSettings(next2);
     DOCTEST_CHECK(failed.isFail());
+    DOCTEST_CHECK_EQ(f.settings.startupDir, bad.startupDir);
     DOCTEST_CHECK_EQ(f.settings.fontSize, next.fontSize);
 
     std::error_code ec;

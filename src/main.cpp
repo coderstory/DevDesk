@@ -36,6 +36,7 @@
 #include "module_release/release_schedule_source.h"
 #include "module_release/release_store.h"
 #include "module_schedule/channel_registry.h"
+#include "module_schedule/db_backup_watcher.h"
 #include "module_schedule/schedule_module.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_wallpaper/wallpaper_module.h"
@@ -302,6 +303,11 @@ std::string activeWindowEffectTier() {
 
 // ── MCP 装配段桥转发（无捕获函数指针，可安全转 handler 槽；转发 globalMcpService）──
 core::Result<void> mcpStartImpl(int port) {
+    // 启动前置开关：模块开关开启/关闭的启动经此桥；运行中改端口走
+    // mcpApplyPortImpl → restart()；冷启动有独立入口（同样先注入持久化开关）。
+    module::settings::SettingsStore store(::core::appDatabase());
+    module::mcp::globalMcpService().setAllowDestructive(
+        store.load().mcpAllowDestructive);
     auto r = module::mcp::globalMcpService().start(port);
     if (r.isFail()) {
         return core::propagate<void>(r);
@@ -327,6 +333,27 @@ app::mcp::LiveStatus mcpStatusImpl() {
     out.port = s.port;
     out.lastError = s.lastError;
     return out;
+}
+
+bool mcpAllowDestructiveImpl() {
+    return module::mcp::globalMcpService().allowDestructive();
+}
+
+// 先落库再改 live 协议：落库失败不动服务，避免「界面开着、重启又关」
+core::Result<void> mcpSetAllowDestructiveImpl(bool on) {
+    module::settings::SettingsStore store(::core::appDatabase());
+    auto cfg = store.load();
+    cfg.mcpAllowDestructive = on;
+    auto saved = store.save(cfg);
+    if (saved.isFail()) return saved;
+    module::mcp::globalMcpService().setAllowDestructive(on);
+    if (on) {
+        // app 层负责用户可见提示：总开关一次放行全部破坏性工具，必须明示
+        app::showAppNotice("破坏性工具已开启",
+                           "MCP 客户端现在可写文件、执行命令、git 提交、"
+                           "切换 Claude 配置、删除待办/笔记");
+    }
+    return core::Result<void>::ok();
 }
 
 // ── 记忆 MCP 桥转发（无捕获函数指针；开关态读注册表实况——MCP 页每帧调用，
@@ -472,6 +499,8 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
         app::toggle::setReminderPopupHandler(&module::release::setReminderAutoPopup);
         // 第四桥：会话内拨「调度全屏弹窗」开关 → schedule 渠道开关即时生效
         app::toggle::setFullscreenPopupHandler(&module::schedule::setFullscreenPopupEnabled);
+        // 第五桥：会话内拨「数据库自动备份」开关 → schedule 侧小时备份开关即时生效
+        app::toggle::setHourlyBackupHandler(&module::schedule::setHourlyDbBackupEnabled);
         // M-3：frosted 降级门控的 active 档回查缝（surfaceAlpha 读，桥见上）
         core::window_effect_state::setActiveTierProvider(&activeWindowEffectTier);
         // 托盘壁纸桥：handler 捕获-less 直引本函数静态 wallpaper（moduleForPage 同款
@@ -628,8 +657,13 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
         app::setQuitGuard(&app::quit_save::guard);
         app::mcp::setHandlers(&mcpStartImpl, &mcpStopImpl, &mcpApplyPortImpl,
                               &mcpStatusImpl);
+        app::mcp::setDestructiveHandlers(&mcpAllowDestructiveImpl,
+                                         &mcpSetAllowDestructiveImpl);
         if (module::settings::moduleEnabled(gatingConfigSnapshot(),
                                             module::settings::kModuleIdMcp)) {
+            // 冷启动直连（不经 mcpStartImpl）：同样先注入持久化开关
+            module::mcp::globalMcpService().setAllowDestructive(
+                gatingConfigSnapshot().mcpAllowDestructive);
             auto started = module::mcp::globalMcpService().start(
                 gatingConfigSnapshot().mcpPort);
             if (started.isFail()) {
@@ -1259,6 +1293,8 @@ const DslAppConfig& dslAppConfig() {
         // 写入进程级状态，release 引擎首 tick 即按开关行事
         module::release::setReminderAutoPopup(settingsCfg.releaseReminderPopup);
         module::schedule::setFullscreenPopupEnabled(settingsCfg.fullscreenPopup);
+        // 数据库每小时自动备份开关（need455，默认开）：schedule 模块 onStart 前注入
+        module::schedule::setHourlyDbBackupEnabled(settingsCfg.hourlyBackupEnabled);
         app::setSidebarCollapsed(settingsCfg.sidebarCollapsed, false);
         getRouter();
         // 桌宠模块已于 2026-10-13 整模块摘除（分支 feat/remove-pet-module）

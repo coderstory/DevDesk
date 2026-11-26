@@ -412,8 +412,9 @@ int main(int argc, char* argv[]) {
     app::setSidebarCollapsed(false, false);
     composeFrame();
 
-    // 6) B6 need172 v2：收缩按钮几何（直径按档 40/36 正圆 + 1px 常态描边 + 区 56/52
-    //    上偏 4px 定位 + 热区外扩 4px；2026-11-06 bug146 dd0f28db 定稿）+ 真点击切换
+    // 6) B6 need172 v2：收缩按钮几何（直径按档 34.6/31.2 = 40/36 ×0.866 正圆 + 1px
+    //    常态描边 + 区 50.6/47.2 上偏 4px 定位 + 热区外扩 4px；2026-11-06 bug146
+    //    dd0f28db 定稿，2026-11-25 老板令面积缩 25% 5185a18e 同步下缩）+ 真点击切换
     //    侧栏宽度 + hover 一次性粒子 v2
     //（12 颗 / 4~6px / 0.75 / 800ms+延迟 0~80ms；迸发/自止/重触发）。
     //    hover 驱动走热区 onHoverChanged 手调（锁屏机无真实指针 move 注入；与真指针
@@ -430,8 +431,10 @@ int main(int argc, char* argv[]) {
                                        : static_cast<float>(args.windowH) - 40.0f;
         const bool tierNormal = availHActual >= 712.0f;
         // 2026-11-06 老板三轮实测定稿（bug146，dd0f28db）：正常档 32→36→40、
-        // 紧凑/极紧 28→36；预留区 56/52（随钮 +4）。
-        const float expToggleSize = tierNormal ? 40.0f : 36.0f;
+        // 紧凑/极紧 28→36；2026-11-25 老板令面积缩 25%（直径 ×0.866）→
+        // 40/36 同步下缩为 34.6/31.2，预留区 56/52 → 50.6/47.2（app_sidebar.cpp
+        // 同源档位，5185a18e）。
+        const float expToggleSize = tierNormal ? 34.6f : 31.2f;
         const float expRadius = expToggleSize * 0.5f;
         const auto* toggle =
             ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
@@ -444,7 +447,7 @@ int main(int argc, char* argv[]) {
             check(nearEq(toggle->border.width, 1.0f),
                   "§6 常态应有 1px 圆框描边");
             // 预留区内定位（bug146 dd0f28db）：toggleY = H − zone + 4（区内上偏
-            // 4px）→ 按钮底距侧栏底 = zone − 4 − 钮径 = 12（正常 56/紧凑 52 同值）
+            // 4px）→ 按钮底距侧栏底 = zone − 4 − 钮径 = 12（正常 50.6/紧凑 47.2 同值）
             const auto* sidebarEl = ui->find("app.sidebar");
             check(sidebarEl != nullptr &&
                       nearEq(toggle->frame.y + toggle->frame.height + 12.0f,
@@ -456,7 +459,7 @@ int main(int argc, char* argv[]) {
             if (hot != nullptr) {
                 check(nearEq(hot->frame.width, expToggleSize + 8.0f) &&
                           nearEq(hot->frame.height, expToggleSize + 8.0f),
-                      "§6 热区应 48/44（绘制区外扩 4px，dd0f28db）");
+                      "§6 热区应 42.6/39.2（绘制区外扩 4px，dd0f28db + 5185a18e）");
                 check(hot->onClick != nullptr, "§6 点击回调应在热区");
             }
             // 真点击（Press/Release 成对排队 → 下一帧消费）→ 侧栏 200→72。
@@ -469,7 +472,7 @@ int main(int argc, char* argv[]) {
                 const auto* folded =
                     ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
                 const float expFoldX =
-                    (72.0f - expToggleSize) * 0.5f;  // 16（正常）/ 18（矮窗档）
+                    (72.0f - expToggleSize) * 0.5f;  // 18.7（正常）/ 20.4（矮窗档）
                 check(folded != nullptr &&
                           nearEq(folded->frame.x, expFoldX),
                       "§6 折叠态按钮应水平居中 ((72-尺寸)/2=" +

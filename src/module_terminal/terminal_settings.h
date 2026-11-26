@@ -28,6 +28,8 @@ constexpr int kFontSizeDefault = 13;
 // C-4（need380 wave5-c）：启动目录/回滚行数/光标样式/闪烁 四项 UI 已砍，行为固定
 // 默认（workDir=""=主目录、scrollback=1000、块形+闪烁）；会话链只余 shell 一项可配。
 constexpr int kScrollbackDefault = 1000;
+// need#452：常用目录上限（设计 §4.1/§9），超出截断（保默认项）。
+constexpr int kStartupDirsMax = 12;
 
 struct TerminalSettings {
     std::string fontFamily = "";  // "" = 内置等宽（v2 字体栈方案 A）
@@ -37,23 +39,18 @@ struct TerminalSettings {
     std::string shell = "";       // "" = 平台默认（win=pwsh 链 / mac=zsh 链）
     // 网页服务监听端口（P2-8 持久化）：0 = 未设置（默认 7878）；1024-65535 有效。
     int webPort = 0;
-    // 新会话启动目录（PRD P-14）；"" = 用户主目录。保存前须过 workDirUsableForSpawn，
-    // spawn 时非空不可用 → 启动失败（不静默回退）。
+    // 新会话启动目录 = 常用目录的**默认镜像**（need#452 契约）：恒 ∈ startupDirs，
+    // 列表空时 ""。旧读取方/网页端零改动。spawn 时非空不可用 → 启动失败（不静默回退）；
+    // 保存不校验（快捷方式契约，设计 §9）。
     std::string startupDir = "";
-    // #383：常用启动目录（点选开新标签；最多 kRecentDirLimit 条，去重、最近在前）
-    static constexpr int kRecentDirLimit = 8;
-    std::vector<std::string> recentStartupDirs;
+    // 常用目录（0–12，按添加顺序；trim 后非空、平台规则去重）。管理入口 = 设置面板。
+    std::vector<std::string> startupDirs;
 };
 
 // ---- 纯函数（doctest 直测） ----
 
 int clampedFontSize(int value);
 
-// #383：常用目录列表纯函数（持久化用 '\n' 连接的单串；路径不含换行）
-std::string serializeRecentDirs(const std::vector<std::string>& dirs);
-std::vector<std::string> parseRecentDirs(const std::string& packed);
-// 放入队首（去重、空值忽略、上限 kRecentDirLimit）
-void pushRecentDir(std::vector<std::string>& dirs, const std::string& dir);
 
 // 网格 ANSI 表取哪套：跟随应用=随主题；独立=锁所选色板。供 grid compose 的
 // darkTheme 参数（ansiIndexedColor 双表选择），渲染零新面。
@@ -69,6 +66,19 @@ bool canEnterDirectory(const std::string& dir);
 
 // 越界收敛 + 枚举外值回默认 + 字体/shell 枚举外回空（平台默认语义）。load 与 UI 写入共用。
 TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings);
+
+// need#452 迁移/收敛纯函数（设计 §2.3，load 与写入共用唯一收敛点）：trim、去空、
+// 平台规则去重、截 kStartupDirsMax；defaultDir 非空且不在列表 → 插首位并设默认，
+// 空 → 取首项；列表空且 defaultDir 空 → 双空（主目录语义）。
+struct StartupDirConvergence {
+    std::vector<std::string> dirs;
+    std::string defaultDir;
+};
+StartupDirConvergence convergeStartupDirs(std::vector<std::string> dirs,
+                                          std::string defaultDir);
+
+// 平台缝：常用目录去重/默认归属的比较规则（Win 大小写不敏感，POSIX 敏感）。
+bool startupDirPathEqual(const std::string& a, const std::string& b);
 
 // ---- 平台选项表（terminal_settings_platform_win.cpp / _posix.cpp 各一套） ----
 

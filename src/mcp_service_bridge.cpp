@@ -12,6 +12,8 @@ StartHandler g_start = nullptr;
 StopHandler g_stop = nullptr;
 ApplyPortHandler g_applyPort = nullptr;
 StatusHandler g_status = nullptr;
+AllowDestructiveHandler g_allowDestructive = nullptr;
+SetAllowDestructiveHandler g_setAllowDestructive = nullptr;
 
 } // namespace
 
@@ -21,6 +23,12 @@ void setHandlers(StartHandler start, StopHandler stop,
     g_stop = stop;
     g_applyPort = applyPort;
     g_status = status;
+}
+
+void setDestructiveHandlers(AllowDestructiveHandler get,
+                            SetAllowDestructiveHandler set) {
+    g_allowDestructive = get;
+    g_setAllowDestructive = set;
 }
 
 core::Result<void> start(int port) {
@@ -50,6 +58,19 @@ LiveStatus status() {
         return LiveStatus{};  // 未装配 = 全空（running=false / port=0 / 无错误）
     }
     return g_status();
+}
+
+bool allowDestructive() {
+    if (g_allowDestructive == nullptr) return false;  // 未装配 = 关（fail-closed）
+    return g_allowDestructive();
+}
+
+core::Result<void> setAllowDestructive(bool on) {
+    if (g_setAllowDestructive == nullptr) {
+        return core::Result<void>::fail(core::ErrorCode::Internal,
+                                        "MCP 服务未装配");
+    }
+    return g_setAllowDestructive(on);
 }
 
 }  // namespace app::mcp

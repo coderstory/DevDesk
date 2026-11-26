@@ -166,6 +166,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_proposals.cpp
     # 需-9 用量告警：纯判定（两档阈值 + 每档每日一次节流 + 跨档独立）+ 持久化往返
     test_modules/test_usage_alert.cpp
+    # bug476：安装镜像源设置的持久化往返（缺键旧文件 = 空；清空覆盖）
+    test_modules/test_memory_mirror_settings.cpp
     # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
     test_modules/test_memory_collect_wiring.cpp
     # 池3 G-1 控耗接线：infer 提炼闸（硬档恰等越线/每小时节流）+ 暂存队列 +
@@ -253,6 +255,10 @@ add_executable(devdesk_tests
     test_modules/test_schedule_engine.cpp
     # 波 S7a 列表页/模块装配：装配排序/开关落库/归档折叠/系统段空注册表/注册表项完整
     test_modules/test_schedule_ui_list.cpp
+    # need453 待办到期提醒：到期投递/同截止去重/完成归档排除/节流/单轮上限下轮补投
+    test_modules/test_todo_due_watcher.cpp
+    # need455 每小时整点数据库备份：跨点触发/不足一小时不备/保留份数裁剪/开关/失败路径
+    test_modules/test_db_backup_watcher.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp
@@ -685,7 +691,6 @@ foreach(_probe_source ${_devdesk_probe_sources})
         ${CMAKE_SOURCE_DIR}/src/module_wallpaper
     )
     target_link_libraries(${_probe_name} PRIVATE
-        devdesk_home_anim
         devdesk_module_home
         devdesk_module_markdown
         devdesk_module_notepad
@@ -700,6 +705,9 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_release
         devdesk_module_schedule
         devdesk_module_terminal
+        # 不能提前到 module_* 之前：静态库单趟解析，home/settings 模块引用
+        # home_anim::* 符号，提前列时链接必报 undefined reference。
+        devdesk_home_anim
     )
     if(TARGET devdesk_terminal_bridge)
         target_link_libraries(${_probe_name} PRIVATE devdesk_terminal_bridge)

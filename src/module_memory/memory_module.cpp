@@ -52,6 +52,7 @@ void MemoryModule::onStart() {
     //（compose 每帧 refresh 也会同步；此处覆盖"启动引擎后未再切页"的首帧）
     panel_.refresh(true);
     refreshLlmKeyState();  // need256：app_secrets → 掩码缓存（配置卡两态数据源）
+    refreshMirrorInputs();  // bug476：安装镜像源输入回显（panel_settings.json）
 }
 
 void MemoryModule::onStop() {
@@ -98,6 +99,37 @@ void MemoryModule::clearConfiguredLlmKey() {
     engine::clearLlmKeyFromStore();
     refreshLlmKeyState();
     showToast("已清除", "提炼 API key 已从本机数据库删除");
+}
+
+// ── bug476：安装镜像源（panel_settings.json；空 = 回退环境变量）──
+
+void MemoryModule::refreshMirrorInputs() {
+    const auto snap = panel_.snapshot();
+    if (!snap) return;
+    mirrorIndexInput_ = snap->settings.pipIndexUrl;
+    mirrorExtraInput_ = snap->settings.pipExtraIndexUrl;
+}
+
+void MemoryModule::saveMirrorSettings() {
+    const auto r = panel_.setPipMirror(mirrorIndexInput_, mirrorExtraInput_);
+    refreshMirrorInputs();  // 回显 trim 后的落盘值
+    if (r.isFail()) {
+        showToast("保存失败", "镜像设置写入失败：" + r.errorMessage(), true);
+        return;
+    }
+    showToast("已保存", "安装镜像源已生效，下次安装引擎使用");
+}
+
+void MemoryModule::clearMirrorSettings() {
+    mirrorIndexInput_.clear();
+    mirrorExtraInput_.clear();
+    const auto r = panel_.setPipMirror("", "");
+    refreshMirrorInputs();
+    if (r.isFail()) {
+        showToast("清除失败", "镜像设置写入失败：" + r.errorMessage(), true);
+        return;
+    }
+    showToast("已清除", "安装镜像源已清空，回退环境变量/直连 PyPI");
 }
 
 void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {

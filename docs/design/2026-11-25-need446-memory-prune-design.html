@@ -1,0 +1,886 @@
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  记忆修剪与管理（need#446）：正常 / 空 / 加载 / 加载失败 / 删除中 / 确认弹窗（单删·批删·全清）/ 全文。
+  零外链自包含：样式内联、无框架、无网络请求；双击直开。
+  参数对位 docs/design/2026-11-25-need446-memory-prune-design.md（浅色 token）。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆修剪 · UI 校准 demo（need#446）</title>
+<style>
+  :root{
+    --primary:#07C160; --primary-hover:#06AD56; --primary-pressed:#059048;
+    --primary-soft:#E8F8EE; --primary-text:#157A4E;
+    --surface:#FFFFFF; --background:#F5FAF7; --hover:#EEF6F1; --active:#E2F0E8;
+    --border:#E5E7EB; --border-muted:#F3F4F6;
+    --text:#1F2937; --text-2:#4B5563; --text-3:#6B6D80; --disabled:#6B6D80;
+    --error:#EF4444; --error-text:#B91C1C; --warning:#F59E0B; --warning-text:#B45309;
+    --r-sm:6px; --r:10px; --r-lg:14px; --r-pill:999px;
+    --sidebar:#EBF6EF;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#E9EDF0;color:var(--text);
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif;}
+  button{font-family:inherit}
+  .demobar{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    padding:10px 16px;background:#111827;color:#F9FAFB;font-size:12px}
+  .demobar .grp{display:flex;gap:6px;align-items:center;padding-right:12px;border-right:1px solid #374151}
+  .demobar .grp:last-child{border-right:0}
+  .demobar button{height:26px;padding:0 10px;border-radius:6px;border:1px solid #374151;background:#1F2937;
+    color:#E5E7EB;font-size:12px;cursor:pointer}
+  .demobar button:hover{background:#374151}
+  .demobar button.on{background:var(--primary);border-color:var(--primary);color:#06251A;font-weight:600}
+  .demobar .note{color:#9CA3AF;font-size:11px;line-height:1.5}
+  .frame-wrap{margin:16px auto;width:max-content}
+  .app-frame{position:relative;display:flex;background:var(--background);overflow:hidden;
+    zoom:1;border:1px solid #CBD5E1;border-radius:12px;box-shadow:0 12px 40px rgba(15,23,42,.18)}
+  .app-frame[data-size="1600"]{width:1600px;height:1000px;zoom:.8}
+  .app-frame[data-size="1000"]{width:1000px;height:640px;zoom:1}
+  .sidebar{width:208px;flex:0 0 208px;background:var(--sidebar);padding:20px 12px;display:flex;flex-direction:column;gap:4px}
+  .logo{display:flex;align-items:center;gap:8px;padding:0 8px 16px;font-weight:600;font-size:14px;color:var(--text)}
+  .logo .dot{width:22px;height:22px;border-radius:7px;background:var(--primary);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:13px}
+  .nav-item{height:40px;border-radius:8px;display:flex;align-items:center;gap:10px;padding:0 12px;
+    font-size:14px;color:var(--text-2)}
+  .nav-item .ico{width:16px;text-align:center;font-size:13px;color:var(--text-3)}
+  .nav-item.active{background:var(--surface);color:var(--text);font-weight:600}
+  .nav-item.active .ico{color:var(--primary-text)}
+  .page{flex:1;min-width:0;display:flex;flex-direction:column;height:100%}
+  .page-inner{padding:0 32px;display:flex;flex-direction:column;height:100%}
+  .page-title{height:32px;line-height:32px;font-size:24px;font-weight:600;margin:0;flex:0 0 32px;margin-top:4px}
+  .tabs{display:flex;gap:4px;align-items:flex-end;height:40px;flex:0 0 40px;margin-top:16px}
+  .tab{height:40px;border:0;background:transparent;padding:0 16px;font-size:14.4px;color:var(--text-2);
+    position:relative;cursor:pointer;display:flex;align-items:center}
+  .tab.on{color:var(--text);font-weight:600}
+  .tab.on::after{content:"";position:absolute;left:12px;right:12px;bottom:0;height:2px;background:var(--primary);border-radius:2px}
+  .content{flex:1;min-height:0;overflow-y:auto;padding-top:16px;padding-bottom:16px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+  .toolbar{padding:12px;display:flex;flex-direction:column;gap:8px}
+  .rowA{display:flex;gap:10px;align-items:center}
+  .search{flex:1;height:32px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);
+    display:flex;align-items:center;padding:0 10px 0 12px;gap:8px;color:var(--text-3);font-size:13px;min-width:0}
+  .search input{flex:1;min-width:0;border:0;outline:0;font-size:13px;color:var(--text);background:transparent}
+  .search input::placeholder{color:var(--text-3)}
+  .search .mag{width:12px;height:12px;border:1.6px solid var(--text-3);border-radius:50%;position:relative;flex:0 0 12px}
+  .search .mag::after{content:"";position:absolute;width:5px;height:1.6px;background:var(--text-3);
+    transform:rotate(45deg);right:-4px;bottom:-1px;border-radius:2px}
+  .search .clear{border:0;background:transparent;color:var(--text-3);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;border-radius:4px}
+  .search .clear:hover{color:var(--text);background:var(--hover)}
+  .dd{position:relative;width:120px;flex:0 0 120px}
+  .dd .btn{width:120px;height:32px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);
+    display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 12px;font-size:13px;color:var(--text);cursor:pointer}
+  .dd .btn:hover{border-color:var(--primary)}
+  .dd .chev{width:7px;height:7px;border-right:1.6px solid var(--text-3);border-bottom:1.6px solid var(--text-3);
+    transform:rotate(45deg) translateY(-2px)}
+  .dd .menu{position:absolute;right:0;top:36px;width:120px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r);padding:4px;box-shadow:0 8px 24px rgba(16,54,38,.09);display:none;z-index:5}
+  .dd.open .menu{display:block}
+  .dd .opt{height:30px;display:flex;align-items:center;padding:0 10px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--text)}
+  .dd .opt:hover{background:var(--hover)}
+  .dd .opt.on{background:var(--primary-soft);color:var(--primary-text);font-weight:600}
+  .danger-text{height:32px;padding:0 10px;min-width:88px;border:0;border-radius:var(--r);background:transparent;
+    font-size:13px;color:var(--error-text);cursor:pointer;white-space:nowrap}
+  .danger-text:hover{background:rgba(239,68,68,.08)}
+  .danger-text:active{background:rgba(239,68,68,.14)}
+  .danger-text:disabled{color:var(--disabled);cursor:default;background:transparent}
+  .rowB{display:flex;align-items:center;justify-content:space-between;gap:12px;height:24px}
+  .chips{display:flex;gap:6px;flex-wrap:nowrap;overflow:hidden}
+  .chip{height:24px;padding:0 12px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);
+    color:var(--text-2);font-size:11.5px;cursor:pointer;white-space:nowrap;line-height:22px}
+  .chip.on{background:var(--primary-soft);border-color:var(--primary);color:var(--primary-text)}
+  .count{font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+  .progress{display:flex;flex-direction:column;justify-content:center;gap:6px;height:44px;padding:0 16px;
+    background:var(--primary-soft);border:1px solid var(--primary);border-radius:var(--r);margin:8px 0}
+  .progress .line{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:var(--primary-text);font-weight:600}
+  .progress .line .hint{font-size:12px;color:var(--text-3);font-weight:400}
+  .track{height:4px;border-radius:var(--r-pill);background:var(--active);overflow:hidden}
+  .track > i{display:block;height:100%;background:var(--primary);width:0%;transition:width .2s ease-out}
+  .progress.indeterminate .track > i{width:100%;background:var(--active)}
+  .list-card{margin-top:8px;overflow:hidden}
+  .list-head{height:44px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 16px;border-bottom:1px solid var(--border-muted)}
+  .head-left{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2);min-width:0}
+  .head-right{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-3);white-space:nowrap}
+  .link-btn{border:0;background:transparent;color:var(--primary-text);font-size:12px;cursor:pointer;padding:2px 4px;border-radius:4px}
+  .link-btn:hover{color:var(--primary-hover);background:var(--primary-soft)}
+  .cb{width:18px;height:18px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);
+    flex:0 0 18px;position:relative;cursor:pointer}
+  .cb:hover{border-color:var(--primary)}
+  .cb.on{background:var(--primary);border-color:var(--primary)}
+  .cb.on::after{content:"";position:absolute;left:6px;top:3px;width:4px;height:8px;
+    border-right:2px solid #fff;border-bottom:2px solid #fff;transform:rotate(42deg)}
+  .cb.disabled{border-color:var(--border-muted);cursor:default}
+  .cb.disabled:hover{border-color:var(--border-muted)}
+  .batch{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;
+    background:var(--primary-soft);border-bottom:1px solid var(--border-muted);animation:fade .12s ease-out}
+  .batch .sel{font-size:13px;font-weight:600;color:var(--primary-text)}
+  .batch .btns{display:flex;align-items:center;gap:8px}
+  .btn{height:32px;border-radius:var(--r);border:1px solid transparent;font-size:13px;cursor:pointer;padding:0 14px;
+    transition:background .12s ease-out,color .12s ease-out,transform .24s cubic-bezier(.34,1.56,.64,1)}
+  .btn:active{transform:scale(.96)}
+  .btn.text{background:transparent;color:var(--primary-text)}
+  .btn.text:hover{background:var(--hover)}
+  .btn.secondary{background:#F2F2F2;color:var(--text);border-color:var(--border)}
+  .btn.secondary:hover{background:var(--hover)}
+  .btn.danger{background:var(--error);color:#fff;font-weight:600}
+  .btn.danger:hover{background:#DC2626}
+  .btn.danger:active{background:#B91C1C}
+  .btn:disabled{background:var(--primary-soft);color:var(--disabled);cursor:default;transform:none}
+  .row{height:68px;display:flex;align-items:flex-start;padding:8px 16px;gap:12px;position:relative;cursor:pointer;
+    border-bottom:1px solid var(--border-muted);transition:background .12s ease-out}
+  .row:hover{background:var(--hover)}
+  .row.on{background:var(--primary-soft)}
+  .row.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--primary)}
+  .row.deleting{cursor:default}
+  .row .cb{margin-top:17px}
+  .row .body{flex:1;min-width:0}
+  .row .text{font-size:14px;line-height:20px;color:var(--text);height:40px;overflow:hidden;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all}
+  .row .meta{font-size:12px;line-height:16px;color:var(--text-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .actions{display:flex;gap:8px;align-items:center;margin-top:14px;flex:0 0 auto}
+  .mini{height:24px;padding:0 8px;border:0;border-radius:6px;background:transparent;font-size:13px;cursor:pointer}
+  .mini.full{color:var(--primary-text)}
+  .mini.full:hover{background:var(--hover)}
+  .mini.del{color:var(--error-text)}
+  .mini.del:hover{background:rgba(239,68,68,.10)}
+  .mini.del:active{background:rgba(239,68,68,.18)}
+  .mini:disabled{color:var(--disabled);background:transparent;cursor:default}
+  .footer{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px}
+  .footer .note{font-size:12px;color:var(--text-3)}
+  .empty{height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center}
+  .empty .ico{width:40px;height:40px;border-radius:50%;background:var(--primary-soft);color:var(--primary-text);
+    display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:4px}
+  .empty .m{font-size:14px;font-weight:600;color:var(--text)}
+  .empty .g{font-size:12px;color:var(--text-2);max-width:520px;line-height:18px}
+  .empty .btn{margin-top:6px}
+  .skeleton-head{padding-right:16px}
+  .sk{height:68px;padding:22px 16px 0 46px;border-bottom:1px solid var(--border-muted)}
+  .sk i{display:block;border-radius:6px;background:var(--border-muted);height:12px;margin-bottom:6px}
+  .scrim{position:absolute;inset:0;background:rgba(15,23,42,.35);display:none;z-index:20}
+  .scrim.on{display:block}
+  .dialog{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--surface);
+    border-radius:var(--r-lg);box-shadow:0 18px 48px rgba(15,23,42,.22);display:none;z-index:21;overflow:hidden}
+  .dialog.on{display:flex;flex-direction:column}
+  .dlg-head{height:69px;padding:16px 24px 0;display:flex;align-items:center;gap:12px}
+  .dlg-head .ti{width:20px;text-align:center;font-size:16px}
+  .dlg-head h3{margin:0;font-size:20px;font-weight:700;line-height:28px}
+  .dlg-head .line{position:absolute;left:0;right:0;top:68px;height:1px;background:var(--border-muted)}
+  .dlg-body{padding:0 24px;font-size:13px;line-height:20px;color:var(--text-2);overflow:hidden}
+  .dlg-body p{margin:0 0 12px}
+  .dlg-body .preview{color:var(--text);background:var(--background);border-radius:8px;padding:8px 10px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dlg-input{width:100%;height:40px;border:1px solid var(--border);border-radius:var(--r);padding:0 12px;
+    font-size:14px;color:var(--text);outline:none;background:var(--surface)}
+  .dlg-input:focus{border-color:var(--primary)}
+  .dlg-foot{height:73px;border-top:1px solid var(--border-muted);display:flex;align-items:center;justify-content:flex-end;
+    gap:8px;padding:0 24px;margin-top:auto}
+  .dlg-foot .btn{min-width:96px;height:40px}
+  .dlg-foot .cancel{background:var(--surface);border-color:var(--border);color:var(--text)}
+  .dlg-foot .cancel:hover{background:var(--hover)}
+  .dlg-foot .primary{background:var(--primary);color:#fff;border:0;font-weight:600}
+  .dlg-foot .primary:hover{background:var(--primary-hover)}
+  .dlg-foot .primary:disabled{background:var(--primary-soft);color:var(--disabled)}
+  .dlg-scroll{overflow-y:auto;max-height:262px;padding-right:6px}
+  .fulltext{font-size:13px;line-height:20px;color:var(--text);white-space:pre-wrap;word-break:break-word}
+  .toast{position:absolute;left:50%;bottom:28px;transform:translateX(-50%) translateY(6px);background:rgba(17,24,39,.9);
+    color:#fff;font-size:12px;border-radius:8px;padding:8px 14px;opacity:0;pointer-events:none;transition:opacity .2s ease-out,transform .2s ease-out;z-index:30;white-space:nowrap}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .muted{color:var(--text-3)}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  #selfcheck{position:fixed;left:8px;bottom:8px;font-size:11px;color:#065F46;background:#ECFDF5;
+    border:1px solid #A7F3D0;border-radius:6px;padding:4px 8px;display:none}
+</style>
+</head>
+<body>
+<div class="demobar">
+  <div class="grp">
+    <strong style="font-size:12px">状态</strong>
+    <button data-mode="normal" class="on">正常</button>
+    <button data-mode="empty">空</button>
+    <button data-mode="loading">加载</button>
+    <button data-mode="error">加载失败</button>
+    <button data-mode="deleting">删除中</button>
+    <button data-mode="dialog-one">确认·单删</button>
+    <button data-mode="dialog-batch">确认·批删</button>
+    <button data-mode="dialog-clear">确认·全清</button>
+    <button data-mode="dialog-full">全文</button>
+  </div>
+  <div class="grp">
+    <strong style="font-size:12px">窗口</strong>
+    <button data-size="1000" class="on">1000×640</button>
+    <button data-size="1600">1600×1000（缩放 0.8）</button>
+  </div>
+  <div class="grp" style="display:none"><span id="modeMirror"></span></div>
+  <div class="note">demo 仅视觉校准、不是实现蓝图。来源下拉为 P3 数据面就绪后的形态；未就绪时不渲染。删除/全清均为本地模拟。</div>
+</div>
+
+<div class="frame-wrap">
+  <div class="app-frame" id="frame" data-size="1000">
+    <aside class="sidebar">
+      <div class="logo"><span class="dot">D</span>DevDesk</div>
+      <div class="nav-item"><span class="ico">⌂</span>首页</div>
+      <div class="nav-item"><span class="ico">▤</span>笔记</div>
+      <div class="nav-item"><span class="ico">☑</span>待办</div>
+      <div class="nav-item"><span class="ico">◷</span>定时</div>
+      <div class="nav-item"><span class="ico">◐</span>Claude</div>
+      <div class="nav-item active"><span class="ico">✦</span>记忆</div>
+      <div class="nav-item"><span class="ico">⌘</span>MCP</div>
+      <div class="nav-item" style="margin-top:auto"><span class="ico">⚙</span>设置</div>
+    </aside>
+
+    <main class="page">
+      <div class="page-inner">
+        <h1 class="page-title">记忆</h1>
+        <div class="tabs" id="tabs">
+          <button class="tab" data-tab="0">主控台</button>
+          <button class="tab" data-tab="1">记忆审核 (3)</button>
+          <button class="tab" data-tab="2">配置</button>
+          <button class="tab on" data-tab="3">记忆修剪</button>
+        </div>
+        <div class="content" id="content">
+          <section class="toolbar card">
+            <div class="rowA">
+              <label class="search">
+                <span class="mag"></span>
+                <input id="kw" placeholder="搜索记忆内容…" autocomplete="off">
+                <button class="clear" id="kwClear" title="清除" style="display:none">×</button>
+              </label>
+              <div class="dd" id="srcDD">
+                <button class="btn" id="srcBtn"><span id="srcLabel">全部来源</span><span class="chev"></span></button>
+                <div class="menu" id="srcMenu">
+                  <div class="opt on" data-src="0">全部来源</div>
+                  <div class="opt" data-src="1">自动采集</div>
+                  <div class="opt" data-src="2">手动添加</div>
+                </div>
+              </div>
+              <button class="danger-text" id="clearAllBtn">全部清空</button>
+            </div>
+            <div class="rowB">
+              <div class="chips" id="timeChips">
+                <button class="chip on" data-time="0">全部</button>
+                <button class="chip" data-time="30">30 天未更新</button>
+                <button class="chip" data-time="90">90 天未更新</button>
+                <button class="chip" data-time="180">180 天未更新</button>
+              </div>
+              <div class="count" id="count">共 0 条 · 筛选后 0 条</div>
+            </div>
+          </section>
+
+          <div id="progressHost"></div>
+          <section id="listHost"></section>
+        </div>
+      </div>
+    </main>
+
+    <div class="scrim" id="scrim"></div>
+    <div class="dialog" id="dialog"></div>
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+<div id="selfcheck"></div>
+
+<script>
+(function(){
+  "use strict";
+  window.addEventListener("error", (e) => {
+    const o = document.getElementById("selfcheck");
+    if (o){ o.textContent = "JS-ERROR: " + e.message; o.dataset.result = "FAIL"; o.style.display = "block"; }
+  });
+  const DAY = 86400000;
+  const now = Date.now();
+  const RAW = [
+    ["构建与测试一律走 scripts/build-test-run.sh；手敲 cmake 会造成构建目录漂移，并漏掉脚本封装的 EUI-NEO 定位、ccache 与发布形态守卫。", 3, 1],
+    ["DevDesk 的集成分支是 dev，不是 master；master 只用于发版。分支绿不等于合并绿，merge 后必须在合并后的 dev 树再跑一次完整门禁。", 5, 1],
+    ["模块之间禁止互相依赖：module_memory 不得 include 其它 module_* 的头；跨模块能力一律经 core 或 platform 的接口。", 9, 1],
+    ["EUI-NEO 是仓内 submodule，不锁版本；先用 fork/main 最新，遇到能力缺失优先修 EUI-NEO 而不是在 DevDesk 里做 workaround。", 12, 2],
+    ["测试用例必须按「功能 × 场景 × 边界」写，每条注明防的什么事故；不看行覆盖率，答不出三问的用例不写。", 15, 1],
+    ["构建与测试一律走 scripts/build-test-run.sh，手敲 cmake 会漏掉工具链与守卫约定。", 16, 1],
+    ["记忆引擎 telemem 的条目删除不可逆；1.10.1 无遗忘过滤缝，setMemoryForgotten(true) 实际映射到 delete_memory。", 22, 1],
+    ["面板弹窗统一走 ui_kit::drawDialogShell：头 69、底 73、内容区唯一内滚；主按钮同视口唯一，危险动作用 dangerConfirm。", 28, 2],
+    ["配色以 core::theme 为准，绿色体系；旧橙色方案 B（Claude Clay #D97757）已废弃，不得回流到任何新界面。", 30, 1],
+    ["窗口最小尺寸 1000×640 逻辑单位；所有自适应必须经过 core::window_layout 的同一换算，不得硬编码放大或压缩。", 33, 1],
+    ["API 密钥只存本机 app_secrets 表，禁止进入系统钥匙串、环境变量或日志；验证器密钥只经 otpauth 链接一次性交付。", 41, 2],
+    ["记忆页的三视图各自使用独立滚动容器，滚动根必须定位在 TAB 行下方；否则整面可命中会吞掉页头点击。", 47, 1],
+    ["提交信息使用 docs:/feat:/fix:/refactor: 前缀，正文中文；提交前核对 diff 清单，禁止把临时文件与测试脏数据带进历史。", 52, 1],
+    ["计划中的每个 task 必须给出完整可粘贴的代码块与断言；描述式计划会让审查者先猜意图再判断，容易误判且耗时翻倍。", 61, 2],
+    ["跨仓库改动产补丁后在非隔离任务里应用；隔离任务无法对其它仓库执行 git 操作。", 66, 1],
+    ["删除记忆前确认引擎处于 Running；引擎未运行时删除必然失败，界面应先引导启动引擎而不是反复重试。", 74, 1],
+    ["列表渲染一次只画 50 行，尾部提供再显示按钮；单帧元素数随列表线性膨胀曾导致主线程冻结。", 81, 1],
+    ["所有产出必须中文：代码注释、commit message、配置说明与文档；技术专有名词保留英文。", 88, 2],
+    ["记忆检索阈值 0.4 是校准结果，不能随意上调；上调会杀掉近逐字提问的注入，下调会让负对照泄漏。", 95, 1],
+    ["模块级单例由装配层持有强引用，禁止在回调里捕获裸 this；页面销毁后回调仍可能触发。", 103, 1],
+    ["弹窗内容超出时由内容区自包滚动；壳本身不滚。高度按内容自然高供给，再受视口钳制。", 110, 2],
+    ["发布形态允许第三方开源依赖，优先静态链接；只能动态链接的由安装程序携带并保证加载路径。", 124, 1],
+    ["记忆修剪视图与记忆审核的「合并」提案分工：重复治理走合并提案，手动修剪只做删除，不引入重复检测启发式。", 140, 1],
+    ["空态统一走 ui_kit::emptyState：图标 + 主句 + 引导句 + 就近行动，禁止插画与情绪化文案。", 155, 1],
+    ["全清记忆与清除面板库是两件事：前者删引擎条目，后者只清提案与账本；文案不得混用「清除」「清空」。", 172, 1],
+    ["每个可交互元素必须写清四项：触发方式、状态反馈、迁移去向、边界行为；「由实现决定」视为设计未完成。", 190, 1],
+    ["同一文件同一时刻只能有一个写者；并发任务开工前先列白名单做交叠检查。", 205, 2],
+    ["验证声明必须逐用例对账并带分母；「全量/闭环」在未逐条核对前是禁词。", 230, 1],
+    ["演示 demo 只做视觉校准，不得当作实现蓝图；实现以设计文档的参数表为准。", 260, 1],
+  ];
+  const srcName = {1:"自动采集", 2:"手动添加"};
+
+  const state = {
+    mode: "normal",
+    errorKind: "engine",
+    items: [],
+    keyword: "",
+    time: 0,
+    src: 0,
+    selected: new Set(),
+    shown: 50,
+    dlg: null,
+    dlgItem: null,
+    clearInput: "",
+    progress: {done: 0, total: 0, clearAll: false},
+    timer: null,
+    fastForward: false,
+  };
+
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  function seed(){
+    state.items = RAW.map((r, i) => ({
+      id: "m" + (i+1),
+      text: r[0],
+      updatedAt: now - r[1]*DAY,
+      src: r[2],
+    }));
+  }
+  seed();
+
+  function fmtDate(ts){
+    const d = new Date(ts);
+    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0"), day = String(d.getDate()).padStart(2,"0");
+    const sameYear = y === new Date(now).getFullYear();
+    return (sameYear ? "" : y + "-") + m + "-" + day;
+  }
+  function idleText(ts){
+    if (!ts) return "更新时间未知";
+    const days = Math.floor((now - ts) / DAY);
+    if (days <= 0) return "更新于 今天";
+    return "更新于 " + fmtDate(ts) + "（" + days + " 天未更新）";
+  }
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  function filtered(){
+    let list = state.items.slice();
+    if (state.time > 0){
+      const cut = now - state.time*DAY;
+      list = list.filter(it => it.updatedAt > 0 && it.updatedAt < cut);
+    }
+    if (state.src > 0) list = list.filter(it => it.src === state.src);
+    const kw = state.keyword.trim().toLowerCase();
+    if (kw) list = list.filter(it => it.text.toLowerCase().includes(kw));
+    list.sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0) || (a.id < b.id ? -1 : 1));
+    return list;
+  }
+  function staleExcluded(){
+    if (!state.time) return 0;
+    const cut = now - state.time*DAY;
+    return state.items.filter(it => !it.updatedAt || it.updatedAt >= cut).length;
+  }
+
+  function toast(title, msg){
+    const el = $("#toast");
+    el.textContent = title + (msg ? " · " + msg : "");
+    el.classList.add("on");
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove("on"), 2200);
+  }
+
+  function renderTabs(){
+    $$(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === "3"));
+  }
+
+  function renderToolbar(){
+    const f = filtered();
+    const total = state.items.length;
+    let txt = "共 " + total + " 条 · 筛选后 " + f.length + " 条";
+    const ex = staleExcluded();
+    if (ex > 0) txt += "（" + ex + " 条无时间信息或未超过阈值未纳入）";
+    $("#count").textContent = txt;
+    $("#kw").value = state.keyword;
+    $("#kwClear").style.display = state.keyword ? "block" : "none";
+    $$("#timeChips .chip").forEach(c => c.classList.toggle("on", +c.dataset.time === state.time));
+    $("#srcLabel").textContent = ["全部来源","自动采集","手动添加"][state.src];
+    $$("#srcMenu .opt").forEach(o => o.classList.toggle("on", +o.dataset.src === state.src));
+    const noData = state.items.length === 0;
+    $("#clearAllBtn").disabled = noData || state.mode === "deleting";
+    $("#kw").disabled = state.mode === "deleting";
+    $("#srcBtn").disabled = state.mode === "deleting";
+    $("#srcBtn").style.color = state.mode === "deleting" ? "var(--disabled)" : "var(--text)";
+    $$("#timeChips .chip").forEach(c => {
+      c.disabled = state.mode === "deleting";
+      c.style.color = state.mode === "deleting" ? "var(--disabled)" : "";
+    });
+  }
+
+  function filteredHintEmpty(){
+    const filtersActive = state.keyword.trim() || state.time || state.src;
+    return state.items.length > 0 && filtersActive;
+  }
+
+  function renderProgress(){
+    const host = $("#progressHost");
+    if (state.mode !== "deleting"){
+      host.innerHTML = "";
+      return;
+    }
+    const p = state.progress;
+    const pct = p.clearAll ? 0 : (p.total ? Math.min(100, Math.round(p.done / p.total * 100)) : 0);
+    const left = p.clearAll ? "正在清空全部记忆…已删除 " + p.done + " 条"
+                            : "正在删除 " + p.done + " / " + p.total + " 条…";
+    host.innerHTML = '<div class="progress ' + (p.clearAll ? "indeterminate" : "") + '">' +
+      '<div class="line"><span>' + left + '</span><span class="hint">请勿关闭页面</span></div>' +
+      '<div class="track"><i style="width:' + pct + '%"></i></div></div>';
+  }
+
+  function skeleton(){
+    const rows = [0,1,2].map(() => '<div class="sk"><i style="width:60%"></i><i style="width:38%;height:10px"></i></div>').join("");
+    return '<section class="list-card card">' +
+      '<div class="list-head"><div class="head-left"></div><div class="head-right skeleton-head">正在读取记忆…</div></div>' +
+      rows + '</section>';
+  }
+
+  function emptyBlock(kind){
+    if (kind === "filtered"){
+      return '<div class="empty">' +
+        '<div class="ico">⌕</div><div class="m">没有匹配的记忆</div>' +
+        '<div class="g">换个关键词，或把时间范围放宽。</div>' +
+        '<button class="btn secondary" id="resetFilters">清除筛选</button></div>';
+    }
+    return '<div class="empty">' +
+      '<div class="ico">✦</div><div class="m">记忆库还是空的</div>' +
+      '<div class="g">Claude 在协作中沉淀的长期记忆会出现在这里。</div></div>';
+  }
+
+  function errorBlock(){
+    if (state.errorKind === "engine"){
+      return '<div class="empty">' +
+        '<div class="ico" style="background:#FEF3C7;color:var(--warning-text)">!</div>' +
+        '<div class="m">记忆引擎未运行</div>' +
+        '<div class="g">先到主控台启动引擎，再回来修剪。</div>' +
+        '<button class="btn secondary" id="goConsole">去主控台</button></div>';
+    }
+    return '<div class="empty">' +
+      '<div class="ico" style="background:#FEE2E2;color:var(--error-text)">△</div>' +
+      '<div class="m">没能读取记忆列表</div>' +
+      '<div class="g">HTTP 500 · 引擎工具错误：get_memories 调用失败</div>' +
+      '<div class="g">检查引擎状态后重试。</div>' +
+      '<button class="btn secondary" id="retryLoad">重试</button></div>';
+  }
+
+  function rowHtml(it, selected, disabled){
+    return '<div class="row ' + (selected ? "on " : "") + (disabled ? "deleting" : "") + '" data-id="' + it.id + '">' +
+      '<div class="cb ' + (selected ? "on " : "") + (disabled ? "disabled" : "") + '"></div>' +
+      '<div class="body">' +
+        '<div class="text">' + escapeHtml(it.text) + '</div>' +
+        '<div class="meta">' + idleText(it.updatedAt) + '</div>' +
+      '</div>' +
+      '<div class="actions">' +
+        '<button class="mini full" data-act="full" data-id="' + it.id + '">全文</button>' +
+        '<button class="mini del" data-act="del" data-id="' + it.id + '" ' + (disabled ? "disabled" : "") + '>删除</button>' +
+      '</div></div>';
+  }
+
+  function renderList(){
+    const host = $("#listHost");
+    if (state.mode === "loading"){ host.innerHTML = skeleton(); bindList(); return; }
+    if (state.mode === "error"){ host.innerHTML = errorBlock(); bindList(); return; }
+
+    const f = filtered();
+    if (state.items.length === 0){
+      host.innerHTML = emptyBlock("empty"); bindList(); return;
+    }
+    if (f.length === 0){
+      host.innerHTML = emptyBlock(filteredHintEmpty() ? "filtered" : "empty"); bindList(); return;
+    }
+
+    const shown = Math.min(state.shown, f.length);
+    const selectedOfFiltered = f.filter(it => state.selected.has(it.id)).length;
+    const allChecked = selectedOfFiltered === f.length && f.length > 0;
+    const disabled = state.mode === "deleting" || state.mode === "empty";
+
+    let html = '<section class="list-card card">';
+    html += '<div class="list-head">' +
+      '<div class="head-left">' +
+        '<div class="cb ' + (allChecked ? "on " : "") + (disabled ? "disabled" : "") + '" id="cbAll"></div>' +
+        '<span>全选当前筛选（' + f.length + ' 条）</span>' +
+      '</div>' +
+      '<div class="head-right"><button class="link-btn" id="refreshBtn">刷新</button>' +
+        '<span>共 ' + state.items.length + ' 条 · 已选 ' + state.selected.size + '</span></div>' +
+      '</div>';
+
+    if (state.selected.size > 0 && state.mode !== "deleting"){
+      html += '<div class="batch"><span class="sel">已选 ' + state.selected.size + ' 条</span>' +
+        '<span class="btns"><button class="btn text" id="clearSel">取消选择</button>' +
+        '<button class="btn danger" id="delSel">删除所选 ' + state.selected.size + ' 条</button></span></div>';
+    }
+
+    for (let i = 0; i < shown; i++){
+      html += rowHtml(f[i], state.selected.has(f[i].id), disabled);
+    }
+
+    if (f.length > shown){
+      html += '<div class="footer"><span class="note">已显示 ' + shown + ' / ' + f.length + ' 条</span>' +
+        '<button class="btn secondary" id="moreBtn">再显示 50 条</button></div>';
+    } else if (f.length >= 50 || state.items.length > 0){
+      html += '<div class="footer"><span class="note">已显示 ' + shown + ' / ' + f.length + ' 条</span><span></span></div>';
+    }
+    html += '</section>';
+    host.innerHTML = html;
+    bindList();
+  }
+
+  function bindList(){
+    const host = $("#listHost");
+    $("#cbAll")?.addEventListener("click", () => {
+      if (state.mode === "deleting") return;
+      const f = filtered();
+      const all = f.every(it => state.selected.has(it.id));
+      if (all) state.selected.clear();
+      else f.forEach(it => state.selected.add(it.id));
+      render();
+    });
+    $$("#timeChips .chip").forEach(()=>{});
+    host.querySelectorAll(".row").forEach(row => {
+      row.addEventListener("click", (e) => {
+        if (state.mode === "deleting") return;
+        if (e.target.closest("[data-act]")) return;
+        const id = row.dataset.id;
+        if (state.selected.has(id)) state.selected.delete(id); else state.selected.add(id);
+        render();
+      });
+    });
+    host.querySelectorAll("[data-act]").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (state.mode === "deleting") return;
+        const it = state.items.find(x => x.id === btn.dataset.id);
+        if (!it) return;
+        if (btn.dataset.act === "full") openFull(it);
+        else openSingle(it);
+      });
+    });
+    $("#clearSel")?.addEventListener("click", () => { state.selected.clear(); render(); });
+    $("#delSel")?.addEventListener("click", () => {
+      if (state.selected.size === 0) return;
+      state.dlg = "batch";
+      state.dlgItem = null;
+      renderDialog();
+    });
+    $("#moreBtn")?.addEventListener("click", () => { state.shown += 50; render(); });
+    $("#refreshBtn")?.addEventListener("click", () => {
+      toast("已刷新", "列表已按引擎真值重读");
+      render();
+    });
+    $("#retryLoad")?.addEventListener("click", () => {
+      setMode("loading");
+      setTimeout(() => setMode("normal"), 700);
+    });
+    $("#goConsole")?.addEventListener("click", () => {
+      $$(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === "0"));
+      toast("演示", "实现时切到主控台 TAB");
+    });
+    $("#resetFilters")?.addEventListener("click", () => {
+      state.keyword = ""; state.time = 0; state.src = 0; state.selected.clear(); state.shown = 50;
+      render();
+    });
+  }
+
+  // ── 弹窗 ──────────────────────────────────────────────
+  function openSingle(it){
+    state.dlg = "one"; state.dlgItem = it;
+    renderDialog();
+  }
+  function openFull(it){
+    state.dlg = "full"; state.dlgItem = it;
+    renderDialog();
+  }
+  function openClear(){
+    if (state.items.length === 0 || state.mode === "deleting") return;
+    state.dlg = "clear"; state.clearInput = "";
+    renderDialog();
+  }
+
+  function dialogHtml(){
+    if (!state.dlg) return "";
+    if (state.dlg === "one"){
+      const it = state.dlgItem;
+      return '<div class="dlg-head" style="color:var(--error-text)"><span class="ti">⌫</span>' +
+        '<h3 style="color:var(--error-text)">删除这条记忆？</h3>' +
+        '<div class="line"></div></div>' +
+        '<div class="dlg-body"><div class="preview">' + escapeHtml(it.text) + '</div>' +
+        '<p style="margin-top:12px">删除后无法恢复，引擎将不再检索到这条内容。</p></div>' +
+        '<div class="dlg-foot"><button class="btn cancel" data-dlg="cancel">取消</button>' +
+        '<button class="btn danger" data-dlg="doOne">删除</button></div>';
+    }
+    if (state.dlg === "batch"){
+      const n = state.selected.size;
+      return '<div class="dlg-head" style="color:var(--error-text)"><span class="ti">⌫</span>' +
+        '<h3 style="color:var(--error-text)">删除已选 ' + n + ' 条记忆？</h3><div class="line"></div></div>' +
+        '<div class="dlg-body"><p>将删除已选的 ' + n + ' 条记忆。</p>' +
+        '<p>删除后无法恢复。此操作不影响你的文件与聊天记录。</p></div>' +
+        '<div class="dlg-foot"><button class="btn cancel" data-dlg="cancel">取消</button>' +
+        '<button class="btn danger" data-dlg="doBatch">删除 ' + n + ' 条</button></div>';
+    }
+    if (state.dlg === "clear"){
+      const armed = state.clearInput === "清空";
+      return '<div class="dlg-head" style="color:var(--error-text)"><span class="ti">△</span>' +
+        '<h3 style="color:var(--error-text)">清空全部记忆？</h3><div class="line"></div></div>' +
+        '<div class="dlg-body"><p>将删除本机记忆库中的全部 ' + state.items.length +
+        ' 条记忆，删除后无法恢复，Agent 的长期记忆会被清空。如确定，请输入「清空」二字。</p>' +
+        '<input class="dlg-input" id="clearInput" placeholder="输入：清空" value="' + escapeHtml(state.clearInput) + '"></div>' +
+        '<div class="dlg-foot"><button class="btn cancel" data-dlg="cancel">取消</button>' +
+        '<button class="btn primary" data-dlg="doClear" ' + (armed ? "" : "disabled") + '>清空全部</button></div>';
+    }
+    if (state.dlg === "full"){
+      const it = state.dlgItem;
+      return '<div class="dlg-head"><span class="ti" style="color:var(--primary-text)">✦</span>' +
+        '<h3>记忆全文</h3><div class="line"></div></div>' +
+        '<div class="dlg-body"><div class="dlg-scroll"><div class="fulltext">' + escapeHtml(it.text) + '</div></div></div>' +
+        '<div class="dlg-foot"><button class="btn cancel" data-dlg="cancel">关闭</button>' +
+        '<button class="btn primary" data-dlg="copy">复制全文</button></div>';
+    }
+    return "";
+  }
+
+  function renderDialog(){
+    const dlg = $("#dialog"), scrim = $("#scrim");
+    if (!state.dlg){ dlg.classList.remove("on"); scrim.classList.remove("on"); dlg.innerHTML = ""; return; }
+    const width = state.dlg === "one" ? 420 : 460;
+    const minHeight = state.dlg === "clear" ? 280 : (state.dlg === "full" ? 420 : 256);
+    dlg.style.width = width + "px";
+    dlg.style.minHeight = minHeight + "px";
+    dlg.innerHTML = dialogHtml();
+    dlg.classList.add("on");
+    scrim.classList.add("on");
+    $("#clearInput")?.addEventListener("input", (e) => {
+      state.clearInput = e.target.value;
+      const armed = state.clearInput === "清空";
+      const btn = $('[data-dlg="doClear"]');
+      if (btn) btn.disabled = !armed;
+    });
+    dlg.querySelectorAll("[data-dlg]").forEach(b => b.addEventListener("click", () => {
+      const act = b.dataset.dlg;
+      if (act === "cancel"){ state.dlg = null; renderDialog(); return; }
+      if (act === "copy"){
+        try { navigator.clipboard.writeText(state.dlgItem.text); } catch(err){}
+        toast("已复制", "记忆全文已进剪贴板");
+        return;
+      }
+      if (act === "doOne"){
+        const it = state.dlgItem;
+        state.dlg = null; renderDialog();
+        beginDelete([it.id], false, "单条记忆已从本机记忆库移除");
+        return;
+      }
+      if (act === "doBatch"){
+        const ids = Array.from(state.selected);
+        state.dlg = null; renderDialog();
+        state.selected.clear();
+        beginDelete(ids, false, "其余记忆不受影响");
+        return;
+      }
+      if (act === "doClear"){
+        state.dlg = null; renderDialog();
+        beginDelete(null, true, "共删除 " + state.items.length + " 条");
+        return;
+      }
+    }));
+  }
+
+  // ── 删除模拟 ──────────────────────────────────────────
+  function beginDelete(ids, clearAll, doneMsg){
+    state.mode = "deleting";
+    state.fastForward = false;
+    state.progress = {done: 0, total: clearAll ? 0 : (ids ? ids.length : 0), clearAll: !!clearAll};
+    render();
+    const tick = () => {
+      const p = state.progress;
+      p.done += state.fastForward ? 5 : 1;
+      if (clearAll){
+        const ceiling = Math.max(1, Math.min(30, p.done + 3));
+        if (p.done >= ceiling || state.fastForward){
+          clearInterval(state.timer); state.timer = null;
+          state.items = []; state.selected.clear(); state.mode = "normal";
+          toast("已清空全部记忆", doneMsg);
+          render();
+          return;
+        }
+      } else if (p.done >= p.total){
+        clearInterval(state.timer); state.timer = null;
+        state.items = state.items.filter(it => !ids.includes(it.id));
+        state.mode = "normal";
+        toast(ids.length === 1 ? "已删除" : "已删除 " + ids.length + " 条记忆", doneMsg);
+        render();
+        return;
+      }
+      renderProgress();
+    };
+    state.timer = setInterval(tick, 260);
+  }
+
+  function setMode(m){
+    if (state.timer){ clearInterval(state.timer); state.timer = null; }
+    state.dlg = null; state.dlgItem = null; state.clearInput = "";
+    state.selected.clear(); state.shown = 50;
+    state.mode = "normal";
+    if (m === "empty"){
+      state.items = [];
+      state.keyword = ""; state.time = 0; state.src = 0;
+    } else {
+      if (state.items.length === 0) seed();
+    }
+    if (m === "loading") state.mode = "loading";
+    if (m === "error") state.mode = "error";
+    if (m === "deleting"){
+      state.mode = "deleting";
+      state.progress = {done: 12, total: 50, clearAll: false};
+    }
+    if (m === "dialog-one"){
+      state.mode = "normal";
+      const it = filtered()[0];
+      if (it){ state.dlg = "one"; state.dlgItem = it; }
+      else { toast("演示", "当前没有可操作的记忆"); }
+    }
+    if (m === "dialog-batch"){
+      state.mode = "normal";
+      const f = filtered();
+      [0,1,2].forEach(i => f[i] && state.selected.add(f[i].id));
+      state.dlg = "batch";
+    }
+    if (m === "dialog-clear"){ state.mode = "normal"; state.dlg = "clear"; state.clearInput = ""; }
+    if (m === "dialog-full"){
+      state.mode = "normal";
+      const it = filtered()[0];
+      if (it){ state.dlg = "full"; state.dlgItem = it; }
+      else { toast("演示", "当前没有可操作的记忆"); }
+    }
+    render();
+  }
+
+  function render(){
+    renderTabs();
+    renderToolbar();
+    renderProgress();
+    renderList();
+    renderDialog();
+    requestAnimationFrame(selfCheck);
+  }
+
+  // 弹窗外点关闭
+  $("#scrim").addEventListener("click", () => {
+    if (state.mode === "deleting") return;
+    state.dlg = null; renderDialog();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.dlg){ state.dlg = null; renderDialog(); }
+  });
+
+  // 工具条交互
+  $("#kw").addEventListener("input", (e) => {
+    state.keyword = e.target.value; state.selected.clear(); state.shown = 50; render();
+  });
+  $("#kwClear").addEventListener("click", () => {
+    state.keyword = ""; state.selected.clear(); state.shown = 50; render();
+  });
+  $$("#timeChips .chip").forEach(c => c.addEventListener("click", () => {
+    if (state.mode === "deleting") return;
+    state.time = +c.dataset.time; state.selected.clear(); state.shown = 50; render();
+  }));
+  $("#srcBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (state.mode === "deleting") return;
+    $("#srcDD").classList.toggle("open");
+  });
+  $$("#srcMenu .opt").forEach(o => o.addEventListener("click", () => {
+    state.src = +o.dataset.src; state.selected.clear(); state.shown = 50;
+    $("#srcDD").classList.remove("open"); render();
+  }));
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#srcDD")) $("#srcDD").classList.remove("open");
+  });
+  $("#clearAllBtn").addEventListener("click", openClear);
+
+  // demo 控制条
+  $$(".demobar [data-mode]").forEach(b => b.addEventListener("click", () => {
+    $$(".demobar [data-mode]").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    setMode(b.dataset.mode);
+  }));
+  $$(".demobar [data-size]").forEach(b => b.addEventListener("click", () => {
+    $$(".demobar [data-size]").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    $("#frame").dataset.size = b.dataset.size;
+    requestAnimationFrame(selfCheck);
+  }));
+
+  const origSetMode = setMode;
+  // 删除中状态允许快速跳过（仅 demo）
+  $$(".demobar [data-mode]").forEach(b => b.addEventListener("click", () => {
+    if (b.dataset.mode !== "deleting") return;
+    const btn = document.createElement("button");
+    btn.textContent = "模拟完成";
+    btn.onclick = () => {
+      if (state.timer){ state.fastForward = true; return; }
+      state.mode = "normal";
+      toast("演示", "删除流程已跳过");
+      render();
+    };
+    if (!$("#ffBtn")) { btn.id = "ffBtn"; b.parentElement.appendChild(btn); }
+  }));
+
+  function selfCheck(){
+    const frame = $("#frame");
+    const problems = [];
+    const fr = frame.getBoundingClientRect();
+    const content = $("#content");
+    if (content.scrollWidth > content.clientWidth + 1) problems.push("content 横向溢出 " + content.scrollWidth + ">" + content.clientWidth);
+    const scope = frame.querySelectorAll(".toolbar, .list-card, .row, .progress, .batch");
+    scope.forEach(el => {
+      const r = el.getBoundingClientRect();
+      if (r.right > fr.right + 1.5) problems.push(el.className + " 右溢出 " + Math.round(r.right - fr.right));
+      if (r.left < fr.left - 1.5) problems.push(el.className + " 左溢出");
+    });
+    const out = $("#selfcheck");
+    const size = frame.dataset.size;
+    const metrics = [];
+    const tb = $(".toolbar"), row = $(".row"), chip = $(".chip"), head = $(".list-head"), dlgEl = $("#dialog");
+    if (tb) metrics.push("toolbar=" + Math.round(tb.getBoundingClientRect().height / (size === "1600" ? .8 : 1)));
+    if (row) metrics.push("row=" + Math.round(row.getBoundingClientRect().height / (size === "1600" ? .8 : 1)));
+    if (chip) metrics.push("chip=" + Math.round(chip.getBoundingClientRect().height / (size === "1600" ? .8 : 1)));
+    if (head) metrics.push("head=" + Math.round(head.getBoundingClientRect().height / (size === "1600" ? .8 : 1)));
+    if (dlgEl.classList.contains("on")) metrics.push("dialog=" + Math.round(parseFloat(dlgEl.style.width)) + "x" + Math.round(dlgEl.getBoundingClientRect().height / (size === "1600" ? .8 : 1)));
+    out.textContent = (problems.length ? "FAIL[" + size + "] " + problems.join(" | ") : "OK[" + size + "] 无横向溢出") + " · " + metrics.join(" ");
+    out.style.display = "block";
+    out.dataset.result = problems.length ? "FAIL" : "OK";
+    out.dataset.size = size;
+  }
+
+  // 初始：让不正常/空/加载/错误/删除中都能一键到达；默认正常
+  // 支持 #size=1600&mode=error 直达（验收/自检用）
+  const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+  if (hashParams.get("size") === "1600"){
+    $("#frame").dataset.size = "1600";
+    $$(".demobar [data-size]").forEach(x => x.classList.toggle("on", x.dataset.size === "1600"));
+  }
+  if (hashParams.get("mode")){
+    const m = hashParams.get("mode");
+    $$(".demobar [data-mode]").forEach(x => x.classList.toggle("on", x.dataset.mode === m));
+    setMode(m);
+  }
+  render();
+  window.__demo = { state, setMode, selfCheck };
+})();
+</script>
+</body>
+</html>

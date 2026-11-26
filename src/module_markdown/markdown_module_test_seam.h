@@ -26,4 +26,8 @@ namespace module::markdown {
 // 仅接受 create_markdown_module() 建出的实例（其他 core::Module 不是本类）。
 void mdSetPollIntervalMsForTest(::core::Module* mod, int64_t ms);
 
+// bug548：目录树行模型（buildTreeRows）累计重建次数。只读、无副作用——给
+// 「输入未变 → 跨帧零重建」与「折叠/列表重载 → 恰好重建一次」的增量路径断言用。
+int64_t mdTreeRowsBuildCountForTest(::core::Module* mod);
+
 } // namespace module::markdown

@@ -97,6 +97,25 @@ public:
     }
 };
 
+// 破坏性工具探针：isDestructive()=true + 调用计数（验证「先拒后不调」）。
+class DangerStubTool final : public core::mcp::IMcpTool {
+public:
+    std::string name() const override { return "probe_destructive_tool"; }
+    std::string description() const override { return "破坏性工具探针"; }
+    std::string inputSchemaJson() const override {
+        return R"({"type":"object","properties":{}})";
+    }
+    bool isDestructive() const override { return true; }
+    core::Result<core::mcp::ToolResult> execute(
+        const std::string&) override {
+        calls.fetch_add(1, std::memory_order_relaxed);
+        core::mcp::ToolResult out;
+        out.text = "destructive-done";
+        return core::Result<core::mcp::ToolResult>::ok(out);
+    }
+    std::atomic<int> calls{0};
+};
+
 // ── 排他端口 holder（端口占用用例专用）────────────────────────────────
 // 占口必须用「排他」语义的裸 socket，不能用第二个 McpService：httplib 服务端
 // socket 默认带 SO_REUSEADDR（httplib.h `socket_options_ = default_socket_options`），
@@ -424,5 +443,43 @@ REGISTER_TEST(mcp_service_stop_waits_inflight_tool_then_converges,
     // stop 在在途调用期间发起 → 至少等到工具剩余时长（防「假 stop 硬杀」回归）
     DOCTEST_CHECK(stoppedMs.count() >= 150);
     DOCTEST_CHECK(!svc.isRunning());
+    return true;
+})
+
+REGISTER_TEST(mcp_service_allow_destructive_live_and_restart,
+              "mcp service: 运行中开关即时生效；重启后仍允许（真 HTTP 往返）", {
+    core::mcp::McpToolRegistry reg;
+    auto tool = std::make_shared<DangerStubTool>();
+    DOCTEST_REQUIRE(reg.registerTool(tool).isOk());
+    McpService svc(reg);
+    DOCTEST_REQUIRE(svc.start(0).isOk());
+    const int port = svc.port();
+    const std::string sid = initializeSession(port);
+    DOCTEST_REQUIRE(!sid.empty());
+
+    const std::string call =
+        R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe_destructive_tool","arguments":{}}})";
+    auto blocked = postJson(port, call, {{"Mcp-Session-Id", sid}});
+    DOCTEST_REQUIRE_EQ(blocked.statusCode, 200);
+    DOCTEST_CHECK(blocked.body.find("\"isError\":true") != std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 0);
+
+    svc.setAllowDestructive(true);  // 运行中转发到 live protocol
+    DOCTEST_CHECK_TRUE(svc.allowDestructive());
+    auto allowed = postJson(port, call, {{"Mcp-Session-Id", sid}});
+    DOCTEST_REQUIRE_EQ(allowed.statusCode, 200);
+    DOCTEST_CHECK(allowed.body.find("\"isError\"") == std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 1);
+
+    svc.stop();
+    DOCTEST_REQUIRE(svc.start(0).isOk());  // 重启：新 protocol 必须拿到成员值
+    const int port2 = svc.port();
+    const std::string sid2 = initializeSession(port2);
+    DOCTEST_REQUIRE(!sid2.empty());
+    auto afterRestart = postJson(port2, call, {{"Mcp-Session-Id", sid2}});
+    DOCTEST_REQUIRE_EQ(afterRestart.statusCode, 200);
+    DOCTEST_CHECK(afterRestart.body.find("\"isError\"") == std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 2);
+    svc.stop();
     return true;
 })

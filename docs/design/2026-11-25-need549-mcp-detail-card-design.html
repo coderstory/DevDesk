@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<!-- demo 仅视觉校准，不是实现蓝图；实现以 2026-11-25-need549-mcp-detail-card-design.md 参数为准。
+     自包含单文件：零外链、零框架、浏览器直开。覆盖四态（正常/长错误/空错误/长耗时）+ 两档窗口 + 深浅主题。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>执行记录 → 详情卡片 重设计 demo（bug#549）</title>
+<style>
+:root{
+  --surface:#FFFFFF; --card:#F5FAF7; --border:#E5E7EB; --hover:#EEF6F1;
+  --t1:#1F2937; --t2:#4B5563; --t3:#6B6D80;
+  --primary:#07C160; --primaryHover:#06AD56; --primaryPressed:#059048;
+  --primaryText:#157A4E; --onPrimary:#FFFFFF;
+  --success:#10B981; --successText:#157E4E;
+  --warning:#F59E0B; --warningText:#B45309;
+  --error:#EF4444; --errorText:#B91C1C;
+  --info:#3B82F6;
+  --successRgb:16,185,129; --warningRgb:245,158,11; --errorRgb:239,68,68; --infoRgb:59,130,246;
+  --grayRgb:107,109,128;
+  --dw:720px;
+}
+body[data-theme="dark"]{
+  --surface:#232120; --card:#2C2A28; --border:#3A3735; --hover:#353231;
+  --t1:#FAF9F5; --t2:#C9C5BD; --t3:#9A948A;
+  --primary:#36D399; --primaryHover:#2EC48F; --primaryPressed:#23B07F;
+  --primaryText:#36D399; --onPrimary:#06251A;
+  --success:#34D399; --successText:#34D399;
+  --warning:#FBBF24; --warningText:#FBBF24;
+  --error:#F87171; --errorText:#F87171;
+  --info:#60A5FA;
+  --successRgb:52,211,153; --warningRgb:251,191,36; --errorRgb:248,113,113; --infoRgb:96,165,250;
+  --grayRgb:154,148,138;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  background:#E9ECEA; color:var(--t1); min-height:100vh;
+  display:flex; flex-direction:column; align-items:center; padding:24px 16px 48px;
+}
+body[data-theme="dark"]{background:#141312}
+/* ---- demo 控制栏（不属于产品 UI） ---- */
+.demo-bar{
+  width:100%; max-width:1040px; background:#FFFFFF; border:1px solid #E5E7EB; border-radius:12px;
+  padding:12px 16px; margin-bottom:20px; display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+  color:#1F2937; font-size:13px;
+}
+body[data-theme="dark"] .demo-bar{background:#232120;border-color:#3A3735;color:#FAF9F5}
+.demo-bar .grp{display:flex;gap:6px;align-items:center}
+.demo-bar .lbl{color:#6B7280;font-size:12px}
+body[data-theme="dark"] .demo-bar .lbl{color:#9A948A}
+.demo-bar button{
+  font:inherit;font-size:12px;padding:5px 10px;border-radius:8px;border:1px solid #D5D9D6;
+  background:#F6F8F7;color:#1F2937;cursor:pointer;transition:background 120ms ease-out,transform 120ms ease-out;
+}
+body[data-theme="dark"] .demo-bar button{background:#2C2A28;border-color:#3A3735;color:#FAF9F5}
+.demo-bar button:hover{background:#EEF6F1}
+body[data-theme="dark"] .demo-bar button:hover{background:#353231}
+.demo-bar button:active{transform:scale(.97)}
+.demo-bar button.on{background:var(--primary);border-color:var(--primary);color:var(--onPrimary)}
+.demo-bar .tip{color:#6B7280;font-size:12px;margin-left:auto}
+body[data-theme="dark"] .demo-bar .tip{color:#9A948A}
+/* ---- 弹窗 ---- */
+.dialog{
+  position:relative; width:var(--dw); height:552px; flex:none;
+  background:var(--surface); border:1px solid var(--border); border-radius:16px;
+  box-shadow:0 24px 64px rgba(20,40,30,.18); overflow:hidden;
+  transition:width 160ms ease-out;
+}
+.dlg-title{position:absolute;left:24px;top:10px;height:26px;font-size:20px;line-height:26px;font-weight:600;color:var(--t1);letter-spacing:.2px}
+.dlg-meta{position:absolute;left:24px;top:44px;height:17px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--t3)}
+.dlg-meta .st{color:var(--successText)}
+.dlg-chips{position:absolute;right:24px;top:12px;display:flex;gap:12px;align-items:flex-start}
+.chip{height:32px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:12px;cursor:pointer;user-select:none;transition:transform 120ms ease-out,background 120ms ease-out}
+.chip:active{transform:scale(.97)}
+.chip.sec{background:var(--card);border:1px solid var(--border);color:var(--t1);width:88px}
+.chip.sec:hover{background:var(--hover)}
+.chip.close{width:28px;height:28px;color:var(--t3);font-size:14px;border-radius:8px}
+.chip.close:hover{background:var(--hover)}
+/* 摘要三卡 */
+.sum-row{position:absolute;left:24px;top:73px;width:calc(var(--dw) - 48px);height:81px;display:flex;gap:8px}
+.sum-card{flex:1;min-width:0;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 12px}
+.sum-card .k{font-size:12px;color:var(--t3);height:17px}
+.sum-card .v{font-size:14px;font-weight:600;color:var(--t1);height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sum-card .s{font-size:12px;color:var(--t3);height:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sum-card .v.ok{color:var(--successText)}
+.sum-card .v.run{color:var(--info)}
+/* segment */
+.seg{position:absolute;left:24px;top:168px;width:calc(var(--dw) - 48px);height:32px;display:flex;gap:6px}
+.seg button{flex:1;height:32px;border-radius:10px;border:1px solid var(--border);background:var(--surface);
+  color:var(--t1);font-size:12px;cursor:pointer;transition:background 120ms ease-out,transform 120ms ease-out}
+.seg button:active{transform:scale(.97)}
+.seg button.on{background:var(--primary);border-color:var(--primary);color:var(--onPrimary);font-weight:600}
+.seg button:not(.on):hover{background:var(--hover)}
+/* 内容区 */
+.content{position:absolute;left:24px;top:208px;width:calc(var(--dw) - 48px);height:284px;overflow-y:auto;overflow-x:hidden}
+.content::-webkit-scrollbar{width:8px}
+.content::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--t3) 40%,transparent);border-radius:4px}
+/* 底部按钮 */
+.footer{position:absolute;right:24px;bottom:12px;display:flex;gap:8px}
+.fbtn{height:36px;min-width:96px;border-radius:10px;font-size:14px;border:1px solid var(--border);background:var(--card);color:var(--t1);cursor:pointer;transition:transform 120ms ease-out,background 120ms ease-out}
+.fbtn:active{transform:scale(.97)}
+.fbtn.primary{background:var(--primary);border-color:var(--primary);color:var(--onPrimary);font-weight:600}
+/* ---- 详情卡片 ---- */
+.tabpane{display:none}
+.tabpane.on{display:block}
+.detail-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;animation:fadein 120ms ease-out}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+.dc-statusrow{display:flex;align-items:center;height:28px;gap:12px}
+.pill{width:88px;height:24px;border-radius:999px;display:inline-flex;align-items:center;gap:8px;padding-left:8px;flex:none}
+.pill .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.pill .txt{font-size:14px;font-weight:600;line-height:24px}
+.pill.ok{background:rgba(var(--successRgb),.14);border:1px solid rgba(var(--successRgb),.40)}
+.pill.ok .dot{background:var(--success)} .pill.ok .txt{color:var(--successText)}
+.pill.fail{background:rgba(var(--errorRgb),.14);border:1px solid rgba(var(--errorRgb),.40)}
+.pill.fail .dot{background:var(--error)} .pill.fail .txt{color:var(--errorText)}
+.pill.warn{background:rgba(var(--warningRgb),.14);border:1px solid rgba(var(--warningRgb),.40)}
+.pill.warn .dot{background:var(--warning)} .pill.warn .txt{color:var(--warningText)}
+.pill.run{background:rgba(var(--infoRgb),.14);border:1px solid rgba(var(--infoRgb),.40)}
+.pill.run .dot{background:var(--info)} .pill.run .txt{color:var(--info)}
+.pill.cancel{background:rgba(var(--grayRgb),.14);border:1px solid rgba(var(--grayRgb),.40)}
+.pill.cancel .dot{background:var(--t2)} .pill.cancel .txt{color:var(--t2)}
+.dur{font-size:16px;font-weight:600;line-height:22px;color:var(--t1);white-space:nowrap}
+.dur.run{color:var(--info)}
+.rid{margin-left:auto;font-size:12px;color:var(--t3);white-space:nowrap}
+.dc-metrics{display:flex;gap:16px;height:17px;align-items:center;margin-top:8px;font-size:12px;white-space:nowrap;overflow:hidden}
+.metric .k{color:var(--t3)} .metric .v{color:var(--t2)}
+.dc-plan{display:flex;height:17px;align-items:center;margin-top:4px;font-size:12px;color:var(--t2);white-space:nowrap;overflow:hidden}
+.dc-plan .p{flex:0 0 44%;overflow:hidden;text-overflow:ellipsis}
+.dc-plan .a{flex:0 0 34%;overflow:hidden;text-overflow:ellipsis}
+.dc-plan .v{margin-left:auto;font-weight:600;color:var(--successText)}
+.dc-plan .v.warn{color:var(--warningText)}
+.dc-times{display:flex;height:17px;align-items:center;gap:16px;margin-top:4px;font-size:12px;color:var(--t3);white-space:nowrap}
+.dc-errlabel{display:flex;align-items:center;height:17px;margin-top:8px;font-size:12px;font-weight:600;color:var(--errorText)}
+.dc-errlabel .hint{margin-left:auto;font-weight:400;color:var(--t3);display:none}
+.dc-errlabel .hint.show{display:block}
+.dc-errtxt{margin-top:4px;max-height:96px;overflow-y:auto;font-size:12px;line-height:17px;color:var(--errorText);white-space:pre-wrap;word-break:break-word}
+.dc-errtxt::-webkit-scrollbar{width:8px}
+.dc-errtxt::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--errorText) 35%,transparent);border-radius:4px}
+.dc-goto{display:inline-flex;align-items:center;height:20px;margin-top:8px;font-size:12px;font-weight:600;color:var(--primaryText);cursor:pointer;transition:color 120ms ease-out,opacity 120ms ease-out}
+.dc-goto:hover{color:var(--primaryPressed);text-decoration:underline}
+.dc-goto:active{opacity:.85}
+/* 消息头 */
+.msg-head{display:flex;align-items:center;height:32px;margin-top:12px}
+.msg-title{font-size:14px;font-weight:600;color:var(--t1)}
+.msg-chips{margin-left:auto;display:flex;gap:8px}
+.msg-chips .chip.prim{background:var(--primary);color:var(--onPrimary);width:76px;font-weight:600}
+.msg-chips .chip.tog{background:var(--card);border:1px solid var(--border);color:var(--t1);width:48px}
+.msg-hint{font-size:12px;color:var(--t3);margin-top:8px}
+/* ---- 执行记录行卡 ---- */
+.daylab{font-size:12px;color:var(--t3);height:17px;margin:10px 0 6px}
+.daylab:first-child{margin-top:0}
+.runrow{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;
+  transition:transform 120ms cubic-bezier(.34,1.56,.64,1),background 120ms ease-out,box-shadow 120ms ease-out}
+.runrow:hover{background:var(--hover)}
+.runrow:active{transform:scale(.97)}
+.runrow.sel{box-shadow:inset 0 0 0 1px var(--primary)}
+.rr-main{display:flex;align-items:center;height:22px;min-width:0}
+.rr-dot{width:8px;height:8px;border-radius:50%;margin-right:8px;flex:none}
+.rr-time{width:100px;flex:none;font-size:12px;color:var(--t2);white-space:nowrap}
+.rr-status{width:48px;flex:none;margin-left:4px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden}
+.rr-dur{width:72px;flex:none;margin-left:8px;font-size:12px;font-weight:600;color:var(--t2);white-space:nowrap;overflow:hidden}
+.rr-dur.run{color:var(--info)}
+.rr-cost{margin-left:auto;font-size:12px;color:var(--t3);white-space:nowrap;padding-left:8px}
+.rr-err{margin-left:16px;margin-top:0;font-size:12px;line-height:17px;color:var(--errorText);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rr-hint{margin-left:16px;height:20px;line-height:20px;font-size:12px;font-weight:600;color:var(--primaryText);cursor:pointer;transition:color 120ms ease-out}
+.rr-hint:hover{color:var(--primaryPressed);text-decoration:underline}
+.empty{padding:24px 0;text-align:center;font-size:12px;color:var(--t3)}
+.placeholder{padding:32px 0;text-align:center;font-size:12px;color:var(--t3)}
+/* toast */
+.toast{position:fixed;left:50%;bottom:40px;transform:translateX(-50%) translateY(12px);background:rgba(17,24,20,.92);color:#F5FAF7;
+  font-size:13px;line-height:20px;padding:10px 16px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity 180ms ease-out,transform 180ms ease-out;max-width:560px;text-align:center;z-index:20}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (prefers-reduced-motion: reduce){
+  *{transition-duration:0ms!important;animation-duration:0ms!important}
+}
+</style>
+</head>
+<body data-theme="light">
+<!-- 控制栏（demo 工具，非产品 UI） -->
+<div class="demo-bar">
+  <div class="grp"><span class="lbl">数据状态</span>
+    <button data-run="0" class="on">正常</button>
+    <button data-run="1">长错误</button>
+    <button data-run="2">空错误</button>
+    <button data-run="4">长耗时</button>
+  </div>
+  <div class="grp"><span class="lbl">窗口档</span>
+    <button id="w720" class="on">最小 1000×640（弹窗 720）</button>
+    <button id="w800">标准 1600×1000（弹窗 800）</button>
+  </div>
+  <div class="grp"><span class="lbl">主题</span>
+    <button id="themeBtn">切换深色</button>
+  </div>
+  <div class="grp"><span class="lbl">Claude 模块</span>
+    <button id="claudeOn" class="on">已启用</button>
+    <button id="claudeOff">已禁用</button>
+  </div>
+  <span class="tip">demo 仅视觉校准</span>
+</div>
+
+<div class="dialog" id="dialog">
+  <div class="dlg-title">每日代码巡检</div>
+  <div class="dlg-meta"><span>任务详情</span><span>·</span><span class="st">● 成功</span><span>·</span><span>定时 · cron 0 9 * * *</span></div>
+  <div class="dlg-chips">
+    <span class="chip sec">编辑任务</span>
+    <span class="chip close" title="关闭">✕</span>
+  </div>
+
+  <div class="sum-row">
+    <div class="sum-card"><div class="k">最近一次</div><div class="v ok" id="sumLast">成功 · 12秒</div><div class="s">11-25 14:02 · 3 分钟前</div></div>
+    <div class="sum-card"><div class="k">下一次</div><div class="v">明天 09:00</div><div class="s">定时</div></div>
+    <div class="sum-card"><div class="k">近 7 天</div><div class="v">成功 12 · 失败 1</div><div class="s">其中受限 0 · 92%</div></div>
+  </div>
+
+  <div class="seg">
+    <button data-tab="0" id="tab0">执行记录</button>
+    <button data-tab="1" id="tab1" class="on">运行详情</button>
+    <button data-tab="2" id="tab2">任务配置</button>
+  </div>
+
+  <div class="content">
+    <!-- 执行记录列表 -->
+    <div class="tabpane" id="pane0">
+      <div class="daylab">今天</div>
+      <div class="runrow" data-run="1" id="row1">
+        <div class="rr-main">
+          <span class="rr-dot" style="background:var(--error)"></span>
+          <span class="rr-time">11-25 08:15:44</span>
+          <span class="rr-status" style="color:var(--errorText)">失败</span>
+          <span class="rr-dur">3分45秒</span>
+          <span class="rr-cost">迭代 4　输出 0</span>
+        </div>
+        <div class="rr-err">错误：调用模型失败：HTTP 401 Unauthorized（上游返回 invalid_api_key：提供的 API Key 已过期或被撤销）。请求地址：…</div>
+        <span class="rr-hint" data-goto>去 Claude 页补全配置 →</span>
+      </div>
+      <div class="runrow" data-run="2" id="row2">
+        <div class="rr-main">
+          <span class="rr-dot" style="background:var(--success)"></span>
+          <span class="rr-time">11-25 07:40:10</span>
+          <span class="rr-status" style="color:var(--successText)">成功</span>
+          <span class="rr-dur">48秒</span>
+          <span class="rr-cost">迭代 3　输出 730</span>
+        </div>
+      </div>
+      <div class="daylab" style="margin-top:10px">昨天</div>
+      <div class="runrow" data-run="0" id="row0">
+        <div class="rr-main">
+          <span class="rr-dot" style="background:var(--success)"></span>
+          <span class="rr-time">11-24 14:02:03</span>
+          <span class="rr-status" style="color:var(--successText)">成功</span>
+          <span class="rr-dur">12秒</span>
+          <span class="rr-cost">迭代 6　输出 3,100</span>
+        </div>
+      </div>
+      <div class="runrow" data-run="3">
+        <div class="rr-main">
+          <span class="rr-dot" style="background:var(--info)"></span>
+          <span class="rr-time">11-24 13:58:00</span>
+          <span class="rr-status" style="color:var(--info)">运行中</span>
+          <span class="rr-dur run">已运行 3分12秒</span>
+          <span class="rr-cost">迭代 2　输出 —</span>
+        </div>
+      </div>
+      <div class="daylab" style="margin-top:10px">11-22</div>
+      <div class="runrow" data-run="4" id="row4">
+        <div class="rr-main">
+          <span class="rr-dot" style="background:var(--success)"></span>
+          <span class="rr-time">11-22 09:00:02</span>
+          <span class="rr-status" style="color:var(--successText)">成功</span>
+          <span class="rr-dur">2天3时</span>
+          <span class="rr-cost">迭代 210　输出 45,000</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 运行详情 -->
+    <div class="tabpane on" id="pane1">
+      <!-- run 0：正常 -->
+      <div class="detail-card" id="card0">
+        <div class="dc-statusrow">
+          <span class="pill ok"><span class="dot"></span><span class="txt">成功</span></span>
+          <span class="dur">12秒</span>
+          <span class="rid">#128</span>
+        </div>
+        <div class="dc-metrics"><span class="metric"><span class="k">迭代 </span><span class="v">6</span></span><span class="metric"><span class="k">输入 </span><span class="v">12,400</span></span><span class="metric"><span class="k">输出 </span><span class="v">3,100</span></span></div>
+        <div class="dc-plan"><span class="p">计划 定时 09:00</span><span class="a">实际 09:00:02</span><span class="v">按时</span></div>
+        <div class="dc-times"><span>开始 11-24 14:02:03</span><span>→</span><span>结束 11-24 14:02:15</span></div>
+      </div>
+      <!-- run 1：长错误 -->
+      <div class="detail-card" id="card1" style="display:none">
+        <div class="dc-statusrow">
+          <span class="pill fail"><span class="dot"></span><span class="txt">失败</span></span>
+          <span class="dur">3分45秒</span>
+          <span class="rid">#127</span>
+        </div>
+        <div class="dc-metrics"><span class="metric"><span class="k">迭代 </span><span class="v">4</span></span><span class="metric"><span class="k">输入 </span><span class="v">8,200</span></span><span class="metric"><span class="k">输出 </span><span class="v">0</span></span></div>
+        <div class="dc-plan"><span class="p">计划 定时 09:00</span><span class="a">实际 08:15:44</span><span class="v warn">延迟 44 分</span></div>
+        <div class="dc-times"><span>开始 11-25 08:15:44</span><span>→</span><span>结束 11-25 08:19:29</span></div>
+        <div class="dc-errlabel">错误详情<span class="hint">上下滚动查看全文</span></div>
+        <div class="dc-errtxt">调用模型失败：HTTP 401 Unauthorized（上游返回 invalid_api_key：提供的 API Key 已过期或被撤销）。
+请求地址：https://api.example.com/v1/messages
+请求模型：claude-sonnet-4-5
+重试 3 次后仍失败，最后一次耗时 2分10秒。
+请在 Claude 页重新填写可用的 API Key 并激活 profile；若使用代理，请确认代理地址与鉴权头配置一致。
+补充说明：本次运行在迭代 4 时中止，已完成的工具调用结果保留在工作目录，未写入最终报告。错误代码：E_AUTH_PROFILE_INVALID；追踪号：trk_20261125_0815_7f3a。若问题持续，请把本段错误全文连同任务名「每日代码巡检」反馈给维护者，便于对齐网关侧日志。</div>
+        <span class="dc-goto" data-goto>去 Claude 页补全配置 →</span>
+      </div>
+      <!-- run 2：空错误 -->
+      <div class="detail-card" id="card2" style="display:none">
+        <div class="dc-statusrow">
+          <span class="pill ok"><span class="dot"></span><span class="txt">成功</span></span>
+          <span class="dur">48秒</span>
+          <span class="rid">#126</span>
+        </div>
+        <div class="dc-metrics"><span class="metric"><span class="k">迭代 </span><span class="v">3</span></span><span class="metric"><span class="k">输入 </span><span class="v">2,050</span></span><span class="metric"><span class="k">输出 </span><span class="v">730</span></span></div>
+        <div class="dc-times"><span>开始 11-25 07:40:10</span><span>→</span><span>结束 11-25 07:40:58</span></div>
+      </div>
+      <!-- run 4：长耗时 -->
+      <div class="detail-card" id="card4" style="display:none">
+        <div class="dc-statusrow">
+          <span class="pill ok"><span class="dot"></span><span class="txt">成功</span></span>
+          <span class="dur">2天3时</span>
+          <span class="rid">#129</span>
+        </div>
+        <div class="dc-metrics"><span class="metric"><span class="k">迭代 </span><span class="v">210</span></span><span class="metric"><span class="k">输入 </span><span class="v">1,900,000</span></span><span class="metric"><span class="k">输出 </span><span class="v">45,000</span></span></div>
+        <div class="dc-plan"><span class="p">计划 定时 09:00</span><span class="a">实际 09:00:02</span><span class="v">按时</span></div>
+        <div class="dc-times"><span>开始 11-22 09:00:02</span><span>→</span><span>结束 11-24 12:00:02</span></div>
+      </div>
+      <!-- run 3：运行中 -->
+      <div class="detail-card" id="card3" style="display:none">
+        <div class="dc-statusrow">
+          <span class="pill run"><span class="dot"></span><span class="txt">运行中</span></span>
+          <span class="dur run">已运行 3分12秒</span>
+          <span class="rid">#130</span>
+        </div>
+        <div class="dc-metrics"><span class="metric"><span class="k">迭代 </span><span class="v">2</span></span><span class="metric"><span class="k">输入 </span><span class="v">—</span></span><span class="metric"><span class="k">输出 </span><span class="v">—</span></span></div>
+        <div class="dc-times"><span>开始 11-25 13:58:00</span><span>→</span><span>结束 —</span></div>
+      </div>
+      <div class="msg-head">
+        <span class="msg-title">消息（6）</span>
+        <div class="msg-chips"><span class="chip prim">复制回复</span><span class="chip tog">展开</span></div>
+      </div>
+      <div class="msg-hint">展开查看完整链路</div>
+    </div>
+
+    <!-- 任务配置占位 -->
+    <div class="tabpane" id="pane2">
+      <div class="placeholder">（demo 不覆盖任务配置 tab 内容）</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button class="fbtn">关闭</button>
+    <button class="fbtn primary">编辑任务</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  var body = document.body;
+  var dialog = document.getElementById('dialog');
+  var claudeEnabled = true;
+  var lastTab = 1;
+
+  function showTab(i){
+    lastTab = i;
+    [0,1,2].forEach(function(k){
+      document.getElementById('tab'+k).classList.toggle('on', k===i);
+      document.getElementById('pane'+k).classList.toggle('on', k===i);
+    });
+  }
+  function selectRun(i){
+    [0,1,2,3,4].forEach(function(k){
+      var c = document.getElementById('card'+k);
+      if(c) c.style.display = (k===i) ? 'block' : 'none';
+    });
+    document.querySelectorAll('.runrow').forEach(function(r){
+      r.classList.toggle('sel', Number(r.dataset.run)===i);
+    });
+    showTab(1);
+    // 溢出提示：仅自然高 > 96 时显示
+    var card = document.getElementById('card'+i);
+    if(card){
+      var err = card.querySelector('.dc-errtxt');
+      if(err){
+        var hint = card.querySelector('.dc-errlabel .hint');
+        // 强制按内容测量（临时展开）
+        err.style.maxHeight = 'none';
+        var h = err.scrollHeight;
+        err.style.maxHeight = '';
+        hint.classList.toggle('show', h > 96);
+        err.scrollTop = 0;
+      }
+      card.style.animation = 'none';
+      void card.offsetWidth;
+      card.style.animation = '';
+    }
+  }
+  var toastTimer = null;
+  function toast(text){
+    var el = document.getElementById('toast');
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ el.classList.remove('show'); }, 2400);
+  }
+  function gotoClaude(){
+    if(claudeEnabled){
+      toast('已跳转到 Claude 页（ClaudeProxy）——详情弹窗关闭');
+    } else {
+      toast('Claude 模块未启用——在设置页「模块」开关中打开后再试');
+    }
+  }
+
+  document.querySelectorAll('.seg button').forEach(function(b){
+    b.addEventListener('click', function(){ showTab(Number(b.dataset.tab)); });
+  });
+  document.querySelectorAll('.runrow').forEach(function(r){
+    r.addEventListener('click', function(e){
+      if(e.target.closest('[data-goto]')) return;   // 链接点击不触发行选中
+      selectRun(Number(r.dataset.run));
+    });
+  });
+  document.querySelectorAll('[data-goto]').forEach(function(g){
+    g.addEventListener('click', function(e){ e.stopPropagation(); gotoClaude(); });
+  });
+  document.querySelectorAll('.demo-bar [data-run]').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('.demo-bar [data-run]').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      selectRun(Number(b.dataset.run));
+    });
+  });
+  document.getElementById('w720').addEventListener('click', function(){
+    document.documentElement.style.setProperty('--dw','720px');
+    this.classList.add('on'); document.getElementById('w800').classList.remove('on');
+  });
+  document.getElementById('w800').addEventListener('click', function(){
+    document.documentElement.style.setProperty('--dw','800px');
+    this.classList.add('on'); document.getElementById('w720').classList.remove('on');
+  });
+  document.getElementById('themeBtn').addEventListener('click', function(){
+    var dark = body.dataset.theme === 'dark';
+    body.dataset.theme = dark ? 'light' : 'dark';
+    this.textContent = dark ? '切换深色' : '切换浅色';
+  });
+  document.getElementById('claudeOn').addEventListener('click', function(){
+    claudeEnabled = true; this.classList.add('on'); document.getElementById('claudeOff').classList.remove('on');
+  });
+  document.getElementById('claudeOff').addEventListener('click', function(){
+    claudeEnabled = false; this.classList.add('on'); document.getElementById('claudeOn').classList.remove('on');
+  });
+
+  selectRun(0);
+  document.getElementById('tab1').classList.add('on');
+})();
+</script>
+</body>
+</html>

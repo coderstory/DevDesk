@@ -46,6 +46,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -114,6 +115,10 @@ public:
     // 测试缝：清空内存态（ticker 订阅由 stop() 注销；测试直接用 tick 驱动）。
     void resetForTest();
 
+    // 每 tick 末、渠道 flush 前的外部回调（宿主装配注入到期扫描等）；未设 =
+    // 无行为。只在主线程调用，回调不得抛异常。
+    void setTickHook(std::function<void(std::int64_t)> hook);
+
     // S7 装配缝：app_assembly 在 onStart 前经此注册内部任务回调（agent:<id> 等）。
     InternalTaskRegistry& taskRegistry() { return tasks_; }
 
@@ -157,6 +162,8 @@ private:
     void finishFire(int64_t ruleId, int64_t firedAt, bool onceKind, int64_t nowUnix);
     void drainPendingFires(int64_t nowUnix);
     void drainDeliveryRetries(int64_t nowUnix);
+    // tick 三条出口共用：先跑钩子（到期扫描投递），再通道 flush
+    void finishTick(int64_t nowUnix);
     // 时钟回拨（§4.8）：只把活跃规则 last_eval_at 刷成 now，不重放。
     void rollbackLastEval(int64_t nowUnix);
     // 停机前边界：把内存推进的 last_eval_at 落库（缩小重启补跑重扫窗口）并清空。
@@ -172,6 +179,7 @@ private:
     InternalTaskRegistry tasks_;   // v1 无生产注册来源（run_task 未注册 key → invoke fail），待 S8 经 taskRegistry() 注册
     ActionRunner runner_;
     core::ticker::Handle handle_ = 0;
+    std::function<void(std::int64_t)> tickHook_;  // 宿主装配注入（见 setTickHook）
     GlobalDeliveryBucket deliveryBucket_;
     int64_t lastTickNow_ = 0;                 // 上次 tick 时刻（回拨判定）
     std::set<int64_t> runningRuleIds_;        // 同规则不并发（内存态，§4.7）

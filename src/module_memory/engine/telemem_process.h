@@ -18,16 +18,27 @@ std::filesystem::path venvPythonExe(const std::filesystem::path& venvDir);
 
 // 首跑安装：venvPython -m pip install --disable-pip-version-check telemem==<钉版>
 //（pip 进度对 C++ 侧不可流式读，进度口径 = 阶段文本；失败由面板重试入口重跑）。
-// IMP-114-3：读环境变量 PIP_INDEX_URL / PIP_EXTRA_INDEX_URL，非空时等价转成
-// pip 自身 --index-url / --extra-index-url 旗标（pip 官方同义通道）——平台执行器
-//（posix_spawn / CreateProcessW）本就继承父环境，旗标是不动其签名下的透传口。
-std::vector<std::string> buildPipInstallArgs(
-    const std::filesystem::path& venvDir);
-
-// 纯函数版（单测钉住，不做 getenv）：镜像值 nullptr/空串 = 未设置，不加旗标
+// 镜像值由调用方经 resolvePipMirror 先解析，再等价转成 pip 自身
+// --index-url / --extra-index-url 旗标（pip 官方同义通道）。
+// 纯函数（不做 getenv）：镜像值 nullptr/空串 = 未设置，不加旗标
 std::vector<std::string> buildPipInstallArgs(
     const std::filesystem::path& venvDir, const char* pipIndexUrl,
     const char* pipExtraIndexUrl);
+
+// 镜像源解析（bug476；纯函数，不做 getenv）：逐字段 非空 UI 值 > 对应环境
+// 变量 > 空串（不传旗标）。UI 设置存 panel_settings.json，安装步现读现用。
+struct PipMirror {
+    std::string indexUrl;       // --index-url（主镜像）
+    std::string extraIndexUrl;  // --extra-index-url（备用镜像）
+};
+PipMirror resolvePipMirror(const std::string& uiIndexUrl,
+                           const std::string& uiExtraIndexUrl,
+                           const char* envIndexUrl, const char* envExtraIndexUrl);
+
+// pip 安装失败文案（面板/单测同一来源；指向 GUI 镜像入口）
+inline constexpr const char* kPipFailureHint =
+    "请检查网络；可在「设置 → 记忆 → 安装镜像源」配置镜像源后重试"
+    "（或设置环境变量 PIP_INDEX_URL）";
 
 // telemem 常驻进程 argv：venvPython -m telemem.mcp --transport streamable-http
 //   --host 127.0.0.1 --port <port>

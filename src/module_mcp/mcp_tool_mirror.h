@@ -30,9 +30,13 @@ public:
     core::Result<core::mcp::ToolResult> execute(
         const std::string& argumentsJson) override;
 
+    // 破坏性标记透传自源 ITool。契约：协议层服务端闸与在途上限按它分流，
+    // 适配层不另判。
+    bool isDestructive() const override;
+
     // F-05：isDestructive()=true → R"(,"annotations":{"destructiveHint":true,
     // "readOnlyHint":false})"，否则空串。spec annotations 可选，省略=合法；
-    // 组装点 mcp_protocol.cpp tools/list 经 dynamic_cast 到本类型取值（不加 core 接口缝）。
+    // 组装点 mcp_protocol.cpp tools/list 经 dynamic_cast 到本类型取值。
     std::string annotationsSuffix() const;
 
     // 无效 = schemaJson parse fail / 非 object / 无（或非法）input_schema → ToolMirror 跳过

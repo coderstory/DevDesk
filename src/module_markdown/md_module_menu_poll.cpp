@@ -6,6 +6,7 @@
 #include "markdown_module_internal.h"
 
 #include <ui_kit/dialog_shell.h>  // bug165：新建笔记弹窗迁标准壳（need156）
+#include <core/window/window_backend.h>  // bug547：预览复制 setClipboardText
 
 #include <utility>  // std::move（check-std-includes：不靠传递包含）
 
@@ -416,6 +417,7 @@ void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
             if (index == 0) {
                 // 新建子目录：弹窗的上级目录预置为右键的文件夹，并展开它
                 collapsedDirs_.erase(dirCtxPath_);
+                ++treeRowsCollapsedRev_;  // 行模型缓存失效（展开）
                 newFolderOpen_ = true;
                 newFolderName_.clear();
                 newFolderError_.clear();
@@ -424,6 +426,7 @@ void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
             } else if (index == 1) {
                 // 新建子笔记：新建落点改到右键的文件夹，并展开它
                 collapsedDirs_.erase(dirCtxPath_);
+                ++treeRowsCollapsedRev_;  // 行模型缓存失效（展开）
                 newItemTargetDir_ = dirCtxPath_;
                 selectDir(dirCtxPath_);
                 openNewNoteDialog();
@@ -498,6 +501,62 @@ void MarkdownModule::drawEditorContextMenu(eui::Ui& ui,
             }
         })
         .onOpenChange([this](bool v) { editorCtxOpen_ = v; })
+        .build();
+}
+
+// need550：预览复制单点（右键菜单 / 拖选松手 / Ctrl+C 共用本路径）。
+// setClipboardText 无返回值 → 留痕（回读校验空口，notepad 先例）。
+void MarkdownModule::copyPreviewText(const std::string& text,
+                                     const std::string& what) {
+    if (text.empty()) return;
+    core::window::setClipboardText(text);
+    LOG_INFO("预览复制: " + what + " " + std::to_string(text.size()) + " 字节");
+    showToast("已复制到剪贴板", what, false);
+}
+
+// bug547：预览区渲染文本无选区 API（框架 selection 面仅 components::input），
+// 复制契约 = 块右键菜单（本段 / 全文 Markdown 源文）。右键块源文在开菜单时
+// 快照，菜单选择复制快照（开菜单期间文档可能被外部重载，快照语义更稳）。
+void MarkdownModule::openPreviewContextMenu(size_t blockIndex,
+                            const components::MouseEvent& ev) {
+    if (blockModel_.text() != editorText_) blockModel_.update(editorText_);
+    const auto& blocks = blockModel_.blocks();
+    if (blockIndex >= blocks.size()) return;
+    const MdBlock& b = blocks[blockIndex];
+    previewCtxText_ = editorText_.substr(b.start, b.end - b.start);
+    if (previewCtxText_.empty()) return;
+    // 指针逻辑坐标（窗口系）→ 页面坐标（同 menuAnchorForPointerInPage 口径）
+    const ::core::Router* router = ::core::appRouter();
+    const core::MenuAnchor a = ::core::menuAnchorForPointer(
+        ev.globalX, ev.globalY, router ? router->pageOriginX() : 0.0f, 0.0f,
+        1.0f);
+    previewCtxX_ = a.x;
+    previewCtxY_ = a.y;
+    previewCtxOpen_ = true;
+}
+
+void MarkdownModule::drawPreviewContextMenu(
+                           eui::Ui& ui,
+                           const eui::Screen& screen,
+                           const core::theme::Tokens& t,
+                           const components::theme::ThemeColorTokens& componentTheme) {
+    (void)componentTheme;  // popup 统一 wechat 皮肤（同编辑器菜单口径）
+    if (!previewCtxOpen_) return;
+    const auto wcTheme = core::theme::componentTokensWeChat(t);
+    components::contextMenu(ui, "md.preview.ctx")
+        .open(previewCtxOpen_)
+        .screen(screen.width, screen.height)
+        .position(previewCtxX_, previewCtxY_)
+        .autoWidth()
+        .items(std::vector<std::string>{"复制本段", "复制全文"})
+        .theme(wcTheme)
+        .onSelect([this](int index) {
+            const std::string text =
+                index == 0 ? previewCtxText_ : editorText_;
+            copyPreviewText(text, index == 0 ? "本段 Markdown 源文"
+                                             : "全文 Markdown 源文");
+        })
+        .onOpenChange([this](bool v) { previewCtxOpen_ = v; })
         .build();
 }
 

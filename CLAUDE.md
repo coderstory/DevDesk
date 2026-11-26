@@ -42,8 +42,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 export PATH="/opt/homebrew/bin:$PATH"
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
-cmake --build build && cd build && ctest --output-on-failure
+# 唯一构建/测试入口；禁止直接调用 cmake / cmake --build / ctest（门禁会阻断）
+bash scripts/build-test-run.sh --dev          # 开发内循环：增量构建（+ 可选 --filter）
+bash scripts/build-test-run.sh                # 全量：N 个功能开发完毕后只跑一次
 ```
 
 本机工具链：cmake 4.4.3、ninja 1.13.2、AppleClang、ccache 4.14.1（`/opt/homebrew/bin`）。ccache macOS 持久配置读 **`~/Library/Preferences/ccache/ccache.conf`**——**不是** XDG 的 `~/.config/ccache/`（写了完全无视）。用例总数以运行输出 `Total:` 为准。
@@ -52,8 +53,9 @@ cmake --build build && cd build && ctest --output-on-failure
 
 ```bash
 export PATH="/d/software/msys64/mingw64/bin:$PATH"
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-cmake --build build && cd build && ctest --output-on-failure
+# 唯一构建/测试入口；禁止直接调用 cmake / cmake --build / ctest（门禁会阻断）
+bash scripts/build-test-run.sh --dev          # 开发内循环：增量构建（+ 可选 --filter）
+bash scripts/build-test-run.sh                # 全量：N 个功能开发完毕后只跑一次
 ```
 
 **一体化脚本（推荐）**：`bash scripts/build-test-run.sh` —— 增量构建 + 测试 + 杀旧进程 + 启动 app，默认全增量。参数：`--clean` 全量重建、`--no-test` 跳过测试、`--no-run` 不启动、`--filter X` 只跑名字含 X 的用例。工具链 PATH 与 EUI-NEO 定位（`EUI_NEO_DIR` → 仓内 `./EUI-NEO` submodule，worktree 内同样可见）脚本内部处理；`build/` 未初始化时自动 configure——无需手敲 `-D`。
@@ -170,6 +172,14 @@ main → 13 个 Router 页面（枚举见「项目概况」）
 - **测试绿 ≠ 可用，数字不报给用户**：交付时报三行——跑了哪些场景 / 结果 / 哪些没跑（明写"未验证"）
 
 ---
+
+### 开发/测试节奏（2026-11-26 老板令）
+
+- **开发阶段只做编码**：业务功能与测试代码同批写完；每个功能块只保证**构建通过**（`bash scripts/build-test-run.sh --dev --no-test --no-run`，测试目标一并编译），不逐任务跑用例、不跑红绿。
+- **N 个功能全部开发完毕后，只跑一次全量**：`bash scripts/build-test-run.sh`（doctest + probe + 守卫链）。一个开发批次只允许一次全量。
+- **全量之后的修复阶段只跑定向用例**：`--filter 用例名` 或 `--filter file:子串`，不再重复全量。
+- **例外**：发版/CI 门禁，或改动涉及构建接线/平台底座，才允许再加一次全量，并在汇报中写明原因。
+- **禁止直接调用 `cmake` / `cmake --build` / `ctest`**：构建与测试一律经 `scripts/build-test-run.sh`（UI probe 走既有 `ctest -L probe` 例外）；并发构建必须用 `scripts/with-build-lock.sh` 串行。
 
 ## 🤝 AI 协作与交付纪律（团队通用）
 

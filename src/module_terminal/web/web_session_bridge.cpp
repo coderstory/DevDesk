@@ -199,11 +199,9 @@ core::Result<void> WebSessionBridge::writeSettings(const TerminalSettings& nextR
     if (settings_ == nullptr) {
         return core::Result<void>::fail(core::ErrorCode::Internal, "终端设置真源未接线");
     }
-    if (!workDirUsableForSpawn(nextRaw.startupDir)) {
-        return core::Result<void>::fail(core::ErrorCode::ValidationError,
-                                        "启动目录不存在、不是目录或不可进入: " +
-                                            nextRaw.startupDir);
-    }
+    // need#452 契约变更（设计 §9）：保存不校验目录——条目是快捷方式不是承诺，网络盘/
+    // 移动盘离线不阻塞保存；不可用只在启动时暴露（spawn 严格校验，不静默回退）。
+    // 网页改写 startupDir = 设默认语义，由 sanitize 的 convergeStartupDirs 并入列表。
     const TerminalSettings previous = *settings_;
     const TerminalSettings sanitized = sanitizedTerminalSettings(nextRaw);
     *settings_ = sanitized;  // 单一真源：内存先回灌，桌面/网页控件下一帧读同一值

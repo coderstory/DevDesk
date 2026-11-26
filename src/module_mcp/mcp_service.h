@@ -2,6 +2,7 @@
 // 新建监听器（换端口必须换监听器），stop 幂等并清空会话表。
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -44,6 +45,11 @@ public:
     int port() const;
     ServiceStatus status() const;  // 加锁快照
 
+    // 「破坏性工具」开关：运行中即时转发给 live protocol；重启后由 start() 注入
+    // 当前值。getter 只读 atomic（无锁），UI 每帧可调用。
+    void setAllowDestructive(bool allow);
+    bool allowDestructive() const;
+
 private:
     core::mcp::McpToolRegistry& tools_;
     // need381：ITool→IMcpTool 镜像（source=core::ToolRegistry 单例自取）；由
@@ -55,6 +61,8 @@ private:
     ServiceState state_ = ServiceState::Stopped;
     int port_ = 0;
     std::string lastError_;
+    // 成员值 = 开关持久化真源；start() 用它注入新建 protocol（重启不丢）
+    std::atomic<bool> allowDestructive_{false};
 
     // 声明顺序 = 依赖顺序：server 的 handler 引用 protocol，销毁必须 server 先走
     std::unique_ptr<McpProtocol> protocol_;

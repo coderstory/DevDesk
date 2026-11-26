@@ -252,7 +252,8 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     const float pad = t.sizes.spacingLarge * 2.0f;  // 32：页面外边距与他页同档
     const auto tools = registry_->list();           // 每帧快照（单锁，量小）
 
-    // 服务状态行数据源：app::mcp 桥只读快照（本页不提供开关，开关在设置页）。
+    // 服务状态行数据源：app::mcp 桥只读快照（本页不放模块启停开关——在设置页；
+    // 页内另有工具权限（破坏性工具）开关）。
     const app::mcp::LiveStatus svc = app::mcp::status();
 
     // 池144（口径 = 池140 设计 §2 滚动模型）：整页滚动废除——外壳不滚，页头六行
@@ -282,10 +283,11 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     const float hostRow2Y = hostRow1Y + hostRowH + hostRowGap;     // 188
     const float headCardH = hostRow2Y + hostRowH + headPad;        // 248
 
-    // 固定区高 = 顶 padding(0) + 页头卡 + 记忆行64 + 区头26（全 scaled）+ 3 个
-    // 16 gap；列表区高 = 余高 − 底 padding，下限 scaled(120)（极矮窗仍可滚不塌陷）。
-    const float headerH = headCardH + core::theme::scaled(64.0f) +
-                          core::theme::scaled(26.0f) + t.sizes.spacingLarge * 3.0f;
+    // 固定区高 = 顶 padding(0) + 页头卡 + 模块行64 ×2（记忆 / 破坏性工具）
+    // + 区头26（全 scaled）+ 4 个 16 gap；列表区高 = 余高 − 底 padding，
+    // 下限 scaled(120)（极矮窗仍可滚不塌陷）。
+    const float headerH = headCardH + core::theme::scaled(64.0f) * 2.0f +
+                          core::theme::scaled(26.0f) + t.sizes.spacingLarge * 4.0f;
     const float listH = std::max(core::theme::scaled(120.0f),
                                  screen.height - headerH -
                                      t.sizes.spacingXLarge);
@@ -413,6 +415,8 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                     // 「记忆」模块行：向 MCP 贡献 memory_search 工具的模块开关
                     // （关 = 立即注销工具；经 app::memory_mcp 桥操作，不触 module_memory）
                     drawMemoryModuleRow(ui, contentW, t, comp);
+                    // 「破坏性工具」开关：写入/删除类工具的服务侧放行闸
+                    drawDestructiveModuleRow(ui, contentW, t, comp);
 
                     // 区头：标题 + 计数 chip
                     // 2026-11-01 F-13：原标题占满 contentW-40，chip 被推到页面最右，
@@ -693,13 +697,16 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
         .build();
 }
 
-// 「记忆」模块行：全宽轻量行卡（状态行同构；不用 340 网格卡，为后续模块行
-// 自然堆叠留形）。开关态每帧从桥读——setEnabled 失败时注册态未变，下一帧自动
+// 「模块行」通用体：全宽轻量行卡（状态行同构；不用 340 网格卡，为后续模块行
+// 自然堆叠留形）。开关态每帧由调用方从桥读——set fail 时注册态未变，下一帧自动
 // 回弹，无需额外状态回写；反馈红字占用说明行槽位，行盒几何不变。
-void McpPageModule::drawMemoryModuleRow(
+void McpPageModule::drawToolSwitchRow(
     eui::Ui& ui, float contentW, const core::theme::Tokens& t,
-    const components::theme::ThemeColorTokens& comp) {
-    const std::string id = "mcp.module.memory";
+    const components::theme::ThemeColorTokens& comp, const char* idPrefix,
+    const char* title, const char* desc, uint32_t iconCodepoint,
+    const eui::Color& iconColor, bool checked, std::string& errorSlot,
+    std::function<::core::Result<void>(bool)> onToggle) {
+    const std::string id = idPrefix;
     // B6/F-69-2：行高与文字行盒随字号派生——放大档字变大而 64 行高不变时，
     // 标题（scaled 18）与描述行叠字、描述底越出卡外。
     const float kRowH = core::theme::scaled(64.0f);
@@ -734,29 +741,28 @@ void McpPageModule::drawMemoryModuleRow(
             ui.text(id + ".icon")
                 .position(kPad, kPad)
                 .size(kIconSize, kIconSize)
-                .icon(eui::utf8(0xF5DC))  // fa-brain，与 app_registry 记忆行同码点
+                .icon(iconCodepoint)
                 .fontSize(core::theme::scaled(16.0f))
-                .color(t.colors.primary)
+                .color(iconColor)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();
             ui.text(id + ".title")
                 .position(kPad + kIconSize + 12.0f, kPad)
                 .size(textW, core::theme::scaled(18.0f))
-                .text("记忆")
+                .text(title)
                 .fontSize(core::theme::scaled(14.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
-            const bool hasError = !memorySaveError_.empty();
+            const bool hasError = !errorSlot.empty();
             // 描述行顶 = 标题行底 + 4（100% = 12+18+4 = 34，与原字面 22 偏移等价）
             ui.text(id + ".desc")
                 .position(kPad + kIconSize + 12.0f,
                           kPad + core::theme::scaled(18.0f) +
                               core::theme::scaled(4.0f))
                 .size(textW, core::theme::scaled(16.0f))
-                .text(hasError ? "保存失败：" + memorySaveError_
-                               : "将本机长期记忆以 memory_search 工具开放给 MCP 客户端查询")
+                .text(hasError ? "保存失败：" + errorSlot : std::string(desc))
                 .fontSize(core::theme::scaled(12.0f))
                 .color(hasError ? t.colors.errorText : t.colors.textTertiary)
                 .maxWidth(textW)
@@ -766,16 +772,40 @@ void McpPageModule::drawMemoryModuleRow(
             components::toggleSwitch(ui, id + ".toggle")
                 .position(contentW - kPad - kSwitchW, (kRowH - kSwitchH) * 0.5f)
                 .size(kSwitchW, kSwitchH)
-                .checked(app::memory_mcp::status().switchOn)
+                .checked(checked)
                 .theme(comp)
-                .onChange([this](bool on) {
-                    const auto r = app::memory_mcp::setEnabled(on);
-                    memorySaveError_ =
-                        r.isFail() ? r.errorMessage() : std::string();
+                .onChange([onToggle = std::move(onToggle),
+                           &errorSlot](bool on) {
+                    const auto r = onToggle(on);
+                    errorSlot = r.isFail() ? r.errorMessage() : std::string();
                 })
                 .build();
         })
         .build();
+}
+
+void McpPageModule::drawMemoryModuleRow(
+    eui::Ui& ui, float contentW, const core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& comp) {
+    drawToolSwitchRow(
+        ui, contentW, t, comp, "mcp.module.memory", "记忆",
+        "将本机长期记忆以 memory_search 工具开放给 MCP 客户端查询",
+        0xF5DC,  // fa-brain，与 app_registry 记忆行同码点
+        t.colors.primary, app::memory_mcp::status().switchOn, memorySaveError_,
+        [](bool on) { return app::memory_mcp::setEnabled(on); });
+}
+
+// 「破坏性工具」开关：默认关（fail-closed），开启后协议闸放行会写入/删除
+// 本机数据或配置的工具（闸在服务侧，本页只做开关与人可见的失败反馈）。
+void McpPageModule::drawDestructiveModuleRow(
+    eui::Ui& ui, float contentW, const core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& comp) {
+    drawToolSwitchRow(
+        ui, contentW, t, comp, "mcp.module.destructive", "破坏性工具",
+        "允许 MCP 客户端调用会写入或删除本机数据/配置的工具（默认关闭）",
+        0xF071,  // fa-triangle-exclamation
+        t.colors.warning, app::mcp::allowDestructive(), destructiveSaveError_,
+        [](bool on) { return app::mcp::setAllowDestructive(on); });
 }
 
 // need394：安装态刷新时机 —— 首次进页 / 服务运行态与端口变化（zcode 的

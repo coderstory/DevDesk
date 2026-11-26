@@ -1209,6 +1209,89 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         cy += bodyH + 8.0f;
     }
 
+    // ── 组 4：安装镜像源（bug476：pip 直连超时的 GUI 出口；索引 3 空闲——安全组
+    // 常显且 grp3.* 是既有探针锚点，不重编号）。保存即时生效 = 落盘 + 引擎同步。──
+    {
+        const bool mirrorConfigured = !snap->settings.pipIndexUrl.empty();
+        groupHead(4, "安装镜像源",
+                  mirrorConfigured ? "已配置 · 安装时优先于环境变量"
+                                   : "未配置——直连 PyPI（可切国内镜像）",
+                  false);
+        if (cfgOpen_[4]) {
+            const auto g = mirrorGroupGeometry(innerW);
+            groupBody(4, core::theme::scaled(g.bodyH));
+            const auto ct = core::theme::componentTokensWeChat(t);
+            float by = cy + core::theme::scaled(g.hintY);
+            ui.text("memory.cfg.mirror.hint")
+                .position(x + 16.0f, by)
+                .size(innerW, core::theme::scaled(18.0f))
+                .text("首次安装引擎需从 PyPI 下载依赖；直连超时请填国内镜像源。")
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(core::theme::scaled(18.0f))
+                .color(t.colors.textSecondary)
+                .build();
+            by = cy + core::theme::scaled(g.label1Y);
+            ui.text("memory.cfg.mirror.index.label")
+                .position(x + 16.0f, by)
+                .size(innerW, core::theme::scaled(18.0f))
+                .text("主镜像（index-url）")
+                .fontSize(core::theme::scaled(12.5f))
+                .lineHeight(core::theme::scaled(18.0f))
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            by = cy + core::theme::scaled(g.input1Y);
+            components::input(ui, "memory.cfg.mirror.index.input")
+                .position(x + 16.0f, by)
+                .size(g.inputW, 40.0f)
+                .value(mirrorIndexInput_)
+                .placeholder("https://pypi.tuna.tsinghua.edu.cn/simple")
+                .fontSize(core::theme::scaled(13.0f))
+                .theme(ct)
+                .onChange([this](const std::string& v) { mirrorIndexInput_ = v; })
+                .onCancel([this] { mirrorIndexInput_.clear(); })
+                .build();
+            primaryButton(ui, "memory.cfg.mirror.save", "保存",
+                          x + g.actionX, by + 4.0f, g.actionW, 32.0f, t,
+                          {[this] { saveMirrorSettings(); }});
+            by = cy + core::theme::scaled(g.label2Y);
+            ui.text("memory.cfg.mirror.extra.label")
+                .position(x + 16.0f, by)
+                .size(innerW, core::theme::scaled(18.0f))
+                .text("备用镜像（extra-index-url，可选）")
+                .fontSize(core::theme::scaled(12.5f))
+                .lineHeight(core::theme::scaled(18.0f))
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            by = cy + core::theme::scaled(g.input2Y);
+            components::input(ui, "memory.cfg.mirror.extra.input")
+                .position(x + 16.0f, by)
+                .size(g.inputW, 40.0f)
+                .value(mirrorExtraInput_)
+                .placeholder("https://pypi.org/simple（可选）")
+                .fontSize(core::theme::scaled(13.0f))
+                .theme(ct)
+                .onChange([this](const std::string& v) { mirrorExtraInput_ = v; })
+                .onCancel([this] { mirrorExtraInput_.clear(); })
+                .build();
+            ui_kit::button(ui, "memory.cfg.mirror.clear", "清除",
+                           ui_kit::ButtonLevel::Secondary, x + g.actionX,
+                           by + 4.0f, g.actionW, 32.0f, t,
+                           {[this] { clearMirrorSettings(); }});
+            by = cy + core::theme::scaled(g.noteY);
+            ui.text("memory.cfg.mirror.note")
+                .position(x + 16.0f, by)
+                .size(innerW, core::theme::scaled(16.0f))
+                .text("留空 = 不传镜像；环境变量 PIP_INDEX_URL / PIP_EXTRA_INDEX_URL 仍作回退。")
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            cy += core::theme::scaled(g.bodyH) + 8.0f;
+        }
+    }
+
     ui.text("memory.cfg.foot")
         .position(x, cy + core::theme::scaled(4.0f))
         .size(w, core::theme::scaled(20.0f))

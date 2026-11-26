@@ -30,12 +30,16 @@ constexpr const char* kKeyAutostart = "autostartEnabled";
 constexpr const char* kKeyReleaseReminderPopup = "releaseReminderPopup";
 // 调度全屏弹窗总开关（默认关；缺键 = 存量库 → 默认关）
 constexpr const char* kKeyFullscreenPopup = "fullscreenPopup";
+// 数据库每小时自动备份（need455；缺键 = 存量库 → 默认开）
+constexpr const char* kKeyHourlyBackup = "hourlyBackupEnabled";
 // 动态背景（UAT6 主窗活体流质）：bool 直存；键缺失（存量库/旧版本升级）→ 默认开
 constexpr const char* kKeyFluidBackground = "fluidBackgroundEnabled";
 // need506 定稿：首页留白动画组合开关 bool 直存；键缺失（存量库）→ 默认开
 constexpr const char* kKeyHomeAnimEnabled = "homeAnimEnabled";
 constexpr const char* kKeyProxyPort = "claudeProxyPort";
 constexpr const char* kKeyMcpPort = "mcpPort";
+// MCP 页「破坏性工具」开关：bool 直存；键缺失（存量库/旧版本升级）→ 默认关
+constexpr const char* kKeyMcpAllowDestructive = "mcpAllowDestructive";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 // 默认模块清单迁移标记：键缺失 = 旧版本配置（见 kModuleDefaultsVersion）
@@ -306,11 +310,12 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 // 纱」两层串联叠加（UAT2 B 批 0.60/0.90→0.80/0.85；UAT3 C1 0.82；UAT6 真机两连
 // 0.82→0.85、标题栏拉平 0.85），用户仍报「半透/磨砂看不见桌面」——bug274 定案根因 =
 // macOS NSWindow backgroundColor 恒叠在 GL 之下，两层把透出压到 0.15×0.15≈2%。本批
-// 砍掉第二层（winbg 退役，见 windowEffectTitleBarAlpha），clearColor 成单层，半透档按
-// 定标桌面透出 25~30% → α=0.72（透出 28%）。对比度护栏复算（test_settings
-// settings_window_effect_contrast_guard）：两主题正文/次要文字最紧 5.79:1 ≥ 4.5。
+// 砍掉第二层（winbg 退役，见 windowEffectTitleBarAlpha），clearColor 成单层；
+// bug468 产品标「桌面透出 20%」→ α=0.80（半透档回归校准：0.72=28% 透出 → 20%）。
+// 对比度护栏复算（test_settings settings_window_effect_contrast_guard）：更不透明
+// 只会抬高对比度，两主题正文/次要文字仍 ≥ 4.5。
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.72f;
+    if (mode == kWindowEffectTranslucent) return 0.80f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
@@ -545,6 +550,12 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.fullscreenPopup = v.value().asBool();
     }
+    if (auto raw = readRow(kKeyHourlyBackup); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyHourlyBackup), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.hourlyBackupEnabled = v.value().asBool();
+    }
     if (auto raw = readRow(kKeyFluidBackground); raw.isOk()) {
         auto v = parseRow(configKey(kKeyFluidBackground), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -595,6 +606,13 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.notepadAssocEverEnabled = v.value().asBool();
+    }
+    // MCP 页「破坏性工具」开关：缺键 = 存量库 → 默认关；坏值原样 fail，不静默当 false
+    if (auto raw = readRow(kKeyMcpAllowDestructive); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyMcpAllowDestructive), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.mcpAllowDestructive = v.value().asBool();
     }
     // 窗体记忆（UAT6）：键缺失（首启动/旧版本升级）→ 默认 0/0/false = 无记录
     if (auto raw = readRow(kKeyWindowRestoreWidth); raw.isOk()) {
@@ -739,10 +757,13 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyReleaseReminderPopup,
          platform::json::makeBool(cfg.releaseReminderPopup)},
         {kKeyFullscreenPopup, platform::json::makeBool(cfg.fullscreenPopup)},
+        {kKeyHourlyBackup, platform::json::makeBool(cfg.hourlyBackupEnabled)},
         {kKeyFluidBackground, platform::json::makeBool(cfg.fluidBackgroundEnabled)},
         {kKeyHomeAnimEnabled, platform::json::makeBool(cfg.homeAnimEnabled)},
         {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
         {kKeyMcpPort, platform::json::makeInt(cfg.mcpPort)},
+        {kKeyMcpAllowDestructive,
+         platform::json::makeBool(cfg.mcpAllowDestructive)},
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
         {kKeyNotepadAssocEnabled, platform::json::makeBool(cfg.notepadAssocEnabled)},

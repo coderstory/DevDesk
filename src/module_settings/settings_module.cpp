@@ -156,6 +156,11 @@ const CardSpec kCardSpecs[] = {
      0.0f, false, /*half=*/true, &drawNotepadAssocCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
+    // 数据库自动备份卡（need455）：固定高、单开关行；日志 tab 的查看卡是
+    // FillRemainder，本卡只压缩查看区、不产生页级滚动（通用/模块 tab 已贴预算上限）。
+    {kTabLog, "settings.card.backup", nullptr, CardHeightKind::Fixed,
+     kDatabaseBackupCardHeight, false, /*half=*/false, &drawDatabaseBackupCard,
+     nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
      0.0f, false, /*half=*/false, &drawLogViewCard, nullptr},
     {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::GithubSync,
@@ -488,6 +493,18 @@ public:
         LOG_INFO("Settings: fullscreenPopup → " +
                  std::string(on ? "true" : "false"));
         app::toggle::notifyFullscreenPopupSetting(on);
+    }
+
+    // 「数据库自动备份」开关（need455，默认开）：落库后经第五桥转发 schedule 侧
+    // 进程级开关，会话内即时生效（桥未装配 = 启动早期/测试环境，落库为主、无转发）。
+    void applyHourlyBackup(bool on) {
+        cfg_.hourlyBackupEnabled = on;
+        persist();
+        setStatus(on ? "数据库自动备份已开启（即时生效）"
+                     : "数据库自动备份已关闭（即时生效）");
+        LOG_INFO("Settings: hourlyBackupEnabled → " +
+                 std::string(on ? "true" : "false"));
+        app::toggle::notifyHourlyBackupSetting(on);
     }
 
     // 「开机自启动」开关（UAT6）：先写平台注册项（Windows HKCU Run / macOS
@@ -1768,6 +1785,7 @@ private:
         a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
         a.applyReminderPopup = [this](bool on) { applyReminderPopup(on); };
         a.applyFullscreenPopup = [this](bool on) { applyFullscreenPopup(on); };
+        a.applyHourlyBackup = [this](bool on) { applyHourlyBackup(on); };
         a.applyProxyPort = [this] { applyProxyPort(); };
         a.setProxyPortDraft = [this](const std::string& v) {
             setProxyPortDraft(v);
@@ -1870,14 +1888,13 @@ private:
             // need#490 W6：compose 按快照四态 + 删除确认行算好（roundFs 已含）
             return webAccessHeight_;
         case CardHeightKind::FillRemainder:
-            // UAT6 零滚动收口：日志 tab 在最小窗（1000×640 → 卡区可用高 372）下
-            // remain = 372 − roundFs(144) − gap 16 = 212——旧下限 260 > 212 把日志
-            // 查看卡强行抬到 260，内容高 420 > 372 溢出 48px 出滚动条（85% 档
-            // 398 > 375 溢出 23px；用户判「完全没必要」）。下限降到 160：只在比
-            // 真实最小页高 600 更矮的退化视口兜底（100% 档 min 窗下 remain 212 恒
-            // 不触发），正常路径卡高 = remain 恰好填满 → 内容高 = 可用高，日志
-            // tab 100%~130% 档全部零滚动。
-            return std::max(160.0f, remain);
+            // UAT6 零滚动收口：日志 tab 的查看卡吃掉固定卡之后的剩余高。1000×640
+            // 最小窗 100% 档 cardsH 424；前置 = 日志卡 144 + 数据备份卡 108
+            //（need455）+ 两道 8px 卡距 = 268 → remain 156，恰好填满。下限取 156：
+            // 只在比真实最小窗更矮的退化视口兜底，真实最小窗内容高 = 可用高 →
+            // 零页级滚动。下限高于 156 会把查看卡强行抬高、内容 > 可用高溢滚动条
+            //（旧下限 160 在备份卡落位后正是此症：424−268=156 < 160 → 溢出 4px）。
+            return std::max(156.0f, remain);
         case CardHeightKind::GithubSync:
             // 恒满高（UAT4）：未启用态也全字段渲染（去门控），启用/未启用只差
             // 表单区是否可交互，不参与卡高决策。UAT5 方案 A 三段式后的最坏行序

@@ -88,7 +88,10 @@ constexpr float kTreeFontSize = 14.0f;
 
 // UAT3 D-R3-3（目录树折叠重做）：面板宽动画与收起形态常量。
 constexpr float kTreePanelWidth = 224.0f;         // 展开宽（S4.4 规格 224，收窄最小 200）
-constexpr float kTreePanelAnimK = 0.18f;          // 每帧向目标靠拢的固定 lerp 系数
+// bug548：0.18→0.5。动画每帧都改编辑列宽 → 输入框排版缓存（按宽度精确键）
+// 整篇 miss、逐帧全文重排，帧数直接等于卡顿总时长；减半系数把全程 28 帧压到
+// 8 帧（≈130ms@60fps），每帧仍严格单调收敛（md_tree_panel_anim_frame_pump 锁）。
+constexpr float kTreePanelAnimK = 0.5f;           // 每帧向目标靠拢的固定 lerp 系数
 constexpr float kTreePanelSnapEps = 1.0f;         // 距目标 <1px 视为收敛，直接钉住
 constexpr float kTreePanelContentMinW = 220.0f;   // 内容回画门槛（动画中只画面板壳）
 // UAT6 MDA（方案 A 边界把手）：一颗把手管两端——树展开时把手位于树右缘垂直居中，
@@ -135,6 +138,12 @@ inline components::MarkdownStyle scaledPreviewStyle(
     style.blockGap *= k;
     return style;
 }
+
+// need550：预览选区文本构建（整篇显示码点域切片；need345 notepadPreviewSelText
+// 同式）。拖选松手自动复制 / Ctrl+C / 测试直驱共用本函数。cp 归一化后取显示
+// 文本字节区间；空选区/越界 → 空串。
+std::string mdPreviewSelectionText(const std::string& source, size_t anchorCp,
+                                   size_t focusCp);
 
 // 单行树条目：整行包一层 stack —— position() 只在 stack 内生效，流式子元素会被静默忽略。
 // S2.5：选中态 = primarySoftBg 底 + 行左缘 3px 绿竖线 + primary 文字 / 图标。
@@ -403,6 +412,11 @@ struct BlockFlowHooks {
     std::function<void(size_t k, const components::MouseEvent& ev)> onBlockDrag;
     std::function<void(size_t k, const components::MouseEvent& ev)>
         onBlockRelease;
+    // 预览右键缝（bug547）：注册于每块最上层 hit MouseArea，坐标 = 块包裹局部。
+    // 渲染文本无选区 API（框架 selection 面仅 components::input），复制契约
+    // 经本缝开「复制本段/全文」菜单替代。全空 = 不注册（实时/编辑路径零变化）。
+    std::function<void(size_t k, const components::MouseEvent& ev)>
+        onBlockContextMenu;
     // 视口裁剪（性能，bug259-C）：非空时返回 false 的块整块不建元素。滚动总高
     // 不依赖逐块建元（scrollview contentHeightProvider 以几何表供给）。非空时
     // 渲染核根容器切换为绝对定位 stack（高 = totalHeight，可见块包裹 y =
@@ -471,6 +485,7 @@ public:
     // 测试缝（声明与理由见 markdown_module_test_seam.h）：只给「注入轮询周期」这一项
     // 开私有访问，不给测试留后门集合。
     friend void mdSetPollIntervalMsForTest(::core::Module* mod, int64_t ms);
+    friend int64_t mdTreeRowsBuildCountForTest(::core::Module* mod);
 
 
     void onStart() override ;
@@ -555,6 +570,9 @@ private:
                       float sideW,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) ;
+
+    // 目录树行模型（bug548）：buildTreeRows 纯函数 + 修订号缓存，输入未变即复用。
+    const std::vector<MdTreeRow>& treeRowsForCompose() ;
 
     void drawOutlinePanel(eui::Ui& ui,
                           const eui::Screen& screen,
@@ -989,6 +1007,30 @@ private:
                                const core::theme::Tokens& t,
                                const components::theme::ThemeColorTokens& componentTheme) ;
 
+    // bug547：预览右键复制（渲染文本无选区 API，见 BlockFlowHooks::onBlockContextMenu）。
+    // 右键块源文快照进 previewCtxText_，菜单给「复制本段 / 复制全文」。
+    void openPreviewContextMenu(size_t blockIndex,
+                                const components::MouseEvent& ev) ;
+    void drawPreviewContextMenu(eui::Ui& ui,
+                                const eui::Screen& screen,
+                                const core::theme::Tokens& t,
+                                const components::theme::ThemeColorTokens& componentTheme) ;
+
+    // need550 预览拖选（移植 need345 记事本选区）：坐标 = 块包裹局部（x 自块左缘、
+    // y 自块顶），y 经 syncMap_.blockTopY 抬到文档系后走 displayCpForPoint 反查
+    // 整篇显示码点。高亮 = hitRectsForDisplayRangeDoc 文档系矩形逐块裁剪绘制。
+    // Preview / Split 同一条通路（Live 不注册，编辑区行为零变化）；press 清旧选区
+    // 落锚、drag 扩焦实时高亮、release 保留高亮并选中即复制。
+    void previewSelPress(size_t blockIndex, const components::MouseEvent& ev) ;
+    void previewSelDrag(size_t blockIndex, const components::MouseEvent& ev) ;
+    void previewSelRelease(size_t blockIndex, const components::MouseEvent& ev) ;
+    size_t previewSelHitCp(size_t blockIndex,
+                           const components::MouseEvent& ev) const ;
+    std::string previewSelText() const ;
+    // 预览复制单点（右键菜单 / 拖选松手 / Ctrl+C 共用剪贴板路径：写剪贴板 +
+    // 日志 + toast）。
+    void copyPreviewText(const std::string& text, const std::string& what) ;
+
     // H27：目录行右键菜单（重命名 / 删除）。坐标复用 ctxMenuX_/Y_（与笔记菜单互斥打开）。
     void openDirContextMenu(const std::string& relPath, const eui::PointerEvent& ev) ;
 
@@ -1111,6 +1153,21 @@ private:
     bool editorCtxOpen_ = false;
     float editorCtxX_ = 0.0f;
     float editorCtxY_ = 0.0f;
+    // bug547 预览右键复制菜单（替代：渲染文本无选区 API，复制走菜单）
+    bool previewCtxOpen_ = false;
+    float previewCtxX_ = 0.0f;
+    float previewCtxY_ = 0.0f;
+    std::string previewCtxText_;      // 右键块源文快照（菜单选择时复制）
+    // need550 预览拖选：整篇显示码点域（同 notepad need345）。style/width = compose
+    // 帧快照（指针回调帧间派发，反查须与渲染帧同源）；rev = 选区所属文本修订——
+    // Split 可编辑，文本变了旧码点即失效（不显示、不复制）。
+    bool previewSelDragging_ = false;
+    bool previewSelHasText_ = false;
+    size_t previewSelAnchorCp_ = 0;
+    size_t previewSelFocusCp_ = 0;
+    uint64_t previewSelRev_ = 0;
+    components::MarkdownStyle previewSelStyle_{};
+    float previewSelWidth_ = 0.0f;
     bool deleteConfirmOpen_ = false;
     std::string deleteTargetPath_;   // 待删笔记（确认弹窗展示 + 删除目标）
     bool renameOpen_ = false;
@@ -1137,6 +1194,14 @@ private:
     bool outlineDirty_ = true;
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
     float previewOffset_ = 0.0f;       // 仅预览态的手动滚动位置
+    // bug546 双栏手滚接管：滚轮/拖滚动条 → splitPreviewFollow_ = false，compose
+    // 用 splitPreviewOffset_ 定滚动与裁剪；编辑区 verticalScroll 变化（滚动 /
+    // 光标跟随 → 打开新笔记）→ 恢复跟随。程序化同步只靠 .offset() 声明值跳变
+    //（框架 syncOwnedScrollState：declared 变才跳且不发 onChange），故手滚记账
+    // 不会被自推回写污染——这是「每帧 setScrollOffset 回推」失效后的正确通路。
+    float splitPreviewOffset_ = 0.0f;  // 双栏手滚记账值（follow=false 时生效）
+    bool splitPreviewFollow_ = true;   // true = 预览跟编辑区同步
+    float splitEditorScrollSeen_ = -1.0f;  // 上帧编辑器 verticalScroll（变化 = 编辑区滚动）
     float liveScrollY_ = 0.0f;         // 实时态滚动偏移（记账值，每帧按声明值回读钳位）
     // 滚动锚定与光标跟随
     bool liveFollow_ = false;          // 跟随开关：滚轮 → false，光标事件 → true
@@ -1188,6 +1253,16 @@ private:
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）
 
     std::set<std::string> collapsedDirs_;             // 已收起的一级目录（内存态）
+    // bug548：目录树行模型缓存。buildTreeRows 对全量笔记/目录做 set/map + 字符串
+    // 构造，原实现每次 compose 重建（折叠动画每帧、逐键输入每帧各一遍）。输入只
+    // 有两类变化：列表重载（refreshList）与折叠集合变动——各 bump 一个修订号；
+    // 修订号全等 = 零重算。build 次数经测试缝暴露，作增量路径存在性断言。
+    std::vector<MdTreeRow> treeRowsCache_;
+    uint64_t treeRowsListRev_ = 0;
+    uint64_t treeRowsCollapsedRev_ = 0;
+    uint64_t treeRowsCacheListRev_ = ~0ull;           // 哨兵：首帧必 miss
+    uint64_t treeRowsCacheCollapsedRev_ = ~0ull;
+    uint64_t treeRowsBuildCount_ = 0;
     // 左栏列表滚动偏移（need401 #410）：虚拟化窗口按它选可见行；滚动事件回写，
     // 列表与搜索列表共用同一滚动容器（md.tree.scroll）。
     float treeScrollOffset_ = 0.0f;

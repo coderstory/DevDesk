@@ -1,5 +1,5 @@
 // src/module_settings/settings_ui_cards.cpp
-// settings 模块 6 张卡（+ GitHub Sync 卡在 github_sync_card.cpp，共 7 卡）：每个可见
+// settings 模块 7 张卡（+ GitHub Sync 卡在 github_sync_card.cpp，共 8 卡）：每个可见
 // 区域一个自由函数，吃 CardDrawArgs。元素 event 回调一律按值捕获 std::function——
 // 元素树比一帧活得久，捕引用会悬垂。
 // 卡内容直接铺页面底：关档靠主窗 clearColor 当底，半透/磨砂档露出窗口背景。
@@ -1262,6 +1262,57 @@ void drawLogCard(const CardDrawArgs& args) {
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();
+        })
+        .build();
+}
+
+// 数据库自动备份卡（need455，日志 tab 首卡之后）：单开关行，默认开。
+// 落点理由：通用/模块 tab 卡区高度已贴最小窗零滚动上限，本 tab 查看卡是
+// FillRemainder，新增固定高卡只缩小查看区不产生页级滚动。
+void drawDatabaseBackupCard(const CardDrawArgs& args) {
+    eui::Ui& ui = args.ui;
+    const std::string& id = args.id;
+    const float w = args.w;
+    const float h = args.h;
+    const core::theme::Tokens& t = args.t;
+    const SettingsCardsIn& in = args.in;
+    const SettingsCardActions& a = args.a;
+
+    const auto compTheme = core::theme::componentTokensWeChat(t);
+    const float rowY = roundFs(64.0f);
+    const float rowH = roundFs(28.0f);
+    const float labelW = roundFs(112.0f);
+    ui.stack(id)
+        .size(w, h)
+        .zIndex(30)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "数据备份");
+            cardDesc(ui, id, t, 40.0f, std::max(0.0f, w - 56.0f), 16.0f,
+                     "每小时整点备份数据库，滚动保留最近 24 份");
+            ui.text(id + ".label")
+                .position(28.0f, rowY)
+                .size(labelW, rowH)
+                .text("自动备份")
+                .fontSize(fs(13.0f))
+                .lineHeight(rowH)
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .maxWidth(labelW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+            ui_kit::wswitch(ui, id + ".sw", in.cfg.hourlyBackupEnabled,
+                            28.0f + labelW + roundFs(16.0f),
+                            rowY + std::max(0.0f, (rowH - kAutostartSwitchH) * 0.5f),
+                            kAutostartSwitchW, kAutostartSwitchH, t,
+                            [f = a.applyHourlyBackup](bool v) { f(v); });
         })
         .build();
 }

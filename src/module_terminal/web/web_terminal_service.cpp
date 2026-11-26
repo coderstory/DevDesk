@@ -286,13 +286,9 @@ core::Result<void> WebTerminalService::revokeBinding() {
 }
 
 core::Result<void> WebTerminalService::writeSettings(const core::TerminalSettingsPatch& patch) {
-    if (patch.startupDir && !patch.startupDir->empty()) {
-        const std::string reason = settingsErrorReasonForTest(*patch.startupDir);
-        if (!reason.empty()) {
-            // message 直接带三态码：not_exist / not_dir / cannot_enter（E-18 前端三文案）
-            return core::Result<void>::fail(core::ErrorCode::ValidationError, reason);
-        }
-    }
+    // need#452 契约（设计 §9）：保存不拦截——启动目录是快捷方式不是承诺，不存在/不可进入
+    // 照存成功；可用性由启动侧严格校验（spawn 非空不可用 → 失败，不静默回退）。网页输入框
+    // 的三态提示校验在 HTTP settings.set 边界（dispatchInner），不属于保存语义。
     SettingsState before;
     {
         std::lock_guard<std::mutex> lock(mutex_);

@@ -28,7 +28,7 @@ if(WIN32)
   add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
 endif()
 
-if(MINGW)
+if(MINGW AND NOT CMAKE_LINKER_TYPE STREQUAL "LLD")
   # 链接器内存封顶（池 need271，2026-11-16 实测）：GNU bfd ld 链接 Debug 巨型
   # 静态链（-static，338MB exe / 560MB tests）单进程峰值 2.1-3.5GB，ninja 并行
   # 3 个链接 → 5GB+ 峰值。--no-keep-memory 让 ld 处理完 reloc 即释放输入缓存

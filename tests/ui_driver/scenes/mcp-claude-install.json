@@ -27,7 +27,8 @@
     {
       "type": "wait",
       "until": "exists",
-      "id": "mcp.grid"
+      "id": "mcp.list.scroll",
+      "_comment": "页面就绪闸。debt416 单一注册源（镜像）后 ui_driver 不注册内置 MCP 工具、服务未启 → 工具数 0 → 只有空态、mcp.grid 不组；闸改常驻滚动容器"
     },
     {
       "type": "assert",

@@ -16,6 +16,7 @@
 #include "mcp_service_bridge.h"
 #include "module_mcp/mcp_page_module.h"
 
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -127,6 +128,37 @@ int main(int argc, char* argv[]) {
         ui->find("mcp.card.notes_query") == nullptr) {
         std::cerr << "mcp_card_343_probe: 卡面缺失\n";
         passed = false;
+    }
+
+    // 页头「破坏性工具」开关行：存在、行高 64、开关右轨与记忆行同一条右缘线
+    //（两行同构复用 drawToolSwitchRow，右缘漂移 = 行卡几何被改坏）。
+    {
+        const auto* memRow = ui == nullptr ? nullptr : ui->find("mcp.module.memory");
+        const auto* memTrack =
+            ui == nullptr ? nullptr : ui->find("mcp.module.memory.toggle.track");
+        const auto* dRow =
+            ui == nullptr ? nullptr : ui->find("mcp.module.destructive");
+        const auto* dTrack = ui == nullptr
+                                 ? nullptr
+                                 : ui->find("mcp.module.destructive.toggle.track");
+        if (memRow == nullptr || memTrack == nullptr || dRow == nullptr ||
+            dTrack == nullptr) {
+            std::cerr << "mcp_card_343_probe: 页头模块行缺失\n";
+            passed = false;
+        } else {
+            if (std::fabs(dRow->height.value - 64.0f) > 0.5f) {
+                std::cerr << "mcp_card_343_probe: 破坏性行高 "
+                          << dRow->height.value << "（期望 64）\n";
+                passed = false;
+            }
+            const float memRight = memTrack->frame.x + memTrack->frame.width;
+            const float dRight = dTrack->frame.x + dTrack->frame.width;
+            if (std::fabs(memRight - dRight) > 0.5f) {
+                std::cerr << "mcp_card_343_probe: 开关右轨未对齐 记忆行 "
+                          << memRight << " / 破坏性行 " << dRight << "\n";
+                passed = false;
+            }
+        }
     }
 
     if (!shot.empty() && passed) {

@@ -110,6 +110,9 @@ struct SettingsConfig {
     bool releaseReminderPopup = false;
     // 调度全屏弹窗总开关（默认关）：schedule fullscreen 渠道是否自动全屏置顶。
     bool fullscreenPopup = false;
+    // 数据库每小时整点自动备份（need455，默认开）：关 = 不产出备份（相位照常推进，
+    // 重新打开不补旧小时）；运行期经 module_toggle_bridge 第五桥转发 schedule 侧开关。
+    bool hourlyBackupEnabled = true;
     // 动态背景（UAT6 主窗活体流质）：默认开——效果是用户主动拍板的交付物，
     // 关闭是给省电/静音偏好的出口（关闭 = 主窗恢复静态背景、帧泵零成本）。
     // 运行时镜像在 app 侧（app_sidebar 持有，设置页经 setFluidBackgroundEnabled 写）。
@@ -122,6 +125,8 @@ struct SettingsConfig {
     // MCP 服务监听端口：非法值回落默认 8931（与 proxyPort 同口径，不钳边界）；
     // 运行中改端口经桥 restart，未运行则下次启动生效。
     int mcpPort = kDefaultMcpPort;
+    // MCP 页「破坏性工具」开关；默认关 = 服务端一律拒（写文件/执行命令/删除等）。
+    bool mcpAllowDestructive = false;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。
     std::string windowEffect = kWindowEffectOff;
     // 强调色："clay"|"purple"|"pink"|"blue"
@@ -211,11 +216,12 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：全部顶层键（24 个）在一个事务里 UPSERT，并清掉本轮不再写出的旧键
+    // 写入配置：全部顶层键（27 个）在一个事务里 UPSERT，并清掉本轮不再写出的旧键
     //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键；动态背景
     // 批加 fluidBackgroundEnabled；默认模块迁移加 moduleDefaultsVersion；MCP 批
-    // 加 mcpPort；池 bug246 加 userDisabledModules；F-10 加 mdAssocEnabled/
-    // mdAssocEverEnabled（键名沿用至 F-18 notepadAssoc* 字段）。键数断言同步在 test_mcp_settings
+    // 加 mcpPort、mcpAllowDestructive（破坏性工具总开关）；池 bug246 加
+    // userDisabledModules；F-10 加 mdAssocEnabled/mdAssocEverEnabled（键名沿用至
+    // F-18 notepadAssoc* 字段）。键数断言同步在 test_mcp_settings
     // mcp_settings_save_load_roundtrip_19_keys（用例名保留）。
 
     core::Result<void> save(const SettingsConfig& cfg) const;

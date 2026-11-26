@@ -1112,7 +1112,7 @@ REGISTER_TEST(md_tree_panel_collapse,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    // 收敛泵：0.18/帧 lerp 距目标 1px 内钉住，224↔0 全程约 28 帧；40 帧必收敛
+    // 收敛泵：kTreePanelAnimK=0.5 → 224·0.5^n < 1px 即钉住，224↔0 全程约 8 帧；12 帧必收敛
     auto settle = [&]() {
         for (int i = 0; i < 40; ++i) frame();
     };
@@ -1283,9 +1283,10 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_CHECK(w1 < 224.0f);
     DOCTEST_CHECK(w1 > 0.0f);
 
-    // 逐帧推进：单调向 0；把手仍在场
+    // 逐帧推进：单调向 0；把手仍在场。12 帧上限 = 动画速度回归锁
+    // （bug548：0.5 系数 8 帧收敛；回退旧 0.18 = 28 帧，本上限先红）
     float prev = w1;
-    for (int i = 0; i < 40 && treeW() > 0.0f; ++i) {
+    for (int i = 0; i < 12 && treeW() > 0.0f; ++i) {
         frame();
         const float w = treeW();
         DOCTEST_CHECK(w < prev);
@@ -1303,7 +1304,7 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_CHECK(g1 > 0.0f);
     DOCTEST_CHECK(g1 < 224.0f);
     prev = g1;
-    for (int i = 0; i < 40 && treeW() < 224.0f; ++i) {
+    for (int i = 0; i < 12 && treeW() < 224.0f; ++i) {
         frame();
         const float w = treeW();
         DOCTEST_CHECK(w > prev);
@@ -1355,6 +1356,78 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
         DOCTEST_CHECK_EQ(treeW(), 224.0f);
     }
+
+    mod->onStop();
+    return true;
+})
+
+// bug548：目录树行模型（buildTreeRows）修订号缓存。事故回退场景：去缓存 → 每帧
+// 重建，「跨帧零重建」断言先红；缓存漏失效（折叠不 bump 修订号）→ 折叠后子文件
+// 行仍在 / 节点数断言先红。列表重载失效（refreshList 内 bump）由既有 new-folder /
+// 搜索 / 轮询用例的「新行出现」断言兜住——它们同样走 refreshList。
+REGISTER_TEST(md_tree_rows_model_reuse,
+              "markdown_module: 目录树行模型跨帧零重建 + 折叠/展开各恰一次重建（折叠态与节点数不变量）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "rowscache", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "d" / "x.md", "# X\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    int n = 0;
+    auto frame = [&]() {
+        ui.begin("rowscache" + std::to_string(n++));
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto builds = [&]() {
+        return module::markdown::mdTreeRowsBuildCountForTest(mod.get());
+    };
+
+    // 首帧建一次；行为不变量：根组 + a.md + 目录 d + d/x.md（根组行序固定最前）
+    frame();
+    const int64_t b0 = builds();
+    DOCTEST_CHECK_EQ(b0, 1);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "根目录", true), 0);
+    DOCTEST_CHECK(treeRowIndex(ui, "a.md", false) >= 0);
+    const int folder = treeRowIndex(ui, "d", true);
+    DOCTEST_REQUIRE(folder >= 0);
+    DOCTEST_REQUIRE(treeRowIndex(ui, "x.md", false) >= 0);
+
+    // 增量路径存在性：输入不变的连续帧（= 折叠动画的逐帧 compose）零重建
+    for (int i = 0; i < 5; ++i) frame();
+    DOCTEST_CHECK_EQ(builds(), b0);
+
+    // 折叠 d：恰好重建一次；x.md 行消失、d 行仍在（折叠态正确）
+    const auto* foldToggle =
+        ui.find("md.tree.node." + std::to_string(folder) + ".toggle");
+    DOCTEST_REQUIRE(foldToggle != nullptr);
+    DOCTEST_REQUIRE(foldToggle->onClick != nullptr);
+    foldToggle->onClick();
+    frame();
+    DOCTEST_CHECK_EQ(builds(), b0 + 1);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "x.md", false), -1);
+    DOCTEST_CHECK(treeRowIndex(ui, "d", true) >= 0);
+    frame();
+    DOCTEST_CHECK_EQ(builds(), b0 + 1);  // 折叠后的后续帧复用缓存
+
+    // 展开往返：再恰好一次重建，节点数回到 4（不丢不重）
+    const int folderAgain = treeRowIndex(ui, "d", true);
+    DOCTEST_REQUIRE(folderAgain >= 0);
+    const auto* expandToggle =
+        ui.find("md.tree.node." + std::to_string(folderAgain) + ".toggle");
+    DOCTEST_REQUIRE(expandToggle != nullptr);
+    DOCTEST_REQUIRE(expandToggle->onClick != nullptr);
+    expandToggle->onClick();
+    frame();
+    DOCTEST_CHECK_EQ(builds(), b0 + 2);
+    DOCTEST_REQUIRE(treeRowIndex(ui, "x.md", false) >= 0);
 
     mod->onStop();
     return true;
@@ -3713,6 +3786,147 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     return true;
 })
 
+// bug546：双栏预览滚轮接管（用户手滚不被每帧同步回推）+ 编辑区滚动恢复跟随。
+// 修前红：Split 分支无 onChange（手滚通路为空）、且每帧 setScrollOffset 回推
+// computeSyncOffset → 手滚帧 declared 读数 = 同步目标 ≠ 手滚值。
+// 断言全走模块声明值读数（scrollOffset/scrollMaxOffset）+ 回调指针存在性，
+// 不复制实现公式。
+REGISTER_TEST(md_module_split_preview_manual_scroll,
+              "markdown_module: 双栏预览手滚接管/编辑区恢复跟随（headless，bug546）", {
+    std::string text;
+    for (int s = 0; s < 12; ++s) {
+        text += "# 节" + std::to_string(s) + "\n";
+        for (int l = 0; l < 12; ++l) {
+            text += "内容行 " + std::to_string(s) + "-" +
+                    std::to_string(l) + " 一二三四五六七八九十\n";
+        }
+        text += "\n";
+    }
+    test_support::MdHeadlessEnv env(kDirPrefix, "splitmanual", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "long.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
+    frame();
+    frame();
+
+    const auto* pvTop = ui.find("md.preview.scroll");
+    DOCTEST_REQUIRE(pvTop != nullptr);
+    // 滚动范围几何①：内容超视口才可滚，且可到底（maxOffset = 总高 − 视口）
+    DOCTEST_CHECK(pvTop->scrollMaxOffset > 100.0f);
+    const float maxOff = pvTop->scrollMaxOffset;
+    // 手滚通路注册（修前 Split 分支 onChange 为空 → 红）
+    DOCTEST_REQUIRE(pvTop->onScrollOffsetChanged != nullptr);
+
+    // 模拟滚轮到底（runtime 派发口径：onScrollOffsetChanged(v)）
+    pvTop->onScrollOffsetChanged(maxOff);
+    frame();
+    DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollOffset, maxOff);
+    frame();
+    DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollOffset, maxOff);
+
+    // 编辑区滚动（大纲跳深锚点 → 编辑视口跟随）→ 恢复跟随：
+    // 声明值回到 computeSyncOffset（≠ 手滚值）
+    const auto* toggle = ui.find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    frame();
+    const auto* row5 = ui.find("md.outline.item.5.row");
+    DOCTEST_REQUIRE(row5 != nullptr);
+    DOCTEST_REQUIRE(row5->onClick != nullptr);
+    row5->onClick();
+    frame();
+    frame();
+    const float resynced = ui.find("md.preview.scroll")->scrollOffset;
+    DOCTEST_CHECK(std::fabs(resynced - maxOff) > 1.0f);
+    DOCTEST_CHECK(resynced > 0.0f);
+
+    mod->onStop();
+    return true;
+})
+
+// bug547：预览块右键复制层存在性（框架无渲染文本选区 API，复制走菜单替代）+
+// 矮内容无滚动（bug546 几何另一半：内容未超视口时 maxOffset = 0，不出现假可滚）。
+// 修前红：修前预览块 hit 层不注册 onContextMenu（无任何复制入口）。
+REGISTER_TEST(md_preview_copy_seam_and_short_no_scroll,
+              "markdown_module: 预览复制层存在/矮内容无滚动（headless，bug547）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "shortcopy", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "short.md", "# 短\n一行内容\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
+    frame();
+    frame();
+
+    const auto* pvScroll = ui.find("md.preview.scroll");
+    DOCTEST_REQUIRE(pvScroll != nullptr);
+    // 滚动范围几何②：矮内容无滚动
+    DOCTEST_CHECK_EQ(pvScroll->scrollMaxOffset, 0.0f);
+
+    // 选择/复制层：任一预览块 hit 覆盖层挂右键回调（菜单入口）
+    bool hitFound = false;
+    bool menuFound = false;
+    std::function<void(const ::core::dsl::Element&)> visit =
+        [&](const ::core::dsl::Element& node) {
+            if (node.id.find(".blk.") != std::string::npos &&
+                node.id.size() >= 4 &&
+                node.id.compare(node.id.size() - 4, 4, ".hit") == 0) {
+                hitFound = true;
+                if (node.onContextMenu) menuFound = true;
+            }
+            for (const auto& child : node.children) {
+                if (child) visit(*child);
+            }
+        };
+    for (const auto& root : ui.roots()) {
+        if (root) visit(*root);
+    }
+    DOCTEST_CHECK(hitFound);
+    DOCTEST_CHECK(menuFound);
+
+    mod->onStop();
+    return true;
+})
+
 // 双栏同步滚动块模型精确锚（headless）
 // 标题锚 + 节内按行摊分在单节文档里步长恒定；块模型锚给出
 // 块级签名。全部断言从模块实时读数反推、不复制实现公式：
@@ -5471,6 +5685,116 @@ REGISTER_TEST(md_layout_hard_break_rects_and_cp_round12,
     return true;
 })
 
+// need550：预览拖选（移植 need345 记事本选区）纯逻辑断言。
+// 防的事故：①块局部 y 抬文档系时漏加块顶几何 → 跨块拖选码点整体错位；
+// ②选区矩形与拖拽输入不同源 → 高亮画在别的行（点 A 亮 B）；
+// ③显示域切片按字节切 → CJK 半字 / 反序选区不归一；④选区复制与右键块源文
+// 复制混成同一语义（一套该带 markdown 标记、一套不该带）。
+REGISTER_TEST(md_preview_drag_selection_mapping,
+              "markdown: need550 预览拖选——displayCpForPoint 跨块映射 + 高亮矩形与"
+              "拖拽输入一致 + 显示域切片 + 与右键源文复制语义并存", {
+    constexpr float kWidth = 480.0f;
+    const components::MarkdownStyle style;
+    // 两个纯文本段（无标题/标记符，块切分 = 空行；显示文本 = 源文）
+    const std::string doc = "alpha beta gamma\n\nsecond line here\n";
+    const std::string display =
+        components::MarkdownBuilder::displayTextOf(doc);
+    DOCTEST_REQUIRE(display.find("alpha") != std::string::npos);
+
+    // ① 块顶 y 取自几何估计（预览渲染核 yAcc = 块高 + blockGap 同式）：
+    // 第二块首行内的点必须反查到第一块显示域之后的码点。
+    const float block2Top = components::MarkdownBuilder::estimateHeight(
+                                "alpha beta gamma\n", kWidth, style) +
+                            style.blockGap;
+    const auto hitFirst = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, 0.0f, 0.0f);
+    const auto hitSecond = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, 0.0f, block2Top + 5.0f);
+    DOCTEST_REQUIRE(hitFirst.ok);
+    DOCTEST_REQUIRE(hitSecond.ok);
+    DOCTEST_CHECK_EQ(hitFirst.cp, static_cast<std::size_t>(0));
+    DOCTEST_CHECK_MESSAGE(hitSecond.cp > hitFirst.cp,
+                          "跨块反查未前进：cp=" + std::to_string(hitSecond.cp));
+    DOCTEST_CHECK(hitSecond.cp <= display.size());
+    // 同行 x 单调（拖选向右扩焦）：x 增大码点不回退
+    const auto hitRight = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, 200.0f, 0.0f);
+    DOCTEST_REQUIRE(hitRight.ok);
+    DOCTEST_CHECK(hitRight.cp >= hitFirst.cp);
+
+    // ② 高亮矩形与拖拽输入同源：取第 6 个显示码点的矩形中心作为拖拽终点输入，
+    // 反查回的 cp 必落在该码点域，且 [0, cp) 的矩形覆盖该输入点所在行。
+    const auto unit = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+        doc, kWidth, style, 5, 6);
+    DOCTEST_REQUIRE_MESSAGE(!unit.empty(), "第 6 码点无文档系矩形");
+    const float probeX = unit.front().x + unit.front().w * 0.5f;
+    const float probeY = unit.front().y + unit.front().h * 0.5f;
+    const auto probeHit = components::MarkdownBuilder::displayCpForPoint(
+        doc, kWidth, style, probeX, probeY);
+    DOCTEST_REQUIRE(probeHit.ok);
+    DOCTEST_CHECK_MESSAGE(probeHit.cp >= 5 && probeHit.cp <= 6,
+                          "矩形中心反查越出所在码点：cp=" +
+                              std::to_string(probeHit.cp));
+    const auto prefixRects =
+        components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+            doc, kWidth, style, 0, probeHit.cp);
+    DOCTEST_REQUIRE_MESSAGE(!prefixRects.empty(), "[0,cp) 选区无高亮矩形");
+    bool rowCovered = false;
+    for (const auto& r : prefixRects) {
+        if (r.y - 0.5f <= probeY && probeY < r.y + r.h + 0.5f) rowCovered = true;
+    }
+    DOCTEST_CHECK_MESSAGE(rowCovered, "拖拽输入点所在行未被高亮矩形覆盖");
+
+    // ③ 选区文本切片（显示域码点，归一化防反序；CJK/整档一致性）
+    DOCTEST_CHECK(module::markdown::mdPreviewSelectionText(doc, 0, 0).empty());
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(doc, 0, 10),
+                     std::string("alpha beta"));
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(doc, 10, 0),
+                     module::markdown::mdPreviewSelectionText(doc, 0, 10));
+    const auto cpCount = [](const std::string& text) {
+        std::size_t cps = 0, i = 0;
+        while (i < text.size()) {
+            const unsigned char c = static_cast<unsigned char>(text[i]);
+            i += std::min<std::size_t>(
+                c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                text.size() - i);
+            ++cps;
+        }
+        return cps;
+    };
+    DOCTEST_CHECK_EQ(
+        module::markdown::mdPreviewSelectionText(doc, 0, cpCount(display)),
+        display);  // 全选 = 整篇显示文本
+    const std::string cjk = "中文选区\n";
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(cjk, 0, 2),
+                     std::string("中文"));  // 码点切片不产半字
+    // 矩形纵向落在文档高度域内（与 estimateHeight 排布同式）
+    const auto allRects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+        doc, kWidth, style, 0, cpCount(display));
+    const float docH =
+        components::MarkdownBuilder::estimateHeight(doc, kWidth, style);
+    for (const auto& r : allRects) {
+        DOCTEST_CHECK(r.y >= -0.5f);
+        DOCTEST_CHECK(r.y + r.h <= docH + style.blockGap + 1.0f);
+    }
+
+    // ④ 与右键「复制本段」语义并存：源文含标记符、选区文本是显示态（无标记）
+    const std::string marked = "正文 **粗** 体\n";
+    const std::string markedDisplay =
+        components::MarkdownBuilder::displayTextOf(marked);
+    DOCTEST_CHECK(markedDisplay.find("**") == std::string::npos);
+    DOCTEST_CHECK(marked.find("**") != std::string::npos);  // 右键复制块源文
+    const auto blocks = module::markdown::segmentMarkdownBlocks(marked);
+    DOCTEST_REQUIRE(!blocks.empty());
+    const std::string blockSrc =
+        marked.substr(blocks.front().start, blocks.front().end - blocks.front().start);
+    DOCTEST_CHECK(blockSrc.find("**") != std::string::npos);
+    DOCTEST_CHECK_EQ(module::markdown::mdPreviewSelectionText(
+                         marked, 0, cpCount(markedDisplay)),
+                     markedDisplay);
+    return true;
+})
+
 // 源码守卫（只读断言）
 // 与 tests/test_core/test_result.cpp 的源码护栏同款：靠 cwd 上溯定位仓库根，**不**用
 // __FILE__（ccache 会把绝对路径相对化）；定位 / 取体失败一律大声失败，不静默绿。
@@ -5670,15 +5994,17 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     DOCTEST_CHECK(sawPreview);
     DOCTEST_CHECK(sawLive);
 
-    // (3b) 池369：预览路径只挂裁剪钩——drawPreviewColumn 体内禁入视图态特判
-    // 符号（实时态的贴合高覆盖/输入块绘制只属于 drawLiveColumn）。
+    // (3b) 池369：预览路径不挂实时态特判——drawPreviewColumn 体内禁入贴合高
+    // 覆盖/输入块绘制/几何改写（这些只属于 drawLiveColumn）。afterHitOverlay
+    // 是通用「hit 层收尾绘制」缝而非实时态符号：预览拖选高亮经它画块局部
+    // 半透明矩形（不消费命中、不改包裹高），故不在禁用清单。
     std::string previewBody =
         mdFunctionBody(src, "MarkdownModule::drawPreviewColumn(");
     DOCTEST_CHECK_MESSAGE(!previewBody.empty(),
                           "取不到 drawPreviewColumn 函数体（签名被改？）");
     for (const char* bad : {"hooks.wrapHeight", "hooks.drawContent",
-                            "hooks.afterHitOverlay", "drawLiveInputBlock",
-                            "liveFitHeight", "applyLiveGeometryOverride"}) {
+                            "drawLiveInputBlock", "liveFitHeight",
+                            "applyLiveGeometryOverride"}) {
         DOCTEST_CHECK_MESSAGE(previewBody.find(bad) == std::string::npos,
                               std::string("预览路径混入视图态特判：") + bad);
     }

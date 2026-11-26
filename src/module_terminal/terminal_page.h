@@ -14,6 +14,7 @@
 
 #include <eui/dsl.h>
 
+#include "terminal_dir_menu.h"
 #include "terminal_fullscreen_bridge.h"
 #include "terminal_grid_widget.h"
 #include "terminal_input_router.h"
@@ -21,6 +22,7 @@
 #include "terminal_search.h"
 #include "terminal_session_controller.h"
 #include "terminal_settings.h"
+#include "ui_kit/toast.h"
 
 namespace terminal {
 
@@ -42,6 +44,10 @@ public:
     void closeSettings() { settingsOpen_ = false; }
     bool settingsOpen() const { return settingsOpen_; }
 
+    // need#452：目录点选弹层开合（Esc/外点关闭；点行即建会话并关闭）
+    bool dirMenuOpen() const { return dirMenuOpen_; }
+    void closeDirMenu() { dirMenuOpen_ = false; }
+
     // bug278④：面板结果通道——完成=true（提交：落库+新会话参数生效）、×=false
     // （丢弃：回滚打开时刻快照）。未接线时回落旧行为（仅关闭）；装配方注入见
     // module_terminal.cpp。openSettings 同步清 panelScroll_：复开不得残留上次
@@ -57,13 +63,6 @@ public:
     void requestQuitConfirm();
     void requestCloseConfirm(int index);
     bool confirmOpen() const { return confirmKind_ != ConfirmKind::None; }
-    // #383：新建标签的目录选择（常用列表来自模块，空列表=默认目录直开）
-    void setRecentDirsProvider(std::function<std::vector<std::string>()> h) {
-        recentDirsProvider_ = std::move(h);
-    }
-    void setNewTabInHandler(std::function<void(const std::string&)> h) {
-        onNewTabIn_ = std::move(h);
-    }
     // 关标签请求转交模块裁定（Running 才弹确认）
     void setCloseTabHandler(std::function<void(int)> h) { onCloseTab_ = std::move(h); }
 
@@ -119,16 +118,15 @@ private:
     bool fullscreenInit_ = false;
     bool settingsOpen_ = false;      // need250 设置面板开合
     float panelScroll_ = 0.0f;       // 面板内容区滚动偏移（超高内滚）
+    bool pendingScrollToDirs_ = false; // need#452：管理入口跳转——下帧滚到「常用目录」组头
+    bool dirMenuOpen_ = false;       // need#452 目录点选弹层
+    ui_kit::ToastState toast_;       // need#452 删除/添加/失效反馈（单实例，既有能力）
     std::function<void(bool)> onPanelResult_;  // bug278④ 面板结果通道（完成/×）
     std::function<void(int)> onFontSize_;      // M2：Cmd/Ctrl +/−/0 字号通道
     ConfirmKind confirmKind_ = ConfirmKind::None;
     int confirmIndex_ = -1;
     ConfirmHandler onConfirm_;
     std::function<void(int)> onCloseTab_;
-    std::function<std::vector<std::string>()> recentDirsProvider_;
-    std::function<void(const std::string&)> onNewTabIn_;
-    bool newTabMenuOpen_ = false;
-    std::vector<std::string> newTabDirs_;
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 池#365：终端历史搜索态（成员级存活——搜索条闭包跨帧引用）
     TerminalSearchState search_;

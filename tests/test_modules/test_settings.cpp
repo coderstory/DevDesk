@@ -1552,14 +1552,15 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 两处 alpha 各自独立：clearColor（全窗唯一透出纱）off=1.0 / translucent=0.72 /
+    // 两处 alpha 各自独立：clearColor（全窗唯一透出纱）off=1.0 / translucent=0.80 /
     // frosted=0.15 / 未知→1.0；窗口背景色（bug274 起退役）1.0 / 0 / 0 / 未知→1.0。
     // bug274 定标：旧「winbg × clearColor」两层叠加把透出压到 ≈2%（历轮调参史
-    // UAT2/UAT3/UAT6 见 settings_config.cpp 注释），砍掉第二层后半透档单层 0.72 =
-    // 桌面透出 28%（定标带 25~30%）。自绘标题栏后 Windows 无系统标题栏，标题栏
-    // alpha 本就只作用于 macOS，退役后仅 off 档保 1.0 实色兜底。
+    // UAT2/UAT3/UAT6 见 settings_config.cpp 注释），砍掉第二层后半透档单层；
+    // bug468 产品标「桌面透出 20%」→ 0.80（旧 0.72 = 透出 28%）。自绘标题栏后
+    // Windows 无系统标题栏，标题栏 alpha 本就只作用于 macOS，退役后仅 off 档保
+    // 1.0 实色兜底。
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.72f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.80f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectOff) == 1.0f);
@@ -1602,13 +1603,14 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
                       ms::kWindowEffectTranslucent) == 0.72f);
     core::window_effect_state::setActiveTierProvider(nullptr);  // 尾态复位
 
-    // 半透档目标带 **176–184**（黑壁纸）：bug274 定标——winbg 退役后 themeOpacity
-    // = clearColor 单层，0.72 → 250×0.72 = 180.0，带宽 ±4（回旧值 0.85 = 212.5 即出
-    // 带红——两层叠加时代的带 242–246 随第二层退役一并作废；与对比度护栏互为双闸）。
+    // 半透档目标带 **196–204**（黑壁纸）：bug468 产品标——winbg 退役后 themeOpacity
+    // = clearColor 单层，0.80 → 250×0.80 = 200.0，带宽 ±4（回旧值 0.72 = 180 或
+    // 0.85 = 212.5 即出带红——两层叠加时代的带 242–246 随第二层退役一并作废；
+    // 与对比度护栏互为双闸）。
     const float translucentOverBlack =
         250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(translucentOverBlack >= 176.0f);
-    DOCTEST_CHECK(translucentOverBlack <= 184.0f);
+    DOCTEST_CHECK(translucentOverBlack >= 196.0f);
+    DOCTEST_CHECK(translucentOverBlack <= 204.0f);
     DOCTEST_CHECK(translucentOverBlack < 250.0f);
     // 关闭档：实色，黑壁纸下恒 250
     DOCTEST_CHECK(250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectOff) == 250.0f);
@@ -1628,7 +1630,9 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
 
     // backdrop 请求：off/translucent 显式关（None），frosted→Mica（UAT6：Acrylic→
     // Mica，主窗材质，DWMSBT_MAINWINDOW——「磨砂底色变灰」真机回归锚点，另见
-    // settings_window_effect_frosted_material 回归用例），未知→None
+    // settings_window_effect_frosted_material 回归用例），未知→None。磨砂档桌面
+    // 透出 20% 由框架侧材质叠加承担（EUI-NEO fa18776：Windows 均匀 80% LWA_ALPHA /
+    // macOS BehindWindow 材质 α0.80），DevDesk 侧映射不变：Mica 请求 + 内容纱 0.15。
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectTranslucent) == WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Mica);
@@ -1771,11 +1775,11 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.72（bug274 单层定标）+ backdrop 请求 None（显式关）；
-    // 档位单值同步写 core
+    // 半透档：clearColor alpha=0.80（bug468 产品标「桌面透出 20%」，单层定标）+
+    // backdrop 请求 None（显式关）；档位单值同步写 core
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.72f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.80f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
     // 标题栏底 alpha 随 winbg 退役传 0（显式 customColor 形态保留，避开 EUI-NEO
     // 按 clearColor 推导的兜底）
@@ -2383,10 +2387,10 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           heightOf("settings.card.editor.fluid.sw.track"),
                           at(24.0f, 24.0f, 24.0f));
             if (err.empty())
-                // UAT6：卡内第二段加自启动行 → 144→184（need321 主题行入外观卡后
-                // editor 184 / appearance 226，配对行高随 appearance 档）
+                // need506：卡内增第 3 行（首页动画 dropdown）→ 184→222
+                //（配对行高仍随 appearance 226，max 语义不变）
                 err = pin("editor 卡高", heightOf("settings.card.editor"),
-                          at(156.0f, 184.0f, 239.0f));
+                          at(189.0f, 222.0f, 289.0f));
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(192.0f, 226.0f, 294.0f));
@@ -2697,11 +2701,12 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(editor->frame.x,
                              appearance->frame.x + colWant + 8.0f));
         DOCTEST_CHECK(nearEq(pair->frame.width, contentW));
-        // 行高 = max(对内卡高)：UAT6 自启动行入 editor 后两卡同高（184|184）→
-        // 行高 184，与 UAT5 前 max(184,144)=184 逐值不变（零滚动预算不动）
+        // 行高 = max(对内卡高)：need321 外观卡 226 > need506 editor 222 →
+        // 行高由 appearance 掌（226），editor 保持自身卡高（222）
         DOCTEST_CHECK(nearEq(pair->frame.height, 226.0f));
         DOCTEST_CHECK(nearEq(appearance->frame.height, 226.0f));
-        DOCTEST_CHECK(nearEq(editor->frame.height, 184.0f));
+        DOCTEST_CHECK(nearEq(editor->frame.height,
+                             module::settings::kEditorFontCardHeight));
         // 两卡同排（行顶同 y）且都在行内
         DOCTEST_CHECK(nearEq(appearance->frame.y, pair->frame.y));
         DOCTEST_CHECK(nearEq(editor->frame.y, pair->frame.y));
@@ -3712,10 +3717,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // UAT5 全局顶部收紧：共享 kHeaderH 64→40，kSettingsHeaderH 已删并入共享源
     DOCTEST_CHECK_EQ(ui_kit::kHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 226.0f);
-    // UAT6：编辑器字号卡卡内第二段加「开机自启动」行 → 144→184（与外观卡同高）。
-    // 关键不变量：与 kAppearanceCardHeight 同值 → 配对行高恒 184 不变，通用 tab
-    // 内容高对可用 424 的零滚动预算（need321 后；0/1/2 警告态逐值随 roundFs 派生）。
-    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
+    // need506：编辑器字号卡增第 3 行（首页动画 dropdown）→ 184→222；仍低于外观卡
+    // → 配对行高恒由 kAppearanceCardHeight 掌（226），通用 tab 零滚动预算不动。
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 222.0f);
     DOCTEST_CHECK(ms::kAppearanceCardHeight > ms::kEditorFontCardHeight);
     // 模块卡：B6/F-69-3 起卡高改内容派生（modulesCardHeightFor，>1.15 档两列降单列），
     // 常量 310 仅留作 N3 前历史参考锚。池#371 修后 10/11 格 4 列 3 行
@@ -3877,6 +3881,7 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
         const std::vector<std::string> wantLog = {
             "settings.card.log",
+            "settings.card.backup",
             "settings.tab.log"};
         const auto t2 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t2 == wantLog, "日志 tab 实测：" + join(t2));

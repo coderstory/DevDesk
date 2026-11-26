@@ -27,6 +27,12 @@ using FullscreenPopupHandler = void (*)(bool on);
 void setFullscreenPopupHandler(FullscreenPopupHandler handler);  // nullptr = 恢复默认 no-op
 void notifyFullscreenPopupSetting(bool on);
 
+// 第五桥：数据库每小时自动备份开关缝（need455；同第三桥形态，转发到 app 注入的
+// schedule 侧进程级开关）。
+using HourlyBackupHandler = void (*)(bool on);
+void setHourlyBackupHandler(HourlyBackupHandler handler);  // nullptr = 恢复默认 no-op
+void notifyHourlyBackupSetting(bool on);
+
 }  // namespace app::toggle
 
 static_assert(std::is_same_v<decltype(&app::toggle::onModuleToggled),
@@ -52,6 +58,12 @@ static_assert(
 static_assert(std::is_same_v<decltype(&app::toggle::notifyFullscreenPopupSetting),
                              void (*)(bool)>,
               "module_toggle_bridge: notifyFullscreenPopupSetting 签名漂移");
+static_assert(std::is_same_v<decltype(&app::toggle::setHourlyBackupHandler),
+                             void (*)(app::toggle::HourlyBackupHandler)>,
+              "module_toggle_bridge: setHourlyBackupHandler 签名漂移");
+static_assert(std::is_same_v<decltype(&app::toggle::notifyHourlyBackupSetting),
+                             void (*)(bool)>,
+              "module_toggle_bridge: notifyHourlyBackupSetting 签名漂移");
 static_assert(
     std::is_same_v<decltype(&app::toggle::setFullscreenPopupHandler),
                    void (*)(app::toggle::FullscreenPopupHandler)>,

@@ -9,6 +9,8 @@
 #include "agent_module_internal.h"
 #include "module_agent/agent_task_templates.h"
 
+#include <exception>
+
 namespace module::agent {
 
 bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
@@ -136,24 +138,173 @@ bool AgentModule::isStopRequested(int64_t taskId) {
     return false;
 }
 
-// OS 通知发送线程收割：锁内摘出 done 的、锁外 join（join 立即返回，不堵帧）。
-// 在飞的留在表里下帧再收；onStop/析构才等在飞的（一次性，换来无 detach 的退出期安全）
-void AgentModule::reapNotifySends() {
-    std::vector<std::unique_ptr<NotifySend>> finished;
+namespace {
+
+// debt541 测试缝：通知 worker 线程创建失败 / 发送失败注入次数（模拟 MinGW 线程资源
+// 耗尽与 facade 失败分支）。生产路径恒 0，仅测试函数写入
+std::atomic<int> g_notifyWorkerSpawnFailInject{0};
+std::atomic<int> g_notifySendFailInject{0};
+
+// 发送失败（Result::fail）回队重试上限：facade 的「未受理」环境结果映射为 ok(Receipt)
+// 走旧口径不重试，这里只兜 Validation/Internal 这类失败——无限重试无收益且会长占队列
+constexpr int kMaxNotifySendAttempts = 3;
+// 队列上限：持续线程资源耗尽时通知不能无界堆积（用户语义仍是 best-effort）
+constexpr size_t kMaxPendingNotifyJobs = 16;
+
+}  // namespace
+
+void failNextNotifyWorkerSpawnsForTest(int count) {
+    g_notifyWorkerSpawnFailInject.store(count, std::memory_order_relaxed);
+}
+
+void failNextNotifySendsForTest(int count) {
+    g_notifySendFailInject.store(count, std::memory_order_relaxed);
+}
+
+size_t AgentModule::pendingNotifyCountForTest() {
+    std::lock_guard<std::mutex> lock(notifyQueueMu_);
+    return notifyQueue_.size();
+}
+
+// 通知出站队列每帧服务（debt541）：先排空投递记账（worker → notifiedRunIds_，去重账
+// 只在投递有结论后记），再在队列非空且 worker 不在时补建——上一次线程创建失败的通知
+// 仍留在队列，这里每帧重试，不再静默丢弃。仅主线程调用（pollRunEnd 每帧）
+void AgentModule::serviceNotifyQueue() {
+    bool hasPending = false;
     {
-        std::lock_guard<std::mutex> lock(notifySendsMu_);
-        for (auto it = notifySends_.begin(); it != notifySends_.end();) {
-            if ((*it)->done.load(std::memory_order_acquire)) {
-                finished.push_back(std::move(*it));
-                it = notifySends_.erase(it);
-            } else {
-                ++it;
-            }
+        std::lock_guard<std::mutex> lock(notifyQueueMu_);
+        hasPending = !notifyQueue_.empty();
+        for (int64_t runId : notifyDeliveredRunIds_) {
+            notifiedRunIds_.insert(runId);
         }
+        notifyDeliveredRunIds_.clear();
     }
-    for (auto& item : finished) {
-        if (item->thread.joinable()) item->thread.join();
+    if (hasPending) ensureNotifyWorker();
+}
+
+// 懒建常驻 worker：队列为空不起线程（无通知的模块实例零线程成本）。创建失败不丢队列，
+// 返回 false 由下一帧 serviceNotifyQueue 重试；持续失败只在首次记 ERROR（帧驱动高频，
+// 避免刷日志）
+bool AgentModule::ensureNotifyWorker() {
+    if (notifyWorker_.joinable()) return true;
+    {
+        std::lock_guard<std::mutex> lock(notifyQueueMu_);
+        if (notifyQueue_.empty()) return false;
     }
+    if (g_notifyWorkerSpawnFailInject.load(std::memory_order_relaxed) > 0) {
+        g_notifyWorkerSpawnFailInject.fetch_sub(1, std::memory_order_relaxed);
+        if (!std::exchange(notifySpawnErrorLogged_, true)) {
+            LOG_ERROR("Agent: 系统通知 worker 线程创建失败（测试注入），队列保留待下一帧重试");
+        }
+        return false;
+    }
+    try {
+        notifyWorker_ = std::thread([this] { notifyWorkerLoop(); });
+    } catch (const std::system_error& e) {
+        if (!std::exchange(notifySpawnErrorLogged_, true)) {
+            LOG_ERROR("Agent: 系统通知 worker 线程创建失败（队列保留待下一帧重试）: " +
+                      std::string(e.what()));
+        }
+        return false;
+    }
+    notifySpawnErrorLogged_ = false;
+    return true;
+}
+
+// 常驻 worker：FIFO 逐条消费（单线程串行 = 队列顺序即投递顺序）。发送 Result::fail
+// 回队首重试（保序），单条最多 kMaxNotifySendAttempts 次；facade 未受理类环境结果
+// （NotBundled / PermissionDenied / RateLimited 等）沿用旧口径只记日志不重试。
+// 停止置位即退出，不再消费（队列由 stopNotifyWorker 丢弃）
+void AgentModule::notifyWorkerLoop() {
+    for (;;) {
+        NotifyJob job;
+        {
+            std::unique_lock<std::mutex> lock(notifyQueueMu_);
+            notifyQueueCv_.wait(lock, [this] {
+                return notifyWorkerStop_ || !notifyQueue_.empty();
+            });
+            if (notifyWorkerStop_) return;
+            job = std::move(notifyQueue_.front());
+            notifyQueue_.pop_front();
+        }
+        bool delivered = false;
+        try {
+            core::Result<platform::notify::Receipt> receipt =
+                core::Result<platform::notify::Receipt>::fail(
+                    core::ErrorCode::Internal, "通知发送失败（测试注入）");
+            if (g_notifySendFailInject.load(std::memory_order_relaxed) > 0) {
+                g_notifySendFailInject.fetch_sub(1, std::memory_order_relaxed);
+            } else {
+                receipt = platform::notify::send(job.notification);
+            }
+            delivered = receipt.isOk();
+            if (!delivered) {
+                LOG_ERROR("Agent: 系统通知发送失败 id=" + job.notification.id + ": " +
+                          receipt.errorMessage());
+            } else if (receipt.value().status != platform::notify::Status::Accepted) {
+                LOG_DEBUG("Agent: 系统通知未受理 id=" + job.notification.id + ": " +
+                          platform::notify::statusToString(receipt.value().status));
+            }
+        } catch (const std::exception& e) {
+            // 线程入口不得让异常逃逸（逃逸即 std::terminate）；send 契约不抛，此处是包围
+            LOG_ERROR("Agent: 系统通知发送异常 id=" + job.notification.id + ": " + e.what());
+        }
+        if (!delivered && job.attempts + 1 < kMaxNotifySendAttempts) {
+            ++job.attempts;
+            std::lock_guard<std::mutex> lock(notifyQueueMu_);
+            if (notifyWorkerStop_) return;
+            notifyQueue_.push_front(std::move(job));
+            continue;
+        }
+        if (!delivered) {
+            LOG_ERROR("Agent: 系统通知重试 " + std::to_string(job.attempts) +
+                      " 次仍失败，放弃 id=" + job.notification.id);
+        }
+        std::lock_guard<std::mutex> lock(notifyQueueMu_);
+        notifyDeliveredRunIds_.push_back(job.runId);
+    }
+}
+
+// 停止 worker：置停止 + 唤醒 + join（在飞的一条至多等到 send 返回，≈后端阻塞上限）；
+// 剩余队列项直接丢弃——退出期通知是 best-effort，不为送达阻塞关机。幂等（onStop 后
+// 析构再调为 no-op），完成后复位停止标志供 onStop → onStart 复用
+void AgentModule::stopNotifyWorker() {
+    {
+        std::lock_guard<std::mutex> lock(notifyQueueMu_);
+        notifyWorkerStop_ = true;
+        notifyQueue_.clear();
+        notifyDeliveredRunIds_.clear();
+    }
+    notifyQueueCv_.notify_all();
+    if (notifyWorker_.joinable()) notifyWorker_.join();
+    {
+        std::lock_guard<std::mutex> lock(notifyQueueMu_);
+        notifyWorkerStop_ = false;
+    }
+    notifySpawnErrorLogged_ = false;
+}
+
+// 终态迁移入队（refreshData 检测侧）：入队后立即尝试起 worker；创建失败则留队，
+// pollRunEnd 每帧服务重试。稳定 id = agent-run-<runId>，复用系统端同 id 替换语义
+void AgentModule::enqueueRunEndNotification(int64_t runId, std::string title,
+                                            std::string body) {
+    {
+        std::lock_guard<std::mutex> lock(notifyQueueMu_);
+        while (notifyQueue_.size() >= kMaxPendingNotifyJobs) {
+            LOG_ERROR("Agent: 通知队列已满，丢弃最旧一条 id=" +
+                      notifyQueue_.front().notification.id);
+            notifyQueue_.pop_front();
+        }
+        NotifyJob job;
+        job.runId = runId;
+        job.notification.id = "agent-run-" + std::to_string(runId);
+        job.notification.title = std::move(title);
+        job.notification.body = std::move(body);
+        job.notification.level = platform::notify::Level::Error;
+        notifyQueue_.push_back(std::move(job));
+    }
+    notifyQueueCv_.notify_one();
+    ensureNotifyWorker();
 }
 
 // 惰性装配单入口：启动时 claude 关、会话内拨开无须重载本模块。幂等：loop_ 非空即返回；
@@ -651,7 +802,7 @@ void AgentModule::updateDetailPlanCache(const AgentTaskRow& task,
 // （pollRunEndFallback），命中即 refreshData 进入正常观测路径。
 void AgentModule::pollRunEnd() {
     requestNotificationAuthorizationOnce();
-    reapNotifySends();
+    serviceNotifyQueue();
     if (store_ == nullptr) return;
     polledThisFrame_ = true;
     bool prevAlive = false;
@@ -854,7 +1005,7 @@ void AgentModule::refreshData() {
         }
     }
     // run 完成通知：本次轮询 vs 上次轮询的 running→failed/limited 迁移必响；
-    // completed/cancelled 静默；同一 runId 只通知一次（notifiedRunIds_）。
+    // completed/cancelled 静默；同一 runId 只通知一次（notifiedRunIds_，投递有结论后记账）。
     // 只看 latestRuns_ 即可：刚结束的 run 必是其任务的最近一次 run，不会漏迁移。
     // 通知只走 OS 系统通知（下方 send，bug161 去双重）：任务结束多发生在人不在
     // 应用前的场景，toast 4.5s 即逝接不住，应用内与应用外并存即双重打扰；
@@ -887,44 +1038,14 @@ void AgentModule::refreshData() {
                 st == "failed" ? "智能体任务失败" : "智能体任务受限";
             const std::string body =
                 "「" + taskName + "」运行结束（" + runStatusText(st) + "）";
-            // 系统通知：受理≠展示（Focus/勿扰可能静默抑制），未受理只 LOG 不重试；
-            // 「同一 runId 只发一次」由 notifiedRunIds_ 保证（入队侧，仍在主线程）。
-            // 稳定 id 复用系统端替换语义（同 id 重发更新旧通知而非堆叠）。
-            // send 挪后台线程：facade 的授权检查在 macOS 未决期可阻塞 ≤1s（平台后端
-            // 文件头自警），不得占 UI 主线程。fire-and-forget + NotifySend 线程表：
-            // onStop/析构全量 join（T7b 纪律），不用 detach。线程创建失败只 LOG 丢弃
-            //——通知是 best-effort，与「未受理不重试」同口径
-            {
-                platform::notify::Notification n;
-                n.id = "agent-run-" + std::to_string(runId);
-                n.title = title;
-                n.body = body;
-                n.level = platform::notify::Level::Error;
-                auto item = std::make_unique<NotifySend>();
-                NotifySend* raw = item.get();
-                try {
-                    raw->thread = std::thread([raw, n = std::move(n)]() mutable {
-                        auto receipt = platform::notify::send(n);
-                        if (receipt.isFail() ||
-                            receipt.value().status !=
-                                platform::notify::Status::Accepted) {
-                            LOG_DEBUG(
-                                "Agent: 系统通知未受理 id=" + n.id + ": " +
-                                (receipt.isOk()
-                                     ? platform::notify::statusToString(
-                                           receipt.value().status)
-                                     : receipt.errorMessage()));
-                        }
-                        raw->done.store(true, std::memory_order_release);
-                    });
-                    std::lock_guard<std::mutex> lock(notifySendsMu_);
-                    notifySends_.push_back(std::move(item));
-                } catch (const std::system_error& e) {
-                    LOG_ERROR("Agent: 系统通知发送线程创建失败（通知丢弃）: " +
-                              std::string(e.what()));
-                }
-            }
-            notifiedRunIds_.insert(runId);
+            // 通知入队由常驻单 worker 顺序消费（debt541）：不再按条新建线程——
+            // MinGW CreateThread 资源紧张时线程创建失败曾导致通知静默丢弃，现在失败项
+            // 留队、pollRunEnd 下一帧重试。facade 的授权检查在 macOS 未决期可阻塞 ≤1s
+            //（平台后端文件头自警），只在 worker 线程调用，不占 UI 主线程。
+            // 「同一 runId 只发一次」：迁移检测侧（notifiedRunIds_）挡重复检测，
+            // 记账挪到投递有结论后（serviceNotifyQueue 排空 notifyDeliveredRunIds_）。
+            // 稳定 id = agent-run-<runId>，复用系统端同 id 替换语义。
+            enqueueRunEndNotification(runId, title, body);
         }
         prevRunStatuses_ = std::move(nowStatus);
         // 去重集随窗口收敛：否则它是本模块唯一只增不减的容器（会话内不释放）。

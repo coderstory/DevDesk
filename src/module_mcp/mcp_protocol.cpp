@@ -23,9 +23,45 @@ using platform::json::JsonObject;
 using platform::json::JsonValue;
 
 // need301②（原 bug#28 观测补强）：外层总闸超时弃置（detach）的 worker 累计
-// 计数。detach 线程不可收割，只观测不回收；并发上限（单飞拒绝）属后续裁决，
-// 此处不动。
+// 计数。detach 线程不可收割，只观测不回收。
 std::atomic<int> g_abandonedToolWorkers{0};
+
+// tools/call 在途并发上限（默认 8）：超限请求立刻 -32603，不排队——排队会把
+// 客户端并发风暴转成服务端内存增长，且 MCP 客户端本身会重试。env
+// MCP_MAX_CONCURRENT_CALLS 覆盖；非法/≤0/超界回退默认。
+constexpr int kDefaultMaxConcurrentToolCalls = 8;
+std::atomic<int> g_inflightToolCalls{0};
+
+int maxConcurrentToolCalls() {
+    const char* raw = std::getenv("MCP_MAX_CONCURRENT_CALLS");
+    if (raw == nullptr || *raw == '\0') return kDefaultMaxConcurrentToolCalls;
+    char* parseEnd = nullptr;
+    const long parsed = std::strtol(raw, &parseEnd, 10);
+    if (parseEnd == raw || *parseEnd != '\0' || parsed <= 0 || parsed > 1024) {
+        return kDefaultMaxConcurrentToolCalls;
+    }
+    return static_cast<int>(parsed);
+}
+
+bool tryAcquireToolCallSlot(int limit) {
+    int current = g_inflightToolCalls.load(std::memory_order_relaxed);
+    while (current < limit) {
+        if (g_inflightToolCalls.compare_exchange_weak(
+                current, current + 1, std::memory_order_acquire,
+                std::memory_order_relaxed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 槽位随 worker 生命周期归还：超时 detach 后请求线程先返回，若在请求线程
+// 归还，上限对 detach 路径就失效了（弃置 worker 仍占 CPU/工具资源）。
+struct ToolCallSlotRelease {
+    ~ToolCallSlotRelease() {
+        g_inflightToolCalls.fetch_sub(1, std::memory_order_relaxed);
+    }
+};
 
 std::string trimmed(const std::string& text) {
     std::size_t begin = 0;
@@ -106,10 +142,24 @@ core::Result<JsonValue> parseFragment(const std::string& fragment) {
     return platform::json::parse(fragment);
 }
 
+// tools/call 的 result 负载：正常执行结果与「破坏性工具被拒」共用同一拼装，
+// 保证两条路径的 JSON 形状/转义口径一致。
+std::string toolResultJson(const core::mcp::ToolResult& tr) {
+    std::string content = "{\"content\":[{\"type\":\"text\",\"text\":" +
+                          quoteString(tr.text) + "}]";
+    if (tr.isError) content += ",\"isError\":true";
+    content += "}";
+    return content;
+}
+
 } // namespace
 
 int abandonedToolWorkers() {
     return g_abandonedToolWorkers.load(std::memory_order_relaxed);
+}
+
+int inflightToolCalls() {
+    return g_inflightToolCalls.load(std::memory_order_relaxed);
 }
 
 McpProtocol::McpProtocol(McpSessionStore& sessions,
@@ -118,6 +168,14 @@ McpProtocol::McpProtocol(McpSessionStore& sessions,
     : sessions_(sessions),
       tools_(tools),
       serverVersion_(std::move(serverVersion)) {}
+
+void McpProtocol::setAllowDestructive(bool allow) {
+    allowDestructive_.store(allow, std::memory_order_relaxed);
+}
+
+bool McpProtocol::allowDestructive() const {
+    return allowDestructive_.load(std::memory_order_relaxed);
+}
 
 HttpOutcome McpProtocol::handlePost(const std::string& body,
                                     const std::string& sessionId,
@@ -306,6 +364,32 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
         }
         // keep-alive：execute 期间即使 registry 里被 unregister 也不悬垂
         const std::shared_ptr<core::mcp::IMcpTool> tool = found.value();
+        if (tool->isDestructive() &&
+            !allowDestructive_.load(std::memory_order_relaxed)) {
+            // 工具级拒绝：让客户端看到「可以开，但现在没开」，而不是协议错误
+            const core::mcp::ToolResult refused{
+                true, "破坏性工具 " + toolName +
+                          " 未授权：MCP 页「破坏性工具」开关为关闭状态"};
+            LOG_INFO("MCP 拒绝破坏性工具调用（开关关闭）: " + toolName);
+            auto refusedJson = parseFragment(toolResultJson(refused));
+            if (refusedJson.isFail() || !refusedJson.value().isObject()) {
+                return HttpOutcome{200, errorResponseText(id, -32603,
+                                                          "拒绝结果构造失败"),
+                                   false};
+            }
+            return HttpOutcome{200,
+                               successResponseText(id, refusedJson.value()), false};
+        }
+        // 并发上限：抢占式槽位，超限立刻拒绝（不排队）。占槽前不创建任何
+        // 线程，避免拒绝路径留下待回收资源。
+        if (!tryAcquireToolCallSlot(maxConcurrentToolCalls())) {
+            LOG_WARN("MCP 工具并发已达上限，拒绝调用: " + toolName);
+            return HttpOutcome{200,
+                               errorResponseText(id, -32603,
+                                                 "并发已达上限: " + toolName),
+                               false};
+        }
+        auto slotRelease = std::make_shared<ToolCallSlotRelease>();
         // 外层超时总闸（need290）：execute 放一次性 worker 线程，请求线程限时
         // 收割。超时即放弃（detach）：worker 仍持 tool 的 shared_ptr 跑到自然
         // 结束，结果写进被遗弃的 promise 随之丢弃——响应只由请求线程写一次，
@@ -317,24 +401,29 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
         std::thread executeWorker;
         bool workerSpawned = false;
         try {
-            executeWorker = std::thread([tool, argumentsJson, executePromise] {
-                // need290 审计 P2：工具实现若违约抛异常，线程内未捕获会
-                // std::terminate 全进程——worker 内收口为基础设施 fail，
-                // 与线程创建处 catch(...) 防御姿态一致。
-                try {
-                    executePromise->set_value(tool->execute(argumentsJson));
-                } catch (...) {
-                    executePromise->set_value(
-                        core::Result<core::mcp::ToolResult>::fail(
-                            core::ErrorCode::Internal,
-                            "工具执行异常终止（违背禁异常约定）"));
-                }
-            });
+            // slotRelease 按值捕获（shared_ptr 拷进线程存储）：超时 detach 后
+            // 请求线程先返回，槽位必须由 worker 析构归还；引用捕获会悬垂。
+            executeWorker = std::thread(
+                [tool, argumentsJson, executePromise, slotRelease] {
+                    // need290 审计 P2：工具实现若违约抛异常，线程内未捕获会
+                    // std::terminate 全进程——worker 内收口为基础设施 fail，
+                    // 与线程创建处 catch(...) 防御姿态一致。
+                    try {
+                        executePromise->set_value(tool->execute(argumentsJson));
+                    } catch (...) {
+                        executePromise->set_value(
+                            core::Result<core::mcp::ToolResult>::fail(
+                                core::ErrorCode::Internal,
+                                "工具执行异常终止（违背禁异常约定）"));
+                    }
+                });
             workerSpawned = true;
         } catch (...) {
             // 线程资源耗尽：不钉死请求线程，直接回基础设施错误
         }
         if (!workerSpawned) {
+            // 没有 worker 接手槽位，必须在请求线程归还
+            slotRelease.reset();
             return HttpOutcome{200,
                                errorResponseText(id, -32603,
                                                  "工具执行调度失败（线程资源不足）"),
@@ -369,11 +458,7 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
                                false};
         }
         const core::mcp::ToolResult toolResult = executed.value();
-        std::string content = "{\"content\":[{\"type\":\"text\",\"text\":" +
-                              quoteString(toolResult.text) + "}]";
-        if (toolResult.isError) content += ",\"isError\":true";
-        content += "}";
-        auto result = parseFragment(content);
+        auto result = parseFragment(toolResultJson(toolResult));
         if (result.isFail() || !result.value().isObject()) {
             return HttpOutcome{200, errorResponseText(id, -32603,
                                                      "工具结果构造失败"),

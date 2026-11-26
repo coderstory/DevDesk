@@ -181,30 +181,33 @@ void drawSolidStatCard(eui::Ui& ui,
             // 指标名：三级字，居中；说明（badge）并入同行「笔记 · 今日」。
             // B7 D1（已拍板 5 张统一）：调用方正常态传空 badge → 只显示指标名；
             // 错误态传「加载失败」→ 照旧拼出来，失败必须显形。
-            // 合并文本量宽放不下卡宽时退化为只留 badge（不放宽回指标名）：badge 现在
-            // 只剩错误态「加载失败」，丢 badge 等于把失败藏起来——这正是池117 在
-            // 1000~1394 窗口宽下暴露的缺陷（合并文案 14px≈180 > cw，旧逻辑回退成指标名，
-            // 速率卡「加载失败」不显形）。单 badge 文本在最小窗 cw≈87 仍放得下。
-            // 溢出仍由 maxWidth+Ellipsis+clip 兜底，量宽不准也绝不会画到卡外。
+            // 行预算按整卡宽（含左右内边距区）：中文宽度量字体栈（SimSun/SimHei 类
+            // Latin 全角档，14px 合并文案量得 210）超内容宽 cw、整卡宽仍放得下；
+            // 按内容宽退化只剩 badge 会丢掉指标名（池489 量化）。文本仍居中：
+            // position 左移 pad + 宽取整卡宽，rect 中心与内容宽版重合，常规档视觉不变。
+            // 整段放不下时的退化目标仍是 badge（不放宽回指标名）：badge 是错误态
+            // 「加载失败」，丢 badge 等于把失败藏起来（池117 在 1000~1394 窗口宽的缺陷）。
+            // 溢出由 maxWidth+Ellipsis+clip 兜底，量宽不准也绝不会画到卡外。
             // 量宽留 12px 余量：measureTextSize 与最终排版有 1~2% 的差（字距/取整）。
+            const float labelW = width;
             std::string labelText = badge.empty() ? label : label + " · " + badge;
             if (!badge.empty()) {
                 core::TextStyle merged;
                 merged.text = labelText;
                 merged.fontSize = core::theme::scaled(14.0f);
-                if (core::TextPrimitive::measureTextSize(merged).x + 12.0f > cw) {
+                if (core::TextPrimitive::measureTextSize(merged).x + 12.0f > labelW) {
                     labelText = badge;
                 }
             }
             ui.text(id + ".label")
-                .position(0.0f, textTop)
-                .size(cw, labelH)
+                .position(-pad, textTop)
+                .size(labelW, labelH)
                 .text(labelText)
                 .fontSize(core::theme::scaled(14.0f))
                 .lineHeight(labelH)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.textTertiary)
-                .maxWidth(cw)
+                .maxWidth(labelW)
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();
@@ -756,7 +759,9 @@ public:
                 // 档位/减动效经 home_anim 缝；相位壁钟；入场 500ms ease-out 包络。
                 {
                     const bool animOn = ::home_anim::enabled();
-                    const float leftoverH = extraH - statsGrowTotalH;
+                    // 图层是 home.root 的第 4 个流式子块，独占一份列 gap——余高预算
+                    // 不减 gap 会让内容超视口一个 gap（960 档实测 +19.5 → 伪滚动条）。
+                    const float leftoverH = extraH - statsGrowTotalH - gap;
                     if (!animOn || leftoverH < 220.0f) {
                         animFadeStart_.reset();  // 隐藏即重置包络（复显重新入场）
                     } else {
@@ -767,23 +772,14 @@ public:
                             static_cast<float>((nowS - *animFadeStart_) / 0.5), 0.0f, 1.0f);
                         const bool reduced = ::home_anim::reducedMotion();
                         const float phaseS = static_cast<float>(::home_anim::phaseSeconds());
-                        // 打字机数据：最近打开前 4 条（截断 26 字），空 → 占位语直显
+                        // 2026-11-26 老板令：打字机只展示鸡汤文本，不读取笔记/todo 等业务数据。
                         animTyper_.items.clear();
-                        const size_t take = std::min<size_t>(stats_.recentNotes.size(), 4);
-                        for (size_t i = 0; i < take; ++i) {
-                            animTyper_.items.push_back(
-                                ui_kit::home_anim::truncateTitle(
-                                    stats_.recentNotes[i].title));
-                        }
-                        // 空库/单条 → 轮播内置文案池（need506 用户拍板，UAT 追加令）
-                        if (animTyper_.items.size() < 2) {
-                            for (const char* q : ui_kit::home_anim::kQuotePool) {
-                                animTyper_.items.emplace_back(q);
-                            }
+                        for (const char* q : ui_kit::home_anim::kQuotePool) {
+                            animTyper_.items.emplace_back(q);
                         }
                         if (!reduced) animTyper_.tick(::home_anim::phaseSeconds());
-                        const std::string subtitle =
-                            "今日新增笔记 " + std::to_string(stats_.todayNotes) + " 篇";
+                        // 副语不再拼业务统计；笔记/待办计数由首页统计卡承担。
+                        const std::string subtitle;
                         ui.stack("home.anim.layer")
                             .size(contentW, leftoverH)
                             .content([&] {

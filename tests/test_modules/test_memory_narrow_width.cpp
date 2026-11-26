@@ -151,3 +151,27 @@ REGISTER_TEST(memory_narrow_chip_width_four_byte_wide,
     return true;
 });
 
+// ── bug476 安装镜像源行 ──
+
+REGISTER_TEST(memory_cfg_mirror_row_geometry,
+              "memory bug476: 镜像源行窄窗输入宽正、动作钮 8px 间隙不压框、行序不重叠", {
+    for (float innerW : {200.0f, 300.0f, 560.0f, 900.0f}) {
+        const auto g = memory::mirrorGroupGeometry(innerW);
+        DOCTEST_CHECK_MESSAGE(
+            g.inputW >= 96.0f,
+            "输入框宽退化 innerW=" + std::to_string(innerW));
+        // 动作钮左缘与输入框右缘恒 8px 间隙（输入框 right = 16+inputW）
+        DOCTEST_CHECK(g.actionX >= 16.0f + g.inputW + 8.0f - 0.5f);
+        // 动作钮右缘不越组体内边（内边 = innerW+16，留 16 卡片内边距）
+        DOCTEST_CHECK(g.actionX + g.actionW <= innerW + 16.0f + 0.5f);
+        // 行序：说明 → 标签1 → 输入1 → 标签2 → 输入2 → 注释 → 组体底
+        DOCTEST_CHECK(g.label1Y >= g.hintY + 18.0f - 0.5f);
+        DOCTEST_CHECK(g.input1Y >= g.label1Y + 18.0f + 6.0f - 0.5f);
+        DOCTEST_CHECK(g.label2Y >= g.input1Y + 40.0f + 12.0f - 0.5f);
+        DOCTEST_CHECK(g.input2Y >= g.label2Y + 18.0f + 6.0f - 0.5f);
+        DOCTEST_CHECK(g.noteY >= g.input2Y + 40.0f + 8.0f - 0.5f);
+        DOCTEST_CHECK(g.bodyH >= g.noteY + 16.0f + 8.0f - 0.5f);
+    }
+    return true;
+});
+

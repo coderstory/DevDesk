@@ -5,6 +5,7 @@
 #include <string>
 #include <utility>
 
+#include "core/logging.h"
 #include "platform/http_server.h"
 
 namespace module::mcp {
@@ -36,6 +37,9 @@ core::Result<int> McpService::start(int requestedPort) {
     //（server 最后销毁），失败路径也不会让 server 先于 handler/protocol 消失。
     auto protocol =
         std::make_unique<McpProtocol>(sessions_, tools_, kServerVersion);
+    // 新建协议拿到成员当前值：stop→start / 换端口重启都不丢开关态
+    protocol->setAllowDestructive(
+        allowDestructive_.load(std::memory_order_relaxed));
     auto handler = std::make_unique<McpHttpHandler>(*protocol, mirror_);
     auto server =
         std::make_unique<platform::http::Server>(kBindAddress, requestedPort);
@@ -80,6 +84,13 @@ void McpService::stop() {
     }
     // join 必须在锁外：在途工具调用最多阻塞到自身限时（抓取工具总时限 10s），
     // 持锁 join 会让 status()/isRunning() 整段冻结。
+    // 在途 worker 不会被 stop 强杀（含超时 detach 的），计数只观测不重置：旧 worker
+    // 退出时仍会 fetch_sub，重置会让计数变负、掩盖后续真实在途数。
+    const int inflight = inflightToolCalls();
+    if (inflight > 0) {
+        LOG_WARN("MCP 服务停止时仍有 " + std::to_string(inflight) +
+                 " 个在途工具调用（worker 会继续跑到自身限时结束）");
+    }
     if (server) server->stop();
     server.reset();
     handler.reset();
@@ -104,6 +115,17 @@ int McpService::port() const {
 ServiceStatus McpService::status() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return ServiceStatus{state_, port_, lastError_};
+}
+
+void McpService::setAllowDestructive(bool allow) {
+    allowDestructive_.store(allow, std::memory_order_relaxed);
+    // 与 stop() 搬移 protocol_ 互斥：锁内要么打到 live protocol，要么看到空指针
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (protocol_) protocol_->setAllowDestructive(allow);
+}
+
+bool McpService::allowDestructive() const {
+    return allowDestructive_.load(std::memory_order_relaxed);
 }
 
 McpService& globalMcpService() {

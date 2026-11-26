@@ -685,27 +685,3 @@ REGISTER_TEST(terminalMoveSessionReorder,
     return true;
 })
 
-REGISTER_TEST(terminalRecentDirs,
-              "terminal settings: 常用启动目录列表——序列化往返/去重置顶/上限 8", {
-    using terminal::parseRecentDirs;
-    using terminal::pushRecentDir;
-    using terminal::serializeRecentDirs;
-    DOCTEST_CHECK_EQ(serializeRecentDirs({"/a", "/b"}), std::string("/a\n/b"));
-    auto back = parseRecentDirs("/a\n/b\n\n/c");
-    DOCTEST_CHECK_EQ(back.size(), 3u);
-    if (back.size() == 3u) {
-        DOCTEST_CHECK_EQ(back[0], "/a");
-        DOCTEST_CHECK_EQ(back[2], "/c");
-    }
-    std::vector<std::string> dirs;
-    pushRecentDir(dirs, "/a");
-    pushRecentDir(dirs, "/b");
-    pushRecentDir(dirs, "/a"); // 去重并置顶
-    DOCTEST_CHECK_EQ(dirs.size(), 2u);
-    DOCTEST_CHECK_EQ(dirs[0], "/a");
-    pushRecentDir(dirs, ""); // 空值忽略
-    DOCTEST_CHECK_EQ(dirs.size(), 2u);
-    for (int i = 0; i < 20; ++i) pushRecentDir(dirs, "/d" + std::to_string(i));
-    DOCTEST_CHECK_EQ(dirs.size(), static_cast<size_t>(terminal::TerminalSettings::kRecentDirLimit));
-    return true;
-})

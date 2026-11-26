@@ -64,6 +64,11 @@ public:
     // 独占，调用是 no-op。UI 线程可调（纯 stat，几毫秒）；打开向导时触发一次。
     void refreshEmbedProbe();
 
+    // bug476：安装镜像源（panel_settings.json 的 UI 值）。空串 = 该字段回退
+    // 环境变量；由 panel 层在设置刷新时同步，安装步现读现用。
+    void setPipMirror(const std::string& indexUrl,
+                      const std::string& extraIndexUrl);
+
     // 测试缝（memory_probe 组 E 用；与 MemoryModule::setActiveViewForTest 同族）：
     // 锁内整表覆写快照供 UI 断言，不触碰 worker/进程句柄。仅测试进程调用。
     void setSnapshotForTest(const Snapshot& snap);
@@ -81,6 +86,10 @@ private:
     // 反重构警告：pipeline 内禁止在持有 mu_ 时调用 setState（非递归锁必死锁）——
     // 先在锁内改 snap_ 字段并出作用域，再 setState。
     mutable std::mutex mu_;
+    // bug476：pip 安装镜像源（独立锁，安装步读时不与 mu_ 交叉）
+    mutable std::mutex pipMu_;
+    std::string pipIndexUrl_;
+    std::string pipExtraIndexUrl_;
     Snapshot snap_;
     std::thread worker_;
     std::atomic<bool> workerActive_{false};

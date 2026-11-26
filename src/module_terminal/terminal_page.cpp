@@ -21,6 +21,7 @@
 #include "core/component_theme.h"
 #include "core/theme.h"
 #include "platform/folder_picker.h"
+#include "platform/terminal_launch.h"
 #include "terminal_keyencoder.h"
 #include "terminal_quit_guard.h"
 #include "terminal_text_util.h"
@@ -95,6 +96,13 @@ int indexOfValue(const OptionTable& t, const std::string& v) {
     return 0; // 枚举外回默认（首项 = 平台默认语义）
 }
 
+// need#452：目录展示名（toast「<名>」= 末段）
+std::string lastPathSegment(const std::string& path) {
+    const size_t s = path.find_last_of("/\\");
+    if (s == std::string::npos || s + 1 >= path.size()) return path;
+    return path.substr(s + 1);
+}
+
 constexpr float kToolbarH = 44.0f;   // TAB 栏带高（设计 §2.1，全屏保留）
 constexpr float kTabH = 32.0f;       // TAB 高（栏内垂直居中，上下各 6）
 constexpr float kTabY = 6.0f;
@@ -119,6 +127,10 @@ constexpr uint32_t kFaPlus = 0xF067;
 constexpr uint32_t kFaCircleExclamation = 0xF06A;
 constexpr uint32_t kFaCircleCheck = 0xF058;
 constexpr uint32_t kFaTerminal = 0xF120;
+// need#452：分体钮 chevron / 弹层目录与主目录图标
+constexpr uint32_t kFaChevronDown = 0xF078;
+constexpr uint32_t kFaFolder = 0xF07B;
+constexpr uint32_t kFaHouse = 0xF015;
 const Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
 
 // ---- TermPerf 诊断（bug248 临时，UI 侧；删诊断时整块移除）：只累加计数，5s 一条
@@ -220,6 +232,10 @@ GridLayout TerminalPage::compose(
     pf.hasCompose = true;
 
     const auto& t = core::theme::current();
+    // need#452：工具栏/弹层/面板区的设置草稿指针（跨帧闭包只捕稳对象＝模块成员）
+    TerminalSettings* settingsPtr = &settings;
+    const bool hasDirs = !settings.startupDirs.empty();
+    if (settingsOpen_) dirMenuOpen_ = false;  // 面板打开时弹层不存活（避免关闭后复现）
     GridLayout layout;
     layout.rows = 0;
     layout.cols = 0;
@@ -290,7 +306,10 @@ GridLayout TerminalPage::compose(
     const float titleFs = core::theme::scaled(14.0f);
     const float detailFs = core::theme::scaled(12.0f);
     const float newLabelW = ui_kit::cachedTextWidth("新建", titleFs, 400);
-    const float newBtnW = narrowWindow ? 32.0f : 12.0f + 14.0f + 6.0f + newLabelW + 12.0f;
+    const float newMainW = narrowWindow ? 32.0f : 12.0f + 14.0f + 6.0f + newLabelW + 12.0f;
+    // need#452 分体条件（§4.2）：列表 ≥1 且非窄窗才渲染 24 宽选择段；0 条宽度同现状
+    const float newSplitW = (!narrowWindow && hasDirs) ? 24.0f : 0.0f;
+    const float newBtnW = newMainW + newSplitW;
     float sepX = 0.0f, gearX = 0.0f, midX = 0.0f, rightX = 0.0f, searchX = 0.0f;
     {
         // 从右缘向左排（两态一致）：新建（right）→ 全屏切换 32 图标钮（mid）→ 设置 →
@@ -953,7 +972,8 @@ GridLayout TerminalPage::compose(
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center);
 
-                // + 新建主按钮（唯一鲜艳色；窄窗收缩 32×32 图标钮 §8）。
+                // + 新建分体钮（need#452 §4.2）：左段=默认目录直达（0 条=主目录，同现状）；
+                // 右段 24 ▾=目录点选弹层（仅列表 ≥1 渲染）；窄窗单钮 32（≥1 条开弹层）。
                 // 两态恒锚动作组最右（rightX）——全屏切换钮固定 mid 槽后位置不再互换
                 {
                     const float newX = rightX;
@@ -963,15 +983,20 @@ GridLayout TerminalPage::compose(
                         .size(newBtnW, kTabH)
                         .radius(6.0f)
                         .states(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                        .onClick([this, ctrl]() {
-                            // #383：有常用目录 → 先弹目录菜单；否则默认目录直开
-                            newTabDirs_ = recentDirsProvider_ ? recentDirsProvider_()
-                                                              : std::vector<std::string>{};
-                            if (newTabDirs_.empty()) {
-                                ctrl->startSessionAsync();
+                        .onClick([this, ctrl, settingsPtr, narrowWindow, hasDirs]() {
+                            if (narrowWindow && hasDirs) {
+                                dirMenuOpen_ = !dirMenuOpen_;
                                 return;
                             }
-                            newTabMenuOpen_ = true;
+                            // 默认目录失效 → 提示并展开弹层，不建会话（§5 边界）
+                            if (!settingsPtr->startupDir.empty() &&
+                                !workDirUsableForSpawn(settingsPtr->startupDir)) {
+                                toast_.show("", "默认目录不可用，请重新选择",
+                                            ui_kit::ToastLevel::Error);
+                                dirMenuOpen_ = true;
+                                return;
+                            }
+                            ctrl->startSessionAsync();
                         });
                     if (narrowWindow) {
                         ui.text(bgId + ".icon")
@@ -997,6 +1022,26 @@ GridLayout TerminalPage::compose(
                             .fontSize(titleFs)
                             .color(t.colors.onPrimary)
                             .verticalAlign(eui::VerticalAlign::Center);
+                    }
+                    if (newSplitW > 0.0f) {
+                        // 分界线 rgba(255,255,255,0.28)（深浅主题通用，白线压绿底）
+                        ui.rect(bgId + ".sep")
+                            .position(newX + newMainW - 0.5f, kTabY + 6.0f)
+                            .size(1.0f, kTabH - 12.0f)
+                            .color(Color{1.0f, 1.0f, 1.0f, 0.28f});
+                        ui.text(bgId + ".chevron")
+                            .position(newX + newMainW, kTabY)
+                            .size(24.0f, kTabH)
+                            .icon(kFaChevronDown)
+                            .fontSize(core::theme::scaled(10.0f))
+                            .color(t.colors.onPrimary)
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center);
+                        ui.rect(bgId + ".right")
+                            .position(newX + newMainW, kTabY)
+                            .size(24.0f, kTabH)
+                            .color(kTransparent)
+                            .onClick([this]() { dirMenuOpen_ = !dirMenuOpen_; });
                     }
                 }
 
@@ -1235,7 +1280,14 @@ GridLayout TerminalPage::compose(
                     .fontSize(core::theme::scaled(14.0f))
                     .color(t.colors.primaryText)
                     .horizontalAlign(eui::HorizontalAlign::Center)
-                    .onClick([ctrl]() { ctrl->startSession(); });
+                    // need#452 §5：≥1 目录=开弹层（锚在该链接上方）；0 条=直达主目录
+                    .onClick([this, ctrl, settingsPtr]() {
+                        if (!settingsPtr->startupDirs.empty()) {
+                            dirMenuOpen_ = true;
+                            return;
+                        }
+                        ctrl->startSessionAsync();
+                    });
             }
 
             // 层 6.5（bug406）：后台建会话骨架——会话已占位、句柄未就绪，先给一行文案；
@@ -1396,206 +1448,156 @@ GridLayout TerminalPage::compose(
                                       search_.pendingStep = false;
                                   });
 
-            // 层 8.5（#383）：新建标签的常用目录菜单
-            if (newTabMenuOpen_) {
-                std::vector<components::ContextMenuItem> items;
-                for (const auto& d : newTabDirs_) {
-                    const auto slash = d.find_last_of('/');
-                    const std::string name =
-                        (slash == std::string::npos || slash + 1 >= d.size())
-                            ? d
-                            : d.substr(slash + 1);
-                    items.push_back({name});
+            // 层 8.7（need#452）：目录点选弹层（§4.3/§5）。0 条不出现；外点/Esc 关闭；
+            // 点行即建会话并关闭。面板打开时弹层已强制关闭（compose 开头）。
+            if (dirMenuOpen_) {
+                const int n = static_cast<int>(settings.startupDirs.size());
+                if (n == 0) {
+                    dirMenuOpen_ = false;
+                } else {
+                    const float menuH = dirMenuHeight(n);
+                    DirMenuGeometry mg;
+                    if (sessionCount == 0) {
+                        // 空态锚点 = 链接上方居中（§5 空态行）
+                        const float linkY =
+                            gridTop + bodyH * 0.5f - 60.0f + 24.0f + 8.0f + 12.0f;
+                        mg = dirMenuGeometryAbove(screen.width, screen.height,
+                                                  screen.width * 0.5f, linkY, menuH);
+                    } else {
+                        mg = dirMenuGeometry(screen.width, screen.height, rightX + newBtnW,
+                                             menuH);
+                    }
+                    // 外点关闭：全屏透明命中层（先于菜单绘制 = 菜单之下、其余层之上）
+                    ui.rect("term.dirmenu.scrim")
+                        .position(0.0f, 0.0f)
+                        .size(screen.width, screen.height)
+                        .color(kTransparent)
+                        .onClick([this]() { dirMenuOpen_ = false; });
+                    ui_kit::cardPanel(ui, "term.dirmenu", mg.x, mg.y, mg.width, menuH,
+                                      t.sizes.radiusLarge, t);
+                    float ry = mg.y + 6.0f;
+                    ui.text("term.dirmenu.title")
+                        .position(mg.x + 12.0f, ry)
+                        .size(mg.width - 24.0f, 32.0f)
+                        .text("选择启动目录")
+                        .fontSize(core::theme::scaled(12.0f))
+                        .color(t.colors.textSecondary)
+                        .verticalAlign(eui::VerticalAlign::Center);
+                    ry += 32.0f;
+                    const std::string dHome = platform::terminal::homeDir();
+                    const std::string dDefault = settings.startupDir;
+                    const auto dMeasure = [](const std::string& s) {
+                        return ui_kit::cachedTextWidth(s, core::theme::scaled(13.0f), 400);
+                    };
+                    for (int i = 0; i < n; i++) {
+                        const std::string path = settings.startupDirs[static_cast<size_t>(i)];
+                        const bool isDef = startupDirPathEqual(dDefault, path);
+                        const std::string id = "term.dirmenu.row." + std::to_string(i);
+                        ui.rect(id + ".bg")
+                            .position(mg.x + 6.0f, ry)
+                            .size(mg.width - 12.0f, 36.0f)
+                            .radius(6.0f)
+                            .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
+                            .onClick([this, ctrl, path]() {
+                                // 失效行 → 提示且弹层保持、不建会话（§5 边界）
+                                if (!workDirUsableForSpawn(path)) {
+                                    toast_.show("", "目录不存在或不可进入",
+                                                ui_kit::ToastLevel::Error);
+                                    return;
+                                }
+                                dirMenuOpen_ = false;
+                                ctrl->startSessionAsyncAt(path);
+                            });
+                        ui.text(id + ".icon")
+                            .position(mg.x + 12.0f, ry)
+                            .size(16.0f, 36.0f)
+                            .icon(kFaFolder)
+                            .fontSize(core::theme::scaled(14.0f))
+                            .color(t.colors.textTertiary)
+                            .verticalAlign(eui::VerticalAlign::Center);
+                        const float pathW =
+                            mg.width - 36.0f - 12.0f - (isDef ? 48.0f : 0.0f);
+                        ui.text(id + ".path")
+                            .position(mg.x + 36.0f, ry)
+                            .size(pathW, 36.0f)
+                            .text(elidedPathForDisplay(path, dHome, pathW, dMeasure))
+                            .fontSize(core::theme::scaled(13.0f))
+                            .color(t.colors.textPrimary)
+                            .maxWidth(pathW)
+                            .overflow(core::TextOverflow::Ellipsis)
+                            .clip()
+                            .verticalAlign(eui::VerticalAlign::Center);
+                        if (isDef) {
+                            const float bx = mg.x + mg.width - 12.0f - 40.0f;
+                            const float by = ry + (36.0f - 18.0f) * 0.5f;
+                            ui.rect(id + ".badge")
+                                .position(bx, by)
+                                .size(40.0f, 18.0f)
+                                .radius(999.0f)
+                                .color(t.colors.primarySoftBg);
+                            ui.text(id + ".badge.label")
+                                .position(bx, by)
+                                .size(40.0f, 18.0f)
+                                .text("默认")
+                                .fontSize(core::theme::scaled(12.0f))
+                                .color(t.colors.primaryText)
+                                .horizontalAlign(eui::HorizontalAlign::Center)
+                                .verticalAlign(eui::VerticalAlign::Center);
+                        }
+                        ry += 36.0f;
+                    }
+                    const auto divider = [&](const std::string& id) {
+                        ui.rect(id)
+                            .position(mg.x + 12.0f, ry + 4.0f)
+                            .size(mg.width - 24.0f, 1.0f)
+                            .color(t.colors.borderMuted);
+                        ry += 9.0f;
+                    };
+                    divider("term.dirmenu.sep1");
+                    ui.rect("term.dirmenu.home.hit")
+                        .position(mg.x + 6.0f, ry)
+                        .size(mg.width - 12.0f, 36.0f)
+                        .radius(6.0f)
+                        .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
+                        .onClick([this, ctrl]() {
+                            dirMenuOpen_ = false;
+                            ctrl->startSessionAsyncAt("");  // "" = 主目录（既有语义）
+                        });
+                    ui.text("term.dirmenu.home.icon")
+                        .position(mg.x + 12.0f, ry)
+                        .size(16.0f, 36.0f)
+                        .icon(kFaHouse)
+                        .fontSize(core::theme::scaled(14.0f))
+                        .color(t.colors.textTertiary)
+                        .verticalAlign(eui::VerticalAlign::Center);
+                    ui.text("term.dirmenu.home.label")
+                        .position(mg.x + 36.0f, ry)
+                        .size(mg.width - 48.0f, 36.0f)
+                        .text("主目录")
+                        .fontSize(core::theme::scaled(13.0f))
+                        .color(t.colors.textSecondary)
+                        .verticalAlign(eui::VerticalAlign::Center);
+                    ry += 36.0f;
+                    divider("term.dirmenu.sep2");
+                    ui.rect("term.dirmenu.manage.hit")
+                        .position(mg.x + 6.0f, ry)
+                        .size(mg.width - 12.0f, 36.0f)
+                        .radius(6.0f)
+                        .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
+                        .onClick([this]() {
+                            dirMenuOpen_ = false;
+                            pendingScrollToDirs_ = true;
+                            openSettings();
+                        });
+                    ui.text("term.dirmenu.manage.label")
+                        .position(mg.x + 12.0f, ry)
+                        .size(mg.width - 24.0f, 36.0f)
+                        .text("管理常用目录…")
+                        .fontSize(core::theme::scaled(13.0f))
+                        .color(t.colors.primaryText)
+                        .verticalAlign(eui::VerticalAlign::Center);
+                    ry += 36.0f;
                 }
-                items.push_back({"选择目录…"});
-                const float menuX = std::max(12.0f, screen.width - 300.0f);
-                const float menuY = gridTop + 8.0f;
-                components::contextMenu(ui, "term.newtab.ctx")
-                    .open(newTabMenuOpen_)
-                    .screen(screen.width, screen.height)
-                    .position(menuX, menuY)
-                    .autoWidth()
-                    .items(items)
-                    .theme(core::theme::componentTokens(t))
-                    .onSelect([this](int index) {
-                        if (index < 0) return;
-                        const int dirCount = static_cast<int>(newTabDirs_.size());
-                        if (index < dirCount) {
-                            const std::string dir = newTabDirs_[static_cast<size_t>(index)];
-                            newTabMenuOpen_ = false;
-                            if (onNewTabIn_) onNewTabIn_(dir);
-                            return;
-                        }
-                        // 选择目录…
-                        newTabMenuOpen_ = false;
-                        auto picked = platform::folderpicker::pickFolder("选择启动目录", "");
-                        if (picked.isOk() && !picked.value().empty() && onNewTabIn_) {
-                            onNewTabIn_(picked.value());
-                        }
-                    })
-                    .onOpenChange([this](bool v) { newTabMenuOpen_ = v; })
-                    .build();
-            }
-
-            // 层 8.55（M2 Task 4）：标签右键菜单——重命名 / 关闭其他 / 关闭右侧
-            if (ctxTabMenuOpen_) {
-                const std::vector<components::ContextMenuItem> items = {
-                    {"重命名"}, {"关闭其他"}, {"关闭右侧"}};
-                components::contextMenu(ui, "term.tabctx")
-                    .open(ctxTabMenuOpen_)
-                    .screen(screen.width, screen.height)
-                    .position(ctxTabMenuX_, ctxTabMenuY_)
-                    .autoWidth()
-                    .items(items)
-                    .theme(core::theme::componentTokens(t))
-                    .onSelect([this, ctrl](int index) {
-                        ctxTabMenuOpen_ = false;
-                        const int from = ctxTab_;
-                        if (from < 0 || from >= ctrl->count()) return;
-                        switch (index) {
-                            case 0: {
-                                renamingTab_ = from;
-                                const Session* st = ctrl->at(from);
-                                renameText_ = st ? st->title : std::string();
-                                break;
-                            }
-                            case 1: // 关闭其他
-                            case 2: { // 关闭右侧
-                                std::vector<int> victims;
-                                for (int k = 0; k < ctrl->count(); ++k) {
-                                    if (k == from) continue;
-                                    if (index == 1 || k > from) victims.push_back(k);
-                                }
-                                for (auto it = victims.rbegin(); it != victims.rend(); ++it) {
-                                    const Session* vs = ctrl->at(*it);
-                                    if (vs != nullptr && stateNeedsCloseConfirm(vs->state)) {
-                                        requestCloseConfirm(*it); // 首个在跑的交给确认卡
-                                        break;
-                                    }
-                                    ctrl->closeSession(*it);
-                                }
-                                break;
-                            }
-                            default:
-                                break;
-                        }
-                    })
-                    .onOpenChange([this](bool v) { ctxTabMenuOpen_ = v; })
-                    .build();
-            }
-
-            // 层 8.6（M2 Task 2）：右键菜单——复制 / 清屏 / 搜索
-            // 粘贴不做：EUI 已在 Cmd/Ctrl+V 灌 pasteText（input_state.h:235），
-            // 菜单再复制一条需窗口句柄，收益低（Ruling 记入 M2 ledger）。
-            if (ctxMenuOpen_) {
-                const std::vector<components::ContextMenuItem> items = {
-                    {"复制"}, {"清屏"}, {"搜索"}};
-                components::contextMenu(ui, "term.ctx")
-                    .open(ctxMenuOpen_)
-                    .screen(screen.width, screen.height)
-                    .position(ctxMenuX_, ctxMenuY_)
-                    .autoWidth()
-                    .items(items)
-                    .theme(core::theme::componentTokens(t))
-                    .onSelect([this, ctrl, copySelection](int index) {
-                        ctxMenuOpen_ = false;
-                        switch (index) {
-                            case 0:
-                                (void)copySelection();
-                                break;
-                            case 1:
-                                ctrl->writeToActive(
-                                    reinterpret_cast<const uint8_t*>(""), 1);
-                                break;
-                            case 2:
-                                search_.open = true;
-                                break;
-                            default:
-                                break;
-                        }
-                    })
-                    .onOpenChange([this](bool v) { ctxMenuOpen_ = v; })
-                    .build();
-            }
-
-            // 层 9.4（M2 Task 3）：会话关闭/退出确认卡（Running 才由模块置位）
-            if (confirmKind_ != ConfirmKind::None) {
-                const float cardW = 380.0f;
-                const float cardH = 168.0f;
-                const float cx = (screen.width - cardW) * 0.5f;
-                const float cy = (screen.height - cardH) * 0.5f;
-                ui.rect("term.confirm.scrim")
-                    .size(screen.width, screen.height)
-                    .color(Color{0.0f, 0.0f, 0.0f, 0.35f});
-                ui.stack("term.confirm.card")
-                    .position(cx, cy)
-                    .size(cardW, cardH)
-                    .content([&] {
-                        ui.rect("term.confirm.bg")
-                            .size(cardW, cardH)
-                            .color(ui_kit::cardSurface(t))
-                            .radius(t.sizes.radius)
-                            .border(1.0f, t.colors.borderDefault)
-                            .build();
-                        const bool quitAll = confirmKind_ == ConfirmKind::QuitAll;
-                        ui.text("term.confirm.title")
-                            .position(16.0f, 18.0f)
-                            .size(cardW - 32.0f, 28.0f)
-                            .text(quitAll ? "有终端会话正在运行" : "该标签的会话正在运行")
-                            .fontSize(core::theme::scaled(15.0f))
-                            .color(t.colors.textPrimary)
-                            .build();
-                        ui.text("term.confirm.body")
-                            .position(16.0f, 50.0f)
-                            .size(cardW - 32.0f, 22.0f)
-                            .text(quitAll ? "退出将终止全部会话，正在跑的命令与输出会丢失。"
-                                          : "关闭将终止该会话，正在跑的命令与输出会丢失。")
-                            .fontSize(core::theme::scaled(12.5f))
-                            .color(t.colors.textSecondary)
-                            .build();
-                        ui.rect("term.confirm.ok")
-                            .position(16.0f, cardH - 52.0f)
-                            .size((cardW - 48.0f) * 0.5f, 36.0f)
-                            .radius(8.0f)
-                            .states(t.colors.errorText, t.colors.errorText, t.colors.errorText)
-                            .onClick([this]() {
-                                const int idx = confirmIndex_;
-                                const ConfirmKind kind = confirmKind_;
-                                confirmKind_ = ConfirmKind::None;
-                                confirmIndex_ = -1;
-                                if (onConfirm_) onConfirm_(kind, idx, true);
-                            });
-                        ui.text("term.confirm.ok.label")
-                            .position(16.0f, cardH - 52.0f)
-                            .size((cardW - 48.0f) * 0.5f, 36.0f)
-                            .text(quitAll ? "关闭全部并退出" : "关闭标签")
-                            .fontSize(core::theme::scaled(13.0f))
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .verticalAlign(eui::VerticalAlign::Center)
-                            .color(t.colors.onPrimary)
-                            .build();
-                        ui.rect("term.confirm.cancel")
-                            .position(16.0f + (cardW - 48.0f) * 0.5f + 16.0f,
-                                      cardH - 52.0f)
-                            .size((cardW - 48.0f) * 0.5f, 36.0f)
-                            .radius(8.0f)
-                            .states(t.colors.hover, t.colors.active, t.colors.hover)
-                            .onClick([this]() {
-                                confirmKind_ = ConfirmKind::None;
-                                confirmIndex_ = -1;
-                                if (onConfirm_) onConfirm_(ConfirmKind::None, -1, false);
-                            });
-                        ui.text("term.confirm.cancel.label")
-                            .position(16.0f + (cardW - 48.0f) * 0.5f + 16.0f,
-                                      cardH - 52.0f)
-                            .size((cardW - 48.0f) * 0.5f, 36.0f)
-                            .text("取消")
-                            .fontSize(core::theme::scaled(13.0f))
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .verticalAlign(eui::VerticalAlign::Center)
-                            .color(t.colors.textPrimary)
-                            .build();
-                    });
             }
 
             // 层 9：终端设置面板（need250 页内模态；设计 §2/§4）。scrim α0.35 盖整页面区
@@ -1617,7 +1619,10 @@ GridLayout TerminalPage::compose(
                 float canvasH = 12.0f + kGroupHeadH + 8.0f;          // 分组头「外观」
                 canvasH += rowH + 8.0f + rowH + 8.0f + rowH;         // 字体/字号/配色
                 canvasH += 12.0f + kGroupHeadH + 8.0f;               // 分组头「会话」
-                canvasH += rowH + 8.0f + rowH;                       // 默认 shell + 启动目录
+                canvasH += rowH + 8.0f;                              // 默认 shell
+                // need#452：启动目录输入行 → 常用目录管理区（全内宽块，§3.2）
+                canvasH += 12.0f + kGroupHeadH + 8.0f +
+                           startupDirsBlockHeight(static_cast<int>(settings.startupDirs.size()));
 
                 const float titleBlock = kPanelPad + 28.0f + 12.0f;
                 const float footerBlock = 12.0f + 1.0f + 12.0f + 32.0f + kPanelPad;
@@ -1629,6 +1634,15 @@ GridLayout TerminalPage::compose(
                 const float cardX = (screen.width - cardW) * 0.5f;
                 const float cardY = (screen.height - cardH) * 0.5f;
                 const auto ct = core::theme::componentTokens(t);
+
+                // need#452：管理入口跳转——「常用目录」组头贴顶（y 推导与下方内容构建同式）
+                if (pendingScrollToDirs_) {
+                    pendingScrollToDirs_ = false;
+                    const float shellRowTop = 12.0f + kGroupHeadH + 8.0f +
+                                              3.0f * (rowH + 8.0f) + 12.0f + kGroupHeadH +
+                                              8.0f;
+                    panelScroll_ = shellRowTop + rowH + 8.0f + 12.0f;
+                }
 
                 // 事件闭包只捕稳对象（模块成员指针 / 值拷贝的 std::function）；compose
                 // 栈局部一律不进闭包（EUI 事件在帧间派发，引用捕获悬空）
@@ -1855,46 +1869,262 @@ GridLayout TerminalPage::compose(
                                             .build();
                                     });
                                 // C-4（need380）：回滚行数/光标两行已砍（§4.2⑥⑦）；
-                                // need#490 W6 恢复启动目录行（空=主目录，保存时校验可进入）
+                                // need#452：启动目录输入行 → 常用目录管理区（§4.1/§4.5/§4.6）
                                 y += rowH + 8.0f;
-
-                                drawRowBase(inner, "term.set.row.startup", y, "启动目录");
-                                const float startupInputW = std::clamp(
-                                    innerW - controlX, 120.0f, 360.0f);
-                                inner.stack("term.set.row.startup.slot")
-                                    .position(controlX, ctlY(y))
-                                    .size(startupInputW, kControlH)
-                                    .content([&] {
-                                        components::input(
-                                            inner, "term.set.row.startup.input")
-                                            .size(startupInputW, kControlH)
-                                            .value(settings.startupDir)
-                                            .placeholder("用户主目录")
+                                const int dirCount =
+                                    static_cast<int>(settings.startupDirs.size());
+                                float dirsY = y + 12.0f;
+                                inner.text("term.set.dirs.head")
+                                    .position(0.0f, dirsY)
+                                    .size(innerW, kGroupHeadH)
+                                    .text("常用目录")
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .color(t.colors.textSecondary)
+                                    .verticalAlign(eui::VerticalAlign::Center);
+                                inner.text("term.set.dirs.count")
+                                    .position(0.0f, dirsY)
+                                    .size(innerW, kGroupHeadH)
+                                    .text(std::to_string(dirCount) + " / " +
+                                          std::to_string(kStartupDirsMax))
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .color(dirCount >= kStartupDirsMax
+                                               ? t.colors.errorText
+                                               : t.colors.textTertiary)
+                                    .horizontalAlign(eui::HorizontalAlign::Right)
+                                    .verticalAlign(eui::VerticalAlign::Center);
+                                y = dirsY + kGroupHeadH + 8.0f;
+                                const std::string sHome = platform::terminal::homeDir();
+                                const auto sMeasure = [](const std::string& s) {
+                                    return ui_kit::cachedTextWidth(
+                                        s, core::theme::scaled(13.0f), 400);
+                                };
+                                if (dirCount == 0) {
+                                    // 空态两行极简文案 + 就近添加钮（§4.1，块高 86）
+                                    inner.text("term.set.dirs.empty.title")
+                                        .position(0.0f, y)
+                                        .size(innerW, 20.0f)
+                                        .text("还没有常用目录")
+                                        .fontSize(core::theme::scaled(13.0f))
+                                        .color(t.colors.textSecondary)
+                                        .verticalAlign(eui::VerticalAlign::Center);
+                                    inner.text("term.set.dirs.empty.hint")
+                                        .position(0.0f, y + 24.0f)
+                                        .size(innerW, 18.0f)
+                                        .text("添加后，新建会话时可直接点选启动目录")
+                                        .fontSize(core::theme::scaled(12.0f))
+                                        .color(t.colors.textTertiary)
+                                        .verticalAlign(eui::VerticalAlign::Center);
+                                    y += 24.0f + 18.0f + 12.0f;
+                                } else {
+                                    // shortcut: 窄面板两行式未实现（桌面最小窗 page 792 → 卡宽
+                                    // 520，不可达）；升级触发：侧栏折叠使 page < 452 时补 §4.1 两行式
+                                    for (int i = 0; i < dirCount; i++) {
+                                        const std::string path =
+                                            settings.startupDirs[static_cast<size_t>(i)];
+                                        const bool isDef =
+                                            startupDirPathEqual(settings.startupDir, path);
+                                        const std::string id =
+                                            "term.set.dir." + std::to_string(i);
+                                        const float rowY = y;
+                                        inner.rect(id + ".bg")
+                                            .position(0.0f, rowY)
+                                            .size(innerW, 44.0f)
+                                            .radius(6.0f)
+                                            .states(kTransparent, t.colors.hover,
+                                                    t.colors.hover);
+                                        const float delX = innerW - 4.0f - 24.0f;
+                                        const float serveW =
+                                            ui_kit::cachedTextWidth(
+                                                "设为默认", core::theme::scaled(13.0f), 400) +
+                                            16.0f;
+                                        const float groupW = isDef ? 40.0f : serveW;
+                                        const float pathW =
+                                            delX - 8.0f - groupW - 12.0f;
+                                        inner.text(id + ".path")
+                                            .position(12.0f, rowY)
+                                            .size(pathW, 44.0f)
+                                            .text(elidedPathForDisplay(path, sHome, pathW,
+                                                                      sMeasure))
                                             .fontSize(core::theme::scaled(13.0f))
-                                            .theme(ct)
-                                            .onChange([sp](const std::string& v) {
-                                                sp->startupDir = v;
-                                            })
-                                            .build();
-                                    });
-                                const float startupErrX =
-                                    controlX + startupInputW + 8.0f;
-                                const float startupErrW =
-                                    std::max(0.0f, innerW - (startupInputW + 8.0f));
-                                if (!settings.startupDir.empty() &&
-                                    !canEnterDirectory(settings.startupDir) &&
-                                    startupErrW >= 80.0f) {
-                                    inner.text("term.set.row.startup.error")
-                                        .position(startupErrX, ctlY(y))
-                                        .size(startupErrW, kControlH)
-                                        .text("目录不存在或不可进入，完成时保留原值")
-                                        .fontSize(core::theme::scaled(11.0f))
-                                        .color(t.colors.errorText)
-                                        .maxWidth(startupErrW)
-                                        .overflow(core::TextOverflow::Ellipsis)
-                                        .clip();
+                                            .color(t.colors.textPrimary)
+                                            .maxWidth(pathW)
+                                            .overflow(core::TextOverflow::Ellipsis)
+                                            .clip()
+                                            .verticalAlign(eui::VerticalAlign::Center);
+                                        if (isDef) {
+                                            const float bx = delX - 8.0f - 40.0f;
+                                            const float by = rowY + (44.0f - 18.0f) * 0.5f;
+                                            inner.rect(id + ".badge")
+                                                .position(bx, by)
+                                                .size(40.0f, 18.0f)
+                                                .radius(999.0f)
+                                                .color(t.colors.primarySoftBg);
+                                            inner.text(id + ".badge.label")
+                                                .position(bx, by)
+                                                .size(40.0f, 18.0f)
+                                                .text("默认")
+                                                .fontSize(core::theme::scaled(12.0f))
+                                                .color(t.colors.primaryText)
+                                                .horizontalAlign(
+                                                    eui::HorizontalAlign::Center)
+                                                .verticalAlign(
+                                                    eui::VerticalAlign::Center);
+                                        } else {
+                                            const float bx = delX - 8.0f - serveW;
+                                            const float by = rowY + (44.0f - 28.0f) * 0.5f;
+                                            inner.rect(id + ".serve")
+                                                .position(bx, by)
+                                                .size(serveW, 28.0f)
+                                                .radius(6.0f)
+                                                .states(kTransparent, t.colors.hover,
+                                                        t.colors.primarySoftBg)
+                                                .onClick([settingsPtr, path]() {
+                                                    // 设默认：不重排列表，仅移徽标（§5）
+                                                    const StartupDirConvergence conv =
+                                                        convergeStartupDirs(
+                                                            settingsPtr->startupDirs, path);
+                                                    settingsPtr->startupDirs = conv.dirs;
+                                                    settingsPtr->startupDir =
+                                                        conv.defaultDir;
+                                                });
+                                            inner.text(id + ".serve.label")
+                                                .position(bx, by)
+                                                .size(serveW, 28.0f)
+                                                .text("设为默认")
+                                                .fontSize(core::theme::scaled(13.0f))
+                                                .color(t.colors.primaryText)
+                                                .horizontalAlign(
+                                                    eui::HorizontalAlign::Center)
+                                                .verticalAlign(
+                                                    eui::VerticalAlign::Center);
+                                        }
+                                        // 删除 ×：无二次确认（快捷方式非数据，§4.5）
+                                        inner.rect(id + ".del")
+                                            .position(delX, rowY + 10.0f)
+                                            .size(24.0f, 24.0f)
+                                            .radius(6.0f)
+                                            .states(kTransparent,
+                                                    Color{t.colors.error.r, t.colors.error.g,
+                                                          t.colors.error.b, 0.10f},
+                                                    Color{t.colors.error.r, t.colors.error.g,
+                                                          t.colors.error.b, 0.18f})
+                                            .onClick([this, settingsPtr, path]() {
+                                                auto& dirs = settingsPtr->startupDirs;
+                                                int idx = -1;
+                                                for (int k = 0;
+                                                     k < static_cast<int>(dirs.size()); k++) {
+                                                    if (startupDirPathEqual(
+                                                            dirs[static_cast<size_t>(k)],
+                                                            path)) {
+                                                        idx = k;
+                                                        break;
+                                                    }
+                                                }
+                                                if (idx < 0) return;
+                                                const bool wasDef = startupDirPathEqual(
+                                                    settingsPtr->startupDir,
+                                                    dirs[static_cast<size_t>(idx)]);
+                                                const std::string removedName =
+                                                    lastPathSegment(
+                                                        dirs[static_cast<size_t>(idx)]);
+                                                dirs.erase(dirs.begin() + idx);
+                                                if (wasDef) settingsPtr->startupDir.clear();
+                                                // converge 承担默认顺延（首项）/清空（删至空）
+                                                const StartupDirConvergence conv =
+                                                    convergeStartupDirs(
+                                                        dirs, settingsPtr->startupDir);
+                                                dirs = conv.dirs;
+                                                settingsPtr->startupDir = conv.defaultDir;
+                                                if (wasDef && !settingsPtr->startupDir.empty())
+                                                    toast_.show(
+                                                        "",
+                                                        "已移除「" + removedName +
+                                                            "」，默认改为「" +
+                                                            lastPathSegment(
+                                                                settingsPtr->startupDir) +
+                                                            "」",
+                                                        ui_kit::ToastLevel::Info);
+                                                else if (wasDef)
+                                                    toast_.show(
+                                                        "", "已移除，新会话将使用主目录",
+                                                        ui_kit::ToastLevel::Info);
+                                                else
+                                                    toast_.show(
+                                                        "",
+                                                        "已移除「" + removedName + "」",
+                                                        ui_kit::ToastLevel::Info);
+                                            });
+                                        inner.text(id + ".del.icon")
+                                            .position(delX, rowY + 10.0f)
+                                            .size(24.0f, 24.0f)
+                                            .icon(kFaXmark)
+                                            .fontSize(core::theme::scaled(12.0f))
+                                            .color(t.colors.textTertiary)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
+                                            .verticalAlign(eui::VerticalAlign::Center);
+                                        y += 44.0f;
+                                        if (i + 1 < dirCount) y += 8.0f;
+                                    }
+                                    y += 12.0f;
                                 }
-                                y += rowH;
+                                // 添加目录（达 12 禁用：字 textDisabled、无 hover，§4.1）
+                                {
+                                    const float addW = ui_kit::cachedTextWidth(
+                                                            "+ 添加目录",
+                                                            core::theme::scaled(13.0f), 400) +
+                                                        24.0f;
+                                    const bool addDisabled = dirCount >= kStartupDirsMax;
+                                    inner.rect("term.set.dirs.add")
+                                        .position(0.0f, y)
+                                        .size(addW, 32.0f)
+                                        .radius(6.0f)
+                                        .states(addDisabled ? kTransparent : doneBg,
+                                                addDisabled ? kTransparent : doneHover,
+                                                addDisabled ? kTransparent : doneHover)
+                                        .onClick([this, settingsPtr]() {
+                                            auto& dirs = settingsPtr->startupDirs;
+                                            if (static_cast<int>(dirs.size()) >=
+                                                kStartupDirsMax)
+                                                return;
+                                            auto picked =
+                                                platform::folderpicker::pickerSlot()(
+                                                    "选择常用目录",
+                                                    settingsPtr->startupDir);
+                                            if (picked.isFail()) return;  // 取消=静默（§4.6）
+                                            const std::string path = picked.value();
+                                            if (!canEnterDirectory(path)) {
+                                                toast_.show(
+                                                    "", "目录不存在或不可进入",
+                                                    ui_kit::ToastLevel::Error);
+                                                return;
+                                            }
+                                            for (const std::string& e : dirs) {
+                                                if (startupDirPathEqual(e, path)) {
+                                                    toast_.show("", "已在常用目录中",
+                                                                ui_kit::ToastLevel::Info);
+                                                    return;
+                                                }
+                                            }
+                                            dirs.push_back(path);
+                                            if (dirs.size() == 1)
+                                                settingsPtr->startupDir = path;  // 首条自动默认
+                                            const StartupDirConvergence conv =
+                                                convergeStartupDirs(
+                                                    dirs, settingsPtr->startupDir);
+                                            dirs = conv.dirs;
+                                            settingsPtr->startupDir = conv.defaultDir;
+                                        });
+                                    inner.text("term.set.dirs.add.label")
+                                        .position(0.0f, y)
+                                        .size(addW, 32.0f)
+                                        .text("+ 添加目录")
+                                        .fontSize(core::theme::scaled(13.0f))
+                                        .color(addDisabled ? t.colors.textDisabled
+                                                           : t.colors.textPrimary)
+                                        .horizontalAlign(eui::HorizontalAlign::Center)
+                                        .verticalAlign(eui::VerticalAlign::Center);
+                                }
+                                y += 32.0f;
                             });
                     })
                     .build();
@@ -1942,6 +2172,10 @@ GridLayout TerminalPage::compose(
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center);
             }
+
+            // need#452：单实例 toast（删除/添加/失效反馈），显隐由状态位控制
+            ui_kit::drawToast(ui, screen, "term.toast", toast_,
+                              core::theme::componentTokensWeChat(t));
         });
 
     // TermPerf UI 侧 5s 汇总（bug248 临时诊断）

@@ -1,7 +1,8 @@
 // src/module_mcp/mcp_page_module.h
 // MCP 菜单页：工具卡片网格 + 详情弹窗 + 「试一下」。视觉基准 = 桌面
 // mcp-menu-demo.html（token 对齐；图标用 FA7 码点；关闭态走模块门控整页注销，
-// 页内不置灰、不放开关——开关在设置页，settings_ui_cards.cpp 的门控承诺）。
+// 页内不置灰；模块启停开关在设置页——settings_ui_cards.cpp 的门控承诺；
+// 页内另有工具权限（破坏性工具）开关，二者不是同一个开关）。
 //
 // 数据源：McpToolRegistry::list() 快照（构造可注入，默认进程全局注册表）；
 // 服务状态行只读消费 app::mcp 桥 status()（模块层禁 include mcp_service_bridge
@@ -11,6 +12,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -96,6 +98,20 @@ private:
     void drawMemoryModuleRow(eui::Ui& ui, float contentW,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& comp);
+    // 「模块行」通用体：记忆行与破坏性工具行同构（全宽 64 高轻量行卡）。
+    // onToggle 必须**按值**持有：调用处构造的是临时 std::function，若按 const&
+    // 传参再被 lambda 引用捕获，compose 返回后即悬垂。
+    void drawToolSwitchRow(eui::Ui& ui, float contentW,
+                           const core::theme::Tokens& t,
+                           const components::theme::ThemeColorTokens& comp,
+                           const char* idPrefix, const char* title,
+                           const char* desc, uint32_t iconCodepoint,
+                           const eui::Color& iconColor, bool checked,
+                           std::string& errorSlot,
+                           std::function<::core::Result<void>(bool)> onToggle);
+    void drawDestructiveModuleRow(
+        eui::Ui& ui, float contentW, const core::theme::Tokens& t,
+        const components::theme::ThemeColorTokens& comp);
 
     // ── 宿主安装区（need394 F-3：安装/卸载入口从详情弹窗外置到页头固定区）──
     // 固定区不滚、全程可视：文件内容只在首次进页 / 安装卸载后 / 服务态或端口
@@ -149,6 +165,9 @@ private:
     // 「记忆」模块行写盘失败反馈：setEnabled fail 时存原因、成功帧清空。
     // 开关本身无内部态（每帧按桥 status 重绘），失败回弹零额外逻辑。
     std::string memorySaveError_;
+    // 「破坏性工具」开关写盘失败反馈：setAllowDestructive fail 时存原因、
+    // 成功帧清空（同记忆行：失败回弹 = 下一帧按桥 getter 重绘）。
+    std::string destructiveSaveError_;
 
     // 详情态：keep-alive 指针 + 卡片 hover 集合（compose 每帧重建，成员只做存储）
     std::shared_ptr<::core::mcp::IMcpTool> detailTool_;

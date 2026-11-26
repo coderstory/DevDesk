@@ -59,14 +59,6 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
             controller_.closeSession(index);
         }
     });
-    // #383：常用启动目录列表——新建标签先点选目录；选中即记入列表并落库
-    page_.setRecentDirsProvider([this]() { return settings_.recentStartupDirs; });
-    page_.setNewTabInHandler([this](const std::string& dir) {
-        pushRecentDir(settings_.recentStartupDirs, dir);
-        (void)writeSettings(settings_);
-        controller_.startSessionAsyncIn(dir);
-        core::platform::requestUiUpdate();
-    });
     page_.setFontSizeHandler([this](int delta) {
         const int next = delta == 0 ? kFontSizeDefault : settings_.fontSize + delta;
         settings_.fontSize = clampedFontSize(next);
@@ -211,6 +203,11 @@ void TerminalModule::onStop() {
 bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
     if (event.isDown() && event.key == eui::InputKey::Escape && page_.settingsOpen()) {
         finishSettingsPanel(false);  // bug278④：Esc=取消（丢弃草稿）
+        return true;
+    }
+    // need#452：目录弹层 Esc 关闭（面板优先于本层，见上；不改既有键序）
+    if (event.isDown() && event.key == eui::InputKey::Escape && page_.dirMenuOpen()) {
+        page_.closeDirMenu();
         return true;
     }
     if (event.isDown() && event.modifiers.super && event.key == eui::InputKey::C) {

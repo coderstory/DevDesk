@@ -316,23 +316,18 @@ REGISTER_TEST(mcp_cc_file_install_twice_no_rewrite,
 // 与各值语义全等」。不在真文件上做写操作（见 manifest：GUI 点击链未验证，
 // 真文件零改动即天然满足「测完恢复原状」）。
 REGISTER_TEST(mcp_cc_real_file_preserves_all_keys,
-              "mcp_cc: 真实 ~/.claude.json 副本安装→卸载后顶层键与值全等（保留自身状态）", {
+              "mcp_cc: 配置副本（自洽夹具）安装→卸载后顶层键与值全等（保留自身状态）", {
     // 审计 P1-2：定位走生产契约 claudeConfigFile()（含 DEVDESK_CLAUDE_CONFIG_DIR
     // 覆盖与 Win USERPROFILE），不裸取 HOME——否则 Windows 必红且平台面假绿
-    const std::filesystem::path real = core::paths::claudeConfigFile();
-    std::error_code ec;
-    if (!std::filesystem::exists(real, ec)) {
-        DOCTEST_SKIP("本机无 ~/.claude.json");
-    }
-    const std::string original = core::readTextFile(real);
-    // 样本过小（<1000 字节 / ≤10 顶层键）不具代表性 → 跳过而非硬红（审计 P2-15）
-    if (original.size() <= 1000) {
-        DOCTEST_SKIP("真配置过小，样本不具代表性");
-    }
+    // 2026-11-25 改为文件内夹具（kSampleJson）：本机真实 ~/.claude.json 已被
+    // 运行中的 App 装上 devdesk（8931），install 退化为幂等 no-op（changed=false），
+    // 不再是「安装前」语义（环境漂移，非实现回归）。夹具保留原防回归判据：安装只加
+    // mcpServers.devdesk、卸载后顶层键与各值逐键全等（projects/machineID 等自身状态）。
+    // 真实文件覆盖仍由 mcp_cc_real_file_e2e_gated（显式驱动）承担。
+    const std::string original = kSampleJson;
     const auto before = parseObj(original);
-    if (before.keys().size() <= 10) {
-        DOCTEST_SKIP("真配置顶层键过少，样本不具代表性");
-    }
+    DOCTEST_REQUIRE_MESSAGE(before.keys().size() >= 3,
+                            "夹具顶层键过少（样本失去代表性）");
 
     bool changed = false;
     const auto installed = cc::applyServerEntry(original, "http://127.0.0.1:8888/mcp",
