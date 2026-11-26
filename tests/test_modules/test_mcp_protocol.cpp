@@ -3,10 +3,12 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -20,8 +22,10 @@ namespace {
 
 class StubTool : public core::mcp::IMcpTool {
 public:
-    StubTool(std::string name, std::string text, bool isError = false)
-        : name_(std::move(name)), text_(std::move(text)), isError_(isError) {}
+    StubTool(std::string name, std::string text, bool isError = false,
+             bool destructive = false)
+        : name_(std::move(name)), text_(std::move(text)),
+          isError_(isError), destructive_(destructive) {}
 
     void setDescription(std::string description) {
         description_ = std::move(description);
@@ -31,6 +35,7 @@ public:
     std::string name() const override { return name_; }
     std::string description() const override { return description_; }
     std::string inputSchemaJson() const override { return schema_; }
+    bool isDestructive() const override { return destructive_; }
     core::Result<core::mcp::ToolResult> execute(
         const std::string& argumentsJson) override {
         lastArgs = argumentsJson;
@@ -46,6 +51,7 @@ private:
     std::string name_;
     std::string text_;
     bool isError_ = false;
+    bool destructive_ = false;
     std::string description_ = "stub mcp tool";
     std::string schema_ = R"({"type":"object","properties":{}})";
 };
@@ -120,6 +126,64 @@ std::string strField(const platform::json::JsonObject& obj, const char* key) {
 bool boolField(const platform::json::JsonObject& obj, const char* key) {
     const auto value = obj.get(key);
     return value.isBool() ? value.asBool() : false;
+}
+
+// 阻塞工具：进 execute 后阻塞直到 release()，用于确定性占住并发槽位
+class BlockingTool : public core::mcp::IMcpTool {
+public:
+    std::string name() const override { return "block_tool"; }
+    std::string description() const override { return "blocks until released"; }
+    std::string inputSchemaJson() const override {
+        return R"({"type":"object","properties":{}})";
+    }
+    core::Result<core::mcp::ToolResult> execute(const std::string&) override {
+        ++calls;
+        entered_.set_value();
+        gate_.wait();
+        return core::Result<core::mcp::ToolResult>::ok(
+            core::mcp::ToolResult{false, "released"});
+    }
+    bool waitEntered() {
+        return enteredFuture_.wait_for(std::chrono::seconds(2)) ==
+               std::future_status::ready;
+    }
+    void release() { releaseOnce(); }
+    // 幂等：fail-fast 路径与正常路径都可能调用，二次 set_value 抛 future_error
+    void releaseOnce() {
+        if (!released_.exchange(true)) release_.set_value();
+    }
+    std::atomic<int> calls{0};
+
+private:
+    std::atomic<bool> released_{false};
+    std::promise<void> entered_;
+    std::shared_future<void> enteredFuture_ = entered_.get_future();
+    std::promise<void> release_;
+    std::shared_future<void> gate_ = release_.get_future();
+};
+
+// 断言失败提前 return 时也要放行阻塞 worker / join 线程，
+// 避免 std::terminate 或槽位永久占用
+struct BlockingReleaseGuard {
+    BlockingTool& tool;
+    ~BlockingReleaseGuard() { tool.releaseOnce(); }
+};
+struct ThreadJoinGuard {
+    std::thread& thread;
+    ~ThreadJoinGuard() {
+        if (thread.joinable()) thread.join();
+    }
+};
+
+// 进程级计数可能被前序超时用例 detach 的 worker 占用；用例开头统一排空
+bool waitInflightDrained(int seconds) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    while (module::mcp::inflightToolCalls() != 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return module::mcp::inflightToolCalls() == 0;
 }
 
 } // namespace
@@ -657,6 +721,68 @@ REGISTER_TEST(mcp_protocol_abandoned_worker_counter,
     return true;
 })
 
+REGISTER_TEST(mcp_protocol_concurrency_cap_rejects_and_recovers,
+              "mcp protocol: 并发上限=1 时第二个 call 立刻 -32603，释放后计数归零", {
+    test_support::ScopedEnv env("MCP_MAX_CONCURRENT_CALLS", "1");
+    DOCTEST_REQUIRE(waitInflightDrained(3));  // 前序超时用例的 detach worker 先排空
+
+    Fixture fixture;
+    auto tool = std::make_shared<BlockingTool>();
+    DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
+    const std::string sid = fixture.openSession();
+    const std::string call =
+        R"({"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"block_tool","arguments":{}}})";
+
+    std::string ignoredFirst;
+    std::string ignoredSecond;
+    std::thread first(
+        [&] { fixture.protocol.handlePost(call, sid, "", ignoredFirst); });
+    ThreadJoinGuard join{first};          // REQUIRE 失败也 join，避免 terminate
+    BlockingReleaseGuard release{*tool};  // 提前 return 也放行 worker
+    DOCTEST_REQUIRE(tool->waitEntered());
+    DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 1);
+
+    auto second = fixture.protocol.handlePost(call, sid, "", ignoredSecond);
+    DOCTEST_CHECK_EQ(errorCodeOf(second.body), -32603);
+    DOCTEST_CHECK(second.body.find("并发已达上限") != std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 1);  // 第二个没有执行
+
+    tool->releaseOnce();  // 先放行，再断言计数（断言前不得占着槽位）
+    first.join();
+    DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 0);
+    DOCTEST_CHECK_EQ(tool->calls.load(), 1);
+    return true;
+})
+
+REGISTER_TEST(mcp_protocol_slot_held_until_detached_worker_exits,
+              "mcp protocol: 超时 detach 后槽位仍被占，worker 真正退出才归零", {
+    test_support::ScopedEnv env("MCP_TOOL_TIMEOUT_SECONDS", "1");
+    DOCTEST_REQUIRE(waitInflightDrained(3));
+
+    Fixture fixture;
+    auto tool = std::make_shared<BlockingTool>();
+    DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
+    const std::string sid = fixture.openSession();
+    std::string ignored;
+    auto outcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"block_tool","arguments":{}}})",
+        sid, "", ignored);
+    DOCTEST_CHECK_EQ(errorCodeOf(outcome.body), -32603);  // 外层总闸超时
+
+    // 先记快照，再放行：若在请求线程提前归还，快照会是 0（红灯）
+    const int heldWhileDetached = module::mcp::inflightToolCalls();
+    tool->releaseOnce();
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (module::mcp::inflightToolCalls() != 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_CHECK_EQ(heldWhileDetached, 1);
+    DOCTEST_CHECK_EQ(module::mcp::inflightToolCalls(), 0);
+    return true;
+})
+
 REGISTER_TEST(mcp_protocol_tools_call_is_error,
               "mcp protocol: 工具业务失败（isError=true）仍 200，result 带 isError=true", {
     Fixture fixture;
@@ -814,5 +940,64 @@ REGISTER_TEST(mcp_protocol_delete_session_semantics,
 
     auto empty = fixture.protocol.handleDelete("");
     DOCTEST_CHECK_EQ(empty.status, 200);
+    return true;
+})
+
+REGISTER_TEST(mcp_protocol_destructive_gate_blocks_by_default,
+              "mcp protocol: 破坏性工具默认拒——isError=true、工具零执行、文案含未授权", {
+    Fixture fixture;
+    auto tool = std::make_shared<StubTool>("danger_tool", "should-not-run", false, true);
+    DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
+    const std::string sid = fixture.openSession();
+    std::string ignored;
+    auto outcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"danger_tool","arguments":{}}})",
+        sid, "", ignored);
+    DOCTEST_REQUIRE_EQ(outcome.status, 200);
+    const auto root = parseBody(outcome.body);
+    DOCTEST_REQUIRE(root.isObject());
+    const auto result = root.asObject().get("result");
+    DOCTEST_REQUIRE(result.isObject());
+    DOCTEST_CHECK_TRUE(boolField(result.asObject(), "isError"));
+    const auto content = result.asObject().get("content");
+    DOCTEST_REQUIRE(content.isArray());
+    DOCTEST_REQUIRE_EQ(content.size(), 1);
+    const auto first = content[0];  // JsonValue 只有 operator[]，无 asArray/at
+    DOCTEST_REQUIRE(first.isObject());
+    DOCTEST_CHECK(strField(first.asObject(), "text").find("未授权") != std::string::npos);
+    DOCTEST_CHECK_EQ(tool->calls, 0);
+    return true;
+})
+
+REGISTER_TEST(mcp_protocol_destructive_gate_allows_when_enabled,
+              "mcp protocol: 开关打开后破坏性工具正常执行", {
+    Fixture fixture;
+    auto tool = std::make_shared<StubTool>("danger_tool", "ran", false, true);
+    DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
+    fixture.protocol.setAllowDestructive(true);
+    const std::string sid = fixture.openSession();
+    std::string ignored;
+    auto outcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"danger_tool","arguments":{}}})",
+        sid, "", ignored);
+    DOCTEST_REQUIRE_EQ(outcome.status, 200);
+    DOCTEST_CHECK_EQ(tool->calls, 1);
+    DOCTEST_CHECK(outcome.body.find("ran") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_protocol_readonly_tool_unaffected_by_gate,
+              "mcp protocol: 只读工具在开关关闭时照常执行", {
+    Fixture fixture;
+    auto tool = std::make_shared<StubTool>("safe_tool", "ok");
+    DOCTEST_REQUIRE(fixture.tools.registerTool(tool).isOk());
+    const std::string sid = fixture.openSession();
+    std::string ignored;
+    auto outcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"safe_tool","arguments":{}}})",
+        sid, "", ignored);
+    DOCTEST_REQUIRE_EQ(outcome.status, 200);
+    DOCTEST_CHECK_EQ(tool->calls, 1);
+    DOCTEST_CHECK(outcome.body.find("isError") == std::string::npos);
     return true;
 })

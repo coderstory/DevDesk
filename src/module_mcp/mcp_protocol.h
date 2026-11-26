@@ -3,6 +3,7 @@
 // 本类负责会话、版本头、JSON 解析与 JSON-RPC 错误映射。
 #pragma once
 
+#include <atomic>
 #include <string>
 
 #include "core/mcp_tool.h"
@@ -35,14 +36,24 @@ public:
     // DELETE /mcp 的会话语义（§5.2）：已知 → 移除 + 200；未知 → 404；不带 → 200
     HttpOutcome handleDelete(const std::string& sessionId);
 
+    // 页头「破坏性工具」开关的实时值；默认 false = 破坏性工具一律拒。
+    // 原子：UI 线程写，HTTP worker 读。
+    void setAllowDestructive(bool allow);
+    bool allowDestructive() const;
+
 private:
     McpSessionStore& sessions_;
     core::mcp::McpToolRegistry& tools_;
     std::string serverVersion_;
+    std::atomic<bool> allowDestructive_{false};
 };
 
 // need301②（原 bug#28 观测补强）：外层总闸超时后弃置（detach）的 worker
 // 累计数。进程级单调原子计数，仅供观测/测试断言；detach 线程不可回收。
 [[nodiscard]] int abandonedToolWorkers();
+
+// 在途工具调用数（已占并发槽的 tools/call worker，含超时 detach 后仍在
+// 跑的那些）。进程级观测：占槽/归还都由 worker 生命周期驱动，不提供重置。
+[[nodiscard]] int inflightToolCalls();
 
 } // namespace module::mcp

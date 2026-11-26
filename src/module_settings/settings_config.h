@@ -125,6 +125,8 @@ struct SettingsConfig {
     // MCP 服务监听端口：非法值回落默认 8931（与 proxyPort 同口径，不钳边界）；
     // 运行中改端口经桥 restart，未运行则下次启动生效。
     int mcpPort = kDefaultMcpPort;
+    // MCP 页「破坏性工具」开关；默认关 = 服务端一律拒（写文件/执行命令/删除等）。
+    bool mcpAllowDestructive = false;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。
     std::string windowEffect = kWindowEffectOff;
     // 强调色："clay"|"purple"|"pink"|"blue"
@@ -214,11 +216,12 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：全部顶层键（24 个）在一个事务里 UPSERT，并清掉本轮不再写出的旧键
+    // 写入配置：全部顶层键（27 个）在一个事务里 UPSERT，并清掉本轮不再写出的旧键
     //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键；动态背景
     // 批加 fluidBackgroundEnabled；默认模块迁移加 moduleDefaultsVersion；MCP 批
-    // 加 mcpPort；池 bug246 加 userDisabledModules；F-10 加 mdAssocEnabled/
-    // mdAssocEverEnabled（键名沿用至 F-18 notepadAssoc* 字段）。键数断言同步在 test_mcp_settings
+    // 加 mcpPort、mcpAllowDestructive（破坏性工具总开关）；池 bug246 加
+    // userDisabledModules；F-10 加 mdAssocEnabled/mdAssocEverEnabled（键名沿用至
+    // F-18 notepadAssoc* 字段）。键数断言同步在 test_mcp_settings
     // mcp_settings_save_load_roundtrip_19_keys（用例名保留）。
 
     core::Result<void> save(const SettingsConfig& cfg) const;

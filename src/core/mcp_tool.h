@@ -31,6 +31,9 @@ public:
     // argumentsJson 恒为 JSON 对象文本；返回 fail 表示基础设施/实现错误（映射为
     // -32603），业务失败请返回 ToolResult{isError=true}
     virtual Result<ToolResult> execute(const std::string& argumentsJson) = 0;
+    // 有不可逆副作用的工具覆写返回 true；AgentLoop 走 allowDestructive，
+    // MCP 协议层走页头开关——两侧都靠它做「先拒后不调」。
+    virtual bool isDestructive() const { return false; }
 };
 
 // 注册表：单锁串行化，只保证查找/注册/注销线程安全；find 返回 shared_ptr 保持

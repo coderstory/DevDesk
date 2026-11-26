@@ -38,6 +38,8 @@ constexpr const char* kKeyFluidBackground = "fluidBackgroundEnabled";
 constexpr const char* kKeyHomeAnimEnabled = "homeAnimEnabled";
 constexpr const char* kKeyProxyPort = "claudeProxyPort";
 constexpr const char* kKeyMcpPort = "mcpPort";
+// MCP 页「破坏性工具」开关：bool 直存；键缺失（存量库/旧版本升级）→ 默认关
+constexpr const char* kKeyMcpAllowDestructive = "mcpAllowDestructive";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 // 默认模块清单迁移标记：键缺失 = 旧版本配置（见 kModuleDefaultsVersion）
@@ -605,6 +607,13 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.notepadAssocEverEnabled = v.value().asBool();
     }
+    // MCP 页「破坏性工具」开关：缺键 = 存量库 → 默认关；坏值原样 fail，不静默当 false
+    if (auto raw = readRow(kKeyMcpAllowDestructive); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyMcpAllowDestructive), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.mcpAllowDestructive = v.value().asBool();
+    }
     // 窗体记忆（UAT6）：键缺失（首启动/旧版本升级）→ 默认 0/0/false = 无记录
     if (auto raw = readRow(kKeyWindowRestoreWidth); raw.isOk()) {
         auto v = parseRow(configKey(kKeyWindowRestoreWidth), raw.value());
@@ -753,6 +762,8 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyHomeAnimEnabled, platform::json::makeBool(cfg.homeAnimEnabled)},
         {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
         {kKeyMcpPort, platform::json::makeInt(cfg.mcpPort)},
+        {kKeyMcpAllowDestructive,
+         platform::json::makeBool(cfg.mcpAllowDestructive)},
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
         {kKeyNotepadAssocEnabled, platform::json::makeBool(cfg.notepadAssocEnabled)},

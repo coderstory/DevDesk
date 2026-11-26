@@ -739,8 +739,8 @@ public:
 2. `platform::http::send` 不跟随重定向，所有跳转必须手动处理（设计已含），实现漏一跳会误报 3xx 为成功/失败。
 3. `platform::http::send` 返回的响应头键保留服务端原始大小写（如 `Content-Type`、`Location`），工具必须大小写不敏感查表；`platform::http::Server` 的入站头则是小写。
 4. `Server::start()` 无失败细粒度原因，只能给出「端口 X 被占用或无法监听」。
-5. `Server::stop()` 会等待 httplib 工作线程；在途工具调用不会被强制中断。抓取工具总时限 10 秒，故 stop/restart 最坏等待 ≈10 秒（工具须自行限时，接口契约已写）。
-6. 无鉴权：本机任意进程都可调用本服务（本机信任模型，已知并接受）。
+5. `Server::stop()` 会等待 httplib 工作线程；在途工具调用不会被强制中断。抓取工具总时限 10 秒，故 stop/restart 最坏等待 ≈10 秒（工具须自行限时，接口契约已写）。另：超时被「弃置」的 detached worker 仍占着 `tools/call` 并发槽位（上限默认 8，`MCP_MAX_CONCURRENT_CALLS` 可调），计数是进程级的、服务重启不清零——挂死 worker 累积到上限后只能重启应用恢复。
+6. 无鉴权：本机任意进程都可调用本服务（本机信任模型，已知并接受）。破坏性工具另有服务端开关（MCP 页「破坏性工具」，**默认关**）：本机信任不再等同知情授权，开关关闭时 7 件破坏性工具（`fs_write` / `fs_edit` / `bash_run` / `git_commit` / `claude_switch_profile` / `md_delete` / `todo_delete`）一律以 `isError` 结果拒绝、不进入执行。
 7. `MCP-Protocol-Version` 头缺失时放行，与规范「SHOULD 假设 2025-03-26」不一致；属有意宽松，若后续接入严格客户端需重新评估。
 8. **DNS 重绑定不在防护内**：抓取工具只拒绝字面 loopback/私网/链路本地地址，域名解析到内网地址不拦。本机信任模型下接受此风险。
 
@@ -756,7 +756,9 @@ public:
 1. **§12 非目标废止两条**：「侧边栏页面、Router 页面注册」自 UI 批起不再是目标外——MCP 成为 Router 页面模块。
 2. **§11「不动」清单松绑**：`src/app_registry.h`（新增 `PageId::Mcp` 行）与 `src/core/module_interface.h`（`PageId::Mcp` 插 Wallpaper 后、Settings 前）自本批起改为「动，最小面」。`../EUI-NEO/**`、`module_settings/**`、B1/B2 冻结文件（service/protocol/http_handler/session_store/tools_builtin）、`mcp_service_bridge.*`（只读调用）冻结不变。
 3. **接线不变量**：`dispatchModuleToggle` 的 mcp 分支自本批起**不提前返回**——先启停服务，再落入注册表遍历做页面注册/注销（mcp 既有「页面」与「服务」双重身份，缺任一半即破设置页「关闭 = 侧栏入口消失」的门控承诺）；`main.cpp` `moduleForPage` 补 `PageId::Mcp` 分支与静态实例（缺则页面在生产装配永远拿不到实例、被 `registerOne` 静默跳过）。
-4. **页面口径**：页头 + 服务状态行（`app::mcp::status()` 只读，运行中显示 `127.0.0.1:port` / 已停止）；工具卡片网格（`ui.flow`，卡定宽 340——上游坑：flow 子元素必须显式 `size()`）+ 详情弹窗（`components::dialog`，关闭 = 按钮 + Esc + backdrop 三通道，`dialog.h` 的 backdrop `onClick(requestClose)` 已逐行核实）+「试一下」（`IMcpTool::execute` 一律后台线程 + compose 轮询收割，禁 UI 线程直调；结果区弹窗内展示，成功/失败前缀区分）。数据源 = `McpToolRegistry::list()` 快照（模块可注入注册表，生产工厂用全局单例）。空列表 = 页内空态提示；**MCP 关闭态 = 模块门控整页注销**（侧栏入口消失），页内不置灰、不放开关。视觉基准 = 桌面 `mcp-menu-demo.html`：设计 token 对齐、图标改 FA7 码点；demo 的页内开关与关闭置灰**不照抄**；pulse 动画与键盘焦点圈明确不做（后者为 EUI 上游缺口，已拍板砍）。
+4. **页面口径**：页头 + 服务状态行（`app::mcp::status()` 只读，运行中显示 `127.0.0.1:port` / 已停止）；工具卡片网格（`ui.flow`，卡定宽 340——上游坑：flow 子元素必须显式 `size()`）+ 详情弹窗（`components::dialog`，关闭 = 按钮 + Esc + backdrop 三通道，`dialog.h` 的 backdrop `onClick(requestClose)` 已逐行核实）+「试一下」（`IMcpTool::execute` 一律后台线程 + compose 轮询收割，禁 UI 线程直调；结果区弹窗内展示，成功/失败前缀区分）。数据源 = `McpToolRegistry::list()` 快照（模块可注入注册表，生产工厂用全局单例）。空列表 = 页内空态提示；**MCP 关闭态 = 模块门控整页注销**（侧栏入口消失），页内不置灰；模块启停开关只在设置页（settings_ui_cards.cpp 门控承诺），页内工具权限（破坏性工具）开关是另一个开关。视觉基准 = 桌面 `mcp-menu-demo.html`：设计 token 对齐、图标改 FA7 码点；demo 的页内开关与关闭置灰**不照抄**；pulse 动画与键盘焦点圈明确不做（后者为 EUI 上游缺口，已拍板砍）。
+5. **「试一下」不经服务端闸**：页面「试一下」直调 `IMcpTool::execute`，不经 MCP 服务端闸/并发槽位——用户显式本地操作，属既定边界（服务端开关/并发上限只约束外部 MCP 客户端调用）。
+6. **最小窗 + 大字号取舍**：最小窗 640 + 130% 字号时，页头固定区可能压到工具列表，属已知取舍（本批不扩响应式）；默认 100% 字号 / 常规窗口不受影响。
 
 ## 16. 需求全景（2026-10-28 补记）
 

@@ -5,7 +5,8 @@
 // McpService（127.0.0.1 随机端口，handlePost 入口触发 ToolMirror 惰性同步）→
 // platform::http 真请求：initialize → tools/list（43 = 39 镜像 + 4 直注）→ F-01 39 真工具
 // name（下划线映射）/description/inputSchema 逐字段 diff → F-05 真破坏性工具 annotations
-// 抽查 → tools/call app_now 适配工具往返。
+// 抽查 → F-06 破坏性工具服务端闸真往返（默认拒 / 开闸放行 / 收尾复位）→
+// tools/call app_now 适配工具往返。
 //
 // 运行：mcp_e2e_probe（无参数；ctest -L probe 可见）
 // 退出码：0 = 全链路通；1 = 断言失败。
@@ -13,6 +14,7 @@
 // 零波及：数据根指向临时目录（禁触真实 ~/DevDesk——memory setSearchEnabled 会写
 // panel_settings.json），库用 test_support::TestDb 临时库，服务用临时端口，收尾全停。
 
+#include <atomic>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -154,6 +156,26 @@ struct ModuleScope {
             (*it)->onStop();
         }
     }
+};
+
+// 探针专用破坏性工具：只累加计数，不触任何真实文件。仅直注 globalMcpTools()
+//（本地注册，不进 ToolMirror 源清单），收尾注销以保持 43 口径。
+class ProbeDestructiveTool : public core::mcp::IMcpTool {
+public:
+    std::string name() const override { return "probe_destructive_tool"; }
+    std::string description() const override {
+        return "探针专用：验证破坏性工具服务端闸";
+    }
+    std::string inputSchemaJson() const override {
+        return R"({"type":"object","properties":{}})";
+    }
+    core::Result<core::mcp::ToolResult> execute(const std::string&) override {
+        calls.fetch_add(1, std::memory_order_relaxed);
+        return core::Result<core::mcp::ToolResult>::ok(
+            core::mcp::ToolResult{false, "probe_ok"});
+    }
+    bool isDestructive() const override { return true; }
+    std::atomic<int> calls{0};
 };
 
 } // namespace
@@ -333,6 +355,58 @@ int main() {
                   "内置工具 " + name + " 无 annotations 键");
         }
     }
+
+    // F-06：破坏性工具服务端闸真往返（默认拒 → 开启放行 → 收尾复位）。注册必须
+    // 在 43 计数断言之后，否则 tools/list 变 44。
+    auto probeTool = std::make_shared<ProbeDestructiveTool>();
+    auto probeReg = core::mcp::globalMcpTools().registerTool(probeTool);
+    check(probeReg.isOk(), "探针破坏性工具注册（第 44 件，仅本机直注）");
+
+    auto callProbeTool = [&](int id) {
+        const std::string body =
+            "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id) +
+            ",\"method\":\"tools/call\",\"params\":{\"name\":"
+            "\"probe_destructive_tool\",\"arguments\":{}}}";
+        const auto root2 = parseJson(postMcp(port, body, sessionId).body);
+        return root2.isObject() ? root2.asObject().get("result") : JsonValue();
+    };
+    auto probeFailed = [](const JsonValue& result) {
+        const auto e =
+            result.isObject() ? result.asObject().get("isError") : JsonValue();
+        return e.isBool() && e.asBool();
+    };
+    auto probeText = [](const JsonValue& result) {
+        const auto content =
+            result.isObject() ? result.asObject().get("content") : JsonValue();
+        if (!content.isArray() || content.size() == 0) return std::string();
+        const auto block = content[0];
+        return block.isObject() ? strOrEmpty(block.asObject().get("text"))
+                                : std::string();
+    };
+
+    const auto refusedResult = callProbeTool(4);
+    const std::string refusedText = probeText(refusedResult);
+    check(probeFailed(refusedResult),
+          "开关关闭 → probe 破坏性工具 isError=true");
+    check(probeTool->calls.load() == 0,
+          "开关关闭 → 工具未被调用（calls=" +
+              std::to_string(probeTool->calls.load()) + "）");
+    check(refusedText.find("开关为关闭状态") != std::string::npos,
+          "开关关闭 → 拒绝文案含「开关为关闭状态」（实际: " + refusedText + "）");
+
+    module::mcp::globalMcpService().setAllowDestructive(true);
+    const auto allowedResult = callProbeTool(5);
+    check(!probeFailed(allowedResult),
+          "开关开启 → probe 破坏性工具 isError 非 true");
+    check(probeTool->calls.load() == 1,
+          "开关开启 → 工具被调用一次（calls=" +
+              std::to_string(probeTool->calls.load()) + "）");
+
+    module::mcp::globalMcpService().setAllowDestructive(false);
+    core::mcp::globalMcpTools().unregisterTool("probe_destructive_tool");
+    check(core::mcp::globalMcpTools().size() == 43,
+          "收尾注销 → 注册表回到 43（实际 " +
+              std::to_string(core::mcp::globalMcpTools().size()) + "）");
 
     // tools/call：app_now（纯读快照，无参）经镜像往返（对外名 = app.now 下划线化）
     const auto call = postMcp(

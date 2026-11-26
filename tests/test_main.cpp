@@ -188,6 +188,8 @@ void resetCaseGlobals() {
     // 用例注入 recording 桩后 fail-fast 会留桩，后续用例吃到别人的路由计数。
     // 出厂态 = 四槽全 nullptr（默认桩：start/applyPort fail、stop no-op、status 空）。
     ::app::mcp::setHandlers(nullptr, nullptr, nullptr, nullptr);
+    // 16b) MCP 破坏性开关两槽（同 16）：getter 默认 false / setter 默认 fail。
+    ::app::mcp::setDestructiveHandlers(nullptr, nullptr);
     // 17) 记忆 MCP 桥注入槽（memory_mcp_bridge.h）：同 16，两槽进程级函数指针。
     ::app::memory_mcp::setHandlers(nullptr, nullptr);
     // 18) toast 通知桥注入槽（toast_notice_bridge.h）：单槽进程级函数指针——

@@ -433,3 +433,20 @@ REGISTER_TEST(mcp_tool_mirror_name_clash_no_retry,
     DOCTEST_CHECK_EQ(r.value().text, std::string("stub"));
     return true;
 });
+
+// ---- 落点 10：适配层 isDestructive 透传（服务端闸/在途上限的取值源头） ----
+REGISTER_TEST(mcp_tool_mirror_destructive_flag,
+              "mcp tool mirror: 适配层 isDestructive 透传源工具（破坏性 true / 只读 false）", {
+    auto danger = std::make_shared<FakeITool>("mirror.danger", kGoodSchema, true);
+    auto safe = std::make_shared<FakeITool>("mirror.safe", kGoodSchema, false);
+    module::mcp::AgentToolAdapter dangerAdapter(danger);
+    module::mcp::AgentToolAdapter safeAdapter(safe);
+    DOCTEST_REQUIRE(dangerAdapter.valid());
+    DOCTEST_REQUIRE(safeAdapter.valid());
+    DOCTEST_CHECK_TRUE(dangerAdapter.isDestructive());
+    DOCTEST_CHECK_FALSE(safeAdapter.isDestructive());
+    // 接缝默认值：直注工具不覆写 → 非破坏（IMcpTool 默认实现）
+    StubMcpTool native("mirror.native_default");
+    DOCTEST_CHECK_FALSE(native.isDestructive());
+    return true;
+});

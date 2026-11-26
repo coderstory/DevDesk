@@ -102,6 +102,34 @@ struct McpBridgeGuard {
     McpBridgeGuard& operator=(const McpBridgeGuard&) = delete;
 };
 
+// 破坏性开关桩：getter 读全局、setter 写全局（独立哨兵，方便断言路由）。
+bool g_allowDestructive = false;
+int g_setAllowDestructiveCalls = 0;
+bool g_setAllowDestructiveResult = true;
+bool allowDestructiveRec() { return g_allowDestructive; }
+core::Result<void> setAllowDestructiveRec(bool on) {
+    g_setAllowDestructiveCalls++;
+    if (!g_setAllowDestructiveResult) {
+        return core::Result<void>::fail(core::ErrorCode::Internal, "注入的落库失败");
+    }
+    g_allowDestructive = on;
+    return core::Result<void>::ok();
+}
+struct DestructiveHandlerGuard {
+    DestructiveHandlerGuard() {
+        g_allowDestructive = false;
+        g_setAllowDestructiveCalls = 0;
+        g_setAllowDestructiveResult = true;
+        app::mcp::setDestructiveHandlers(&allowDestructiveRec,
+                                         &setAllowDestructiveRec);
+    }
+    ~DestructiveHandlerGuard() {
+        app::mcp::setDestructiveHandlers(nullptr, nullptr);
+    }
+    DestructiveHandlerGuard(const DestructiveHandlerGuard&) = delete;
+    DestructiveHandlerGuard& operator=(const DestructiveHandlerGuard&) = delete;
+};
+
 // 模块开关桥 recording 桩（模块卡 mcp 开关走 applyModuleEnabled → onModuleToggled）。
 struct ToggleRecording {
     int calls = 0;
@@ -196,30 +224,33 @@ REGISTER_TEST(mcp_settings_unknown_module_id_mcp_is_known,
 })
 
 REGISTER_TEST(mcp_settings_save_load_roundtrip_19_keys,
-              "mcp: mcpPort save/load 往返；顶层键全集（当前 26）不吞旧键", {
+              "mcp: mcpPort/破坏性开关 save/load 往返；顶层键全集（当前 27）不吞旧键", {
     using namespace module::settings;
     test_support::TestEnv env(kCfgPrefix, "roundtrip", true);
     SettingsConfig cfg;
     cfg.mcpPort = 9800;
+    cfg.mcpAllowDestructive = true;
     const SettingsStore store(::core::appDatabase());
     DOCTEST_REQUIRE(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
     DOCTEST_CHECK_EQ(loaded.mcpPort, 9800);
-    // 行数口径：save 是 26 个顶层键一事务（settings_config.cpp save 的 rows 表实点；
+    DOCTEST_CHECK_TRUE(loaded.mcpAllowDestructive);
+    // 行数口径：save 是 27 个顶层键一事务（settings_config.cpp save 的 rows 表实点；
     // 旧注释演进停在 22，此后 fluidBackground / homeAnimEnabled / hourlyBackupEnabled
-    // 等新增已回填）。
+    // / mcpAllowDestructive 等新增已回填）。
     // 本断言钉「save 写全部顶层键、eraseWithPrefixExcept keep 全部键
     // （新键落库不吞旧键）」的口径——rows 表增删键必须同步此数。
     auto rows = core::appconfig::listWithPrefix(*::core::appDatabase(),
                                                 SettingsStore::keyNamespace());
     DOCTEST_REQUIRE(rows.isOk());
-    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(26));
+    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(27));
     // 存量库缺 mcpPort 键（旧版本升级）→ 读出默认 8931，不报错
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), SettingsStore::keyNamespace(),
         "{\"theme\": \"dark\"}"));
     const SettingsConfig legacy = store.load();
     DOCTEST_CHECK_EQ(legacy.mcpPort, 8931);
+    DOCTEST_CHECK_FALSE(legacy.mcpAllowDestructive);  // 缺键 = 默认关
     return true;
 })
 
@@ -277,6 +308,28 @@ REGISTER_TEST(mcp_bridge_injected_handlers_route_and_reset,
     app::mcp::setHandlers(nullptr, nullptr, nullptr, nullptr);
     DOCTEST_CHECK(app::mcp::start(1).isFail());
     DOCTEST_CHECK_EQ(g_mcpBridge.startCalls, 2);  // 桩不再路由，计数冻结
+    return true;
+})
+
+REGISTER_TEST(mcp_bridge_allow_destructive_default_and_roundtrip,
+              "mcp: 破坏性开关桥默认 false/fail-closed；注入后读写路由", {
+    app::mcp::setDestructiveHandlers(nullptr, nullptr);  // 出厂态显式化
+    DOCTEST_CHECK_FALSE(app::mcp::allowDestructive());
+    auto rejected = app::mcp::setAllowDestructive(true);
+    DOCTEST_CHECK(rejected.isFail());
+    DOCTEST_CHECK(rejected.errorMessage().find("MCP 服务未装配") !=
+                  std::string::npos);
+    {
+        DestructiveHandlerGuard guard;
+        DOCTEST_REQUIRE(app::mcp::setAllowDestructive(true).isOk());
+        DOCTEST_CHECK_EQ(g_setAllowDestructiveCalls, 1);
+        DOCTEST_CHECK_TRUE(app::mcp::allowDestructive());
+        // setter 失败必须原样上抛（调用方据此不更新界面）
+        g_setAllowDestructiveResult = false;
+        DOCTEST_CHECK(app::mcp::setAllowDestructive(false).isFail());
+        DOCTEST_CHECK_TRUE(app::mcp::allowDestructive());  // 失败不改桩状态
+    }
+    DOCTEST_CHECK_FALSE(app::mcp::allowDestructive());  // 桩复位后回默认
     return true;
 })
 

@@ -89,8 +89,10 @@ std::string AgentToolAdapter::inputSchemaJson() const {
     return inputSchemaText_;
 }
 
+bool AgentToolAdapter::isDestructive() const { return source_->isDestructive(); }
+
 std::string AgentToolAdapter::annotationsSuffix() const {
-    if (!source_->isDestructive()) {
+    if (!isDestructive()) {
         return "";
     }
     return R"(,"annotations":{"destructiveHint":true,"readOnlyHint":false})";

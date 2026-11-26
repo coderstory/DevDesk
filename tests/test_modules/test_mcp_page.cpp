@@ -858,6 +858,25 @@ struct MemoryBridgeGuard {
     MemoryBridgeGuard& operator=(const MemoryBridgeGuard&) = delete;
 };
 
+// 「破坏性工具」桥 recording 桩（同 MemoryBridgeGuard：RAII 复位防串扰）。
+bool g_allowDestructive = false;
+bool allowDestructiveRec() { return g_allowDestructive; }
+core::Result<void> setAllowDestructiveRec(bool on) {
+    g_allowDestructive = on;
+    return core::Result<void>::ok();
+}
+struct DestructiveBridgeGuard {
+    DestructiveBridgeGuard() {
+        app::mcp::setDestructiveHandlers(&allowDestructiveRec,
+                                         &setAllowDestructiveRec);
+    }
+    ~DestructiveBridgeGuard() {
+        app::mcp::setDestructiveHandlers(nullptr, nullptr);
+    }
+    DestructiveBridgeGuard(const DestructiveBridgeGuard&) = delete;
+    DestructiveBridgeGuard& operator=(const DestructiveBridgeGuard&) = delete;
+};
+
 // 开关轨道色：checked == tokens.primary（SwitchStyle.on），unchecked 为灰混合。
 bool trackIsPrimary(const core::dsl::Element* track) {
     const auto& t = core::theme::current();
@@ -945,6 +964,77 @@ REGISTER_TEST(mcp_page_memory_module_row,
                               "130% 档说明行越出 64 行盒：底 " +
                                   std::to_string(desc->y + desc->height.value));
         core::theme::setFontScale(1.0f);
+    }
+    return true;
+})
+
+// 防：破坏性工具行缺件 / 开关不读桥 / 失败反馈缺失或视觉不回弹 / 图标误用记忆行码点。
+REGISTER_TEST(mcp_page_destructive_row,
+              "mcp_page: 破坏性工具行 64 高/标题说明/开关；桥失败红字回弹；桥成功点亮", {
+    core::mcp::McpToolRegistry reg;
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    {
+        eui::Ui ui;  // 默认桩（未装配）：开关 = 关
+        composeFrame(mod, ui, screen, "mcp_drow_1");
+        const auto* row = ui.find("mcp.module.destructive");
+        DOCTEST_REQUIRE(row != nullptr);
+        DOCTEST_CHECK_EQ(row->width.value, 1136.0f);
+        DOCTEST_CHECK_EQ(row->height.value, 64.0f);
+        const auto* title = ui.find("mcp.module.destructive.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("破坏性工具"));
+        const auto* desc = ui.find("mcp.module.destructive.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("MCP 客户端") != std::string::npos);
+        const auto* toggle = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        const auto* track = ui.find("mcp.module.destructive.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_FALSE(trackIsPrimary(track));  // 默认桩 = 关
+        // 图标必须是警示三角（fa-triangle-exclamation），不得与记忆行 fa-brain 撞码点
+        const auto* icon = ui.find("mcp.module.destructive.icon");
+        DOCTEST_REQUIRE(icon != nullptr);
+        DOCTEST_CHECK_EQ(icon->text, eui::utf8(0xF071));
+        const auto* memIcon = ui.find("mcp.module.memory.icon");
+        DOCTEST_REQUIRE(memIcon != nullptr);
+        DOCTEST_CHECK(icon->text != memIcon->text);
+    }
+    {
+        eui::Ui ui;  // 桥未装配时点击：setAllowDestructive fail → 红字 + 轨道回弹
+        composeFrame(mod, ui, screen, "mcp_drow_2");
+        const auto* toggle2 = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle2 != nullptr);
+        DOCTEST_REQUIRE(toggle2->onClick != nullptr);
+        toggle2->onClick();
+        composeFrame(mod, ui, screen, "mcp_drow_3");
+        const auto* desc = ui.find("mcp.module.destructive.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("保存失败") != std::string::npos);
+        const auto& t = core::theme::current();
+        DOCTEST_CHECK(desc->textColor.r == t.colors.errorText.r);
+        const auto* track = ui.find("mcp.module.destructive.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_FALSE(trackIsPrimary(track));  // 回弹
+    }
+    {
+        DestructiveBridgeGuard guard;
+        g_allowDestructive = false;
+        eui::Ui ui;  // 桥已装配：点击 → 成功 → 下一帧点亮、红字让位回说明
+        composeFrame(mod, ui, screen, "mcp_drow_4");
+        const auto* toggle2 = ui.find("mcp.module.destructive.toggle.hit");
+        DOCTEST_REQUIRE(toggle2 != nullptr);
+        DOCTEST_REQUIRE(toggle2->onClick != nullptr);
+        toggle2->onClick();
+        DOCTEST_CHECK_TRUE(g_allowDestructive);  // onChange(true) 真到达桥
+        composeFrame(mod, ui, screen, "mcp_drow_5");
+        const auto* track = ui.find("mcp.module.destructive.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_TRUE(trackIsPrimary(track));  // 点亮
+        const auto* desc = ui.find("mcp.module.destructive.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("保存失败") == std::string::npos);
     }
     return true;
 })
