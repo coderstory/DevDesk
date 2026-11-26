@@ -1081,6 +1081,20 @@ void AgentModule::composeTaskDialog(
 
             // ====== 底部按钮区（W4 C1 重做：40px 高、8px 间距、居中文字；按钮顺序从右到左：下一步 Filled 最右 → 上一步 Outline → 取消 Ghost 最左） ======
             const float btnY = h - kContentY + 6.0f;  // 底栏带高 44：32 钮上下各留 6
+
+            // 保存失败提示（批次 A-4）：editError_ 此前 19 处写入、0 处渲染，
+            // 保存失败时弹窗不关也没有任何红字，用户只能反复点「保存」——属死点击。
+            // 落在按钮行上方的底栏带里（btnY 之上 26），单行省略防长文案压住按钮。
+            if (!editError_.empty()) {
+                ui.text("agent.dialog.task.error")
+                    .position(x0, btnY - 26.0f)
+                    .size(kContentW, 20.0f)
+                    .text(editError_)
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(20.0f))
+                    .color(t.colors.errorText)
+                    .build();
+            }
             const float btnH = 32.0f;  // bug179④：40 过大，收到与行控件一致的 32
             const float bw = 88.0f;
             const float kBtnGap = 8.0f;
