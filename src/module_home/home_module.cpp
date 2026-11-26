@@ -772,23 +772,14 @@ public:
                             static_cast<float>((nowS - *animFadeStart_) / 0.5), 0.0f, 1.0f);
                         const bool reduced = ::home_anim::reducedMotion();
                         const float phaseS = static_cast<float>(::home_anim::phaseSeconds());
-                        // 打字机数据：最近打开前 4 条（截断 26 字），空 → 占位语直显
+                        // 2026-11-26 老板令：打字机只展示鸡汤文本，不读取笔记/todo 等业务数据。
                         animTyper_.items.clear();
-                        const size_t take = std::min<size_t>(stats_.recentNotes.size(), 4);
-                        for (size_t i = 0; i < take; ++i) {
-                            animTyper_.items.push_back(
-                                ui_kit::home_anim::truncateTitle(
-                                    stats_.recentNotes[i].title));
-                        }
-                        // 空库/单条 → 轮播内置文案池（need506 用户拍板，UAT 追加令）
-                        if (animTyper_.items.size() < 2) {
-                            for (const char* q : ui_kit::home_anim::kQuotePool) {
-                                animTyper_.items.emplace_back(q);
-                            }
+                        for (const char* q : ui_kit::home_anim::kQuotePool) {
+                            animTyper_.items.emplace_back(q);
                         }
                         if (!reduced) animTyper_.tick(::home_anim::phaseSeconds());
-                        const std::string subtitle =
-                            "今日新增笔记 " + std::to_string(stats_.todayNotes) + " 篇";
+                        // 副语不再拼业务统计；笔记/待办计数由首页统计卡承担。
+                        const std::string subtitle;
                         ui.stack("home.anim.layer")
                             .size(contentW, leftoverH)
                             .content([&] {
