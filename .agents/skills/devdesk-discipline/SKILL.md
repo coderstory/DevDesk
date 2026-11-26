@@ -12,7 +12,7 @@ description: DevDesk 仓库开发纪律与测试入口速查：构建唯一入�
 3. 质量判据：先红后绿（修复必须证明用例在修复前会红）；UI 改动必须真窗口 probe 几何断言 + 截图（--screenshot 进程内捕获，无需系统授权）才算完成；mock 绿不算数，收口必须真模型/真窗口实操。
 4. BUG 铁律：复现优先——写不出能变红的复现命令禁止推理根因；只改致因代码。
 5. 平台口径：先跨平台底座（core 缝/EUI-NEO/成熟库），底座真没有才开 *_win/_macos 平台文件且保持薄；业务代码禁 #ifdef。
-6. 测试成本：研发阶段只跑受影响域定向用例；全量回归只在发布收口跑一次。
+6. 测试成本（2026-11-26 老板令）：开发阶段只编码、不跑用例（每个功能块只保证构建通过；测试代码同批写全）；N 个功能全部开发完毕后只跑一次全量；之后修复阶段只跑定向用例（`--filter`），一个批次只有一次全量。禁止直接调用 `cmake`/`cmake --build`/`ctest`（probe 例外），并发构建必须用 `scripts/with-build-lock.sh`。
 7. 已知设计内跳过（非失败）：wallpaper probe、DST Windows 侧、memory stress、Windows 交叉编译 5 条缺 curl 头。
 8. EUI-NEO 用 coderstory fork（EUI-NEO/ 仓内 submodule），禁用上游 sudoevolve（编译失败）；上游只读永不 push。
 9. 测试框架是自制迷你 doctest：仅 DOCTEST_CHECK/EQ/NE/TRUE/FALSE/REQUIRE*/CHECK_MESSAGE/SKIP，无 CHECK_LE；bool 用例体 `return true;` 收尾。

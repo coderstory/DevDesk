@@ -21,6 +21,7 @@
 - 测试是自制迷你 doctest：仅 `REGISTER_TEST` / `DOCTEST_CHECK(_EQ/_NE/_TRUE/_FALSE/_MESSAGE)` / `DOCTEST_REQUIRE*` / `DOCTEST_SKIP`，**无 `CHECK_LE`**；bool 用例体 `return true;` 收尾。
 - UI 改动必须真窗口 probe 几何断言 + 截图（`--screenshot` 进程内捕获）才算完成；单测 mock 绿不算收口。
 - 每个任务先红后绿：测试先写、先跑红，再实现；长任务每环节 `wip:` 临时提交，收尾 squash 成单个 `feat:`/`fix:`。
+  - **执行裁决（2026-11-26 老板令）**：本批改为「开发完毕后统一测试」——逐任务只保证构建通过（测试目标一并编译），不跑 RED/GREEN；全部任务完成后统一跑一次全量 doctest + probe + 守卫链。代价：行为缺陷可能到收口才暴露。
 - 报告为只读审计，未入池。执行第一步先按 devflow 把「A-1+A-2」入池建卡，再动代码。
 
 ## Review Focus
