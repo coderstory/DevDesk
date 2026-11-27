@@ -31,7 +31,16 @@
 #include "core/notepad_file_types.h"  // 打开对话框过滤器（单一真源）
 #include "platform/json.h"  // F-11 parse/stringify/jsonLineColForPos（platform 不依赖 module）
 #include "notepad_file_io.h"
-#include "notepad_find.h"   // findAll/nextFrom/prevFrom/replaceOneAt/replaceAll/mergeRuns
+#include "ui_kit/text_find.h"   // findAll/nextFrom/prevFrom/replaceOneAt/replaceAll/mergeRuns
+using ::ui_kit::text_find::FindOptions;
+using ::ui_kit::text_find::findAll;
+using ::ui_kit::text_find::mergeRuns;
+using ::ui_kit::text_find::nextFrom;
+using ::ui_kit::text_find::prevFrom;
+using ::ui_kit::text_find::replaceAll;
+using ::ui_kit::text_find::replaceOneAt;
+using ::ui_kit::text_find::ReplaceAllResult;
+using ::ui_kit::text_find::ReplaceOneResult;
 #include "notepad_language.h"  // highlightLine/languageForExtension（语法层 provider）
 #include "notepad_protect.h"  // 三选动作→后续动作映射（关窗/退出两语境共用）
 #include "notepad_module.h"

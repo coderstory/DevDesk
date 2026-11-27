@@ -1,9 +1,9 @@
 // notepad_find.cpp — 查找/替换纯函数引擎实现（接口语义见 notepad_find.h）。
-#include "notepad_find.h"
+#include "text_find.h"
 
 #include <algorithm>
 
-namespace module::notepad {
+namespace ui_kit::text_find {
 namespace {
 
 inline bool isWordByte(unsigned char c) {
@@ -224,4 +224,4 @@ std::vector<eui::TextRun> mergeRuns(const std::vector<eui::TextRun>& base,
     return out;
 }
 
-}  // namespace module::notepad
+}  // namespace ui_kit::text_find

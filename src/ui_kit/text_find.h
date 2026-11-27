@@ -11,7 +11,7 @@
 
 #include <eui/types.h>  // eui::TextRun（= core::TextRun 值类型桥接例外）
 
-namespace module::notepad {
+namespace ui_kit::text_find {
 
 // 环绕跳转的「无命中」哨兵（hits 空表 / 无满足者时返回）。
 inline constexpr size_t kFindNoHit = static_cast<size_t>(-1);
@@ -82,4 +82,4 @@ std::vector<eui::TextRun> mergeRuns(const std::vector<eui::TextRun>& base,
                                     eui::Color currentHitColor,
                                     bool hitBold = false);
 
-}  // namespace module::notepad
+}  // namespace ui_kit::text_find

@@ -1,6 +1,6 @@
 // notepad_sql_format.h — SQL 格式化纯函数引擎（need:380 最小范围：关键字
 // 规范化 + 缩进）。自研轻量（禁引第三方依赖，简报已证事实）；与
-// notepad_find 同款纪律：纯函数、无 UI 依赖，供 compose 提交链与直测消费。
+// ui_kit/text_find 同款纪律：纯函数、无 UI 依赖，供 compose 提交链与直测消费。
 #pragma once
 
 #include <string>

@@ -62,13 +62,18 @@ REGISTER_TEST(tool_registry_all_schemas_json, "tool: allSchemasJson 拼数组，
     auto& reg = core::ToolRegistry::instance();
     reg.unregisterTool("t.s1");
     reg.unregisterTool("t.s2");
-    DOCTEST_CHECK_EQ(reg.allSchemasJson(), std::string("[]"));
+    // 并行分片下同片可能已有其它用例注册的工具：只在真空表时钉 "[]"，
+    // 数组格式/内容用包含断言（不依赖全局进程状态，也不掩盖契约）。
+    if (reg.listTools().empty()) {
+        DOCTEST_CHECK_EQ(reg.allSchemasJson(), std::string("[]"));
+    }
     auto a = std::make_shared<FakeTool>("t.s1", R"({"name":"t.s1"})");
     auto b = std::make_shared<FakeTool>("t.s2", R"({"name":"t.s2"})");
     DOCTEST_REQUIRE(reg.registerTool(a).isOk());
     DOCTEST_REQUIRE(reg.registerTool(b).isOk());
-    DOCTEST_CHECK_EQ(reg.allSchemasJson(),
-                     std::string(R"([{"name":"t.s1"},{"name":"t.s2"}])"));
+    const std::string joined = reg.allSchemasJson();
+    DOCTEST_CHECK(joined.find(R"({"name":"t.s1"},{"name":"t.s2"})") !=
+                  std::string::npos);
     reg.unregisterTool("t.s1");
     reg.unregisterTool("t.s2");
     return true;
