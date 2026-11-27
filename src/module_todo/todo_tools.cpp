@@ -8,6 +8,7 @@
 // 与 completed=true 互斥；工具层不复制逾期比较逻辑。
 #include "todo_tools.h"
 
+#include "core/event_bus.h"
 #include "core/logging.h"
 #include "platform/json.h"
 #include "platform/tool_kit.h"
@@ -31,6 +32,12 @@ using platform::tool_kit::toolError;
 
 Result<ToolResult> toolOk(const std::string& contentJson) {
     return Result<ToolResult>::ok(ToolResult{false, contentJson});
+}
+
+// 工具写成功 → 广播「非界面改待办」。只发专用事件，不发 6 个写路径事件：
+// 事件型智能体任务订阅后者，若工具也发，会形成「工具写 → 事件 → 起运行 → 再写」。
+void notifyChangedByTool() {
+    ::core::event::bus().emit(::core::event::kTodoChangedByTool);
 }
 
 // 参数解析：空串视为 {}（LLM 的 input 可能为空对象省略）；其余必须解析成 object，失败转 isError
@@ -260,6 +267,7 @@ public:
         }
         auto one = taskToJsonText(created.value());
         if (one.isFail()) return toolError(one.errorMessage());
+        notifyChangedByTool();
         return toolOk(one.value());  // 返回新任务对象（LLM 需要新 id）
     }
 
@@ -330,6 +338,7 @@ public:
         }
         auto one = taskToJsonText(t);  // 回喂更新后的完整任务
         if (one.isFail()) return toolError(one.errorMessage());
+        notifyChangedByTool();
         return toolOk(one.value());
     }
 
@@ -376,6 +385,7 @@ public:
         if (auto r = svc_.moveTask(*id, *columnId, newPosition); r.isFail()) {
             return toolError("移动任务失败: " + r.errorMessage());
         }
+        notifyChangedByTool();
         return toolOk(R"({"ok":true})");
     }
 
@@ -405,6 +415,7 @@ public:
         if (auto r = svc_.completeTask(*id); r.isFail()) {
             return toolError("标记完成失败: " + r.errorMessage());
         }
+        notifyChangedByTool();
         return toolOk(R"({"ok":true})");
     }
 
@@ -437,6 +448,7 @@ public:
         if (auto r = svc_.deleteTask(*id); r.isFail()) {
             return toolError("删除任务失败: " + r.errorMessage());
         }
+        notifyChangedByTool();
         return toolOk(R"({"ok":true})");
     }
 

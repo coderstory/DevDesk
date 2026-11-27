@@ -633,8 +633,9 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                                      &memoryMcpSetEnabledImpl);
         // toast 渠道默认落点：schedule toast 渠道 flush 经桥投递应用级 toast
         app::toast_notice::setHandler(&toastNoticeShowImpl);
-        // 退出丢稿防线（need:291）：guard 查 markdown 未落盘编辑，有 → 开确认弹窗
-        // 阻止退出；「放弃修改并退出」先清 dirty 再 requestExit（guard 二次放行）。
+        // 退出丢稿防线（need:291）：guard 先同步保存 markdown 未落盘编辑——
+        // 成功直接退；失败开「重试/放弃并退出」弹窗并阻止退出。
+        // 「放弃并退出」清 dirty 再 requestExit（guard 二次放行）。
         // 无捕获函数指针直引本函数 static（wallpaper 托盘桥同款惯用法）。
         app::quit_save::setShowHandler(&app::requestShow);  // ②need:300：guard 阻止即唤起主窗
         app::quit_save::setHandlers(
@@ -653,6 +654,13 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                     markdownModule->discardUnsavedEdits();
                 }
             });
+        app::quit_save::setSaveHandler(+[]() -> bool {
+            auto* markdownModule =
+                static_cast<::module::markdown::MarkdownModule*>(
+                    markdown.get());
+            return markdownModule != nullptr &&
+                   markdownModule->saveFinalForQuit();
+        });
         // need272 退出裁决缝：托盘 Exit / requestExit 主循环消费点都会问它
         app::setQuitGuard(&app::quit_save::guard);
         app::mcp::setHandlers(&mcpStartImpl, &mcpStopImpl, &mcpApplyPortImpl,

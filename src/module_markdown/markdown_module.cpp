@@ -149,6 +149,15 @@ void MarkdownModule::onStart()  {
     LOG_INFO("Markdown 模块启动，共 " + std::to_string(notes_.size()) + " 篇笔记");
 }
 
+bool MarkdownModule::saveFinalForQuit()  {
+    for (int attempt = 0; attempt < 3 && editorDirty_; ++attempt) {
+        saveEditor();
+        if (!editorDirty_) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    return !editorDirty_;
+}
+
 void MarkdownModule::onStop()  {
     if (!started_) return;
     // 先关原子闸再退订：闸挡在途 handler，退订挡后续 emit。
@@ -166,14 +175,9 @@ void MarkdownModule::onStop()  {
         LOG_WARN("Markdown: 退出模块时存在未决冲突，按「保留本地」落盘（外部版本可在笔记 git 历史 / 远端找回）: " +
                  currentPath_);
     }
-    for (int attempt = 0; attempt < 3 && editorDirty_; ++attempt) {
-        saveEditor();
-        if (!editorDirty_) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }
-    if (editorDirty_ && !currentPath_.empty()) {
+    if (!saveFinalForQuit() && !currentPath_.empty()) {
         LOG_ERROR("退出时保存笔记失败，未落盘的编辑已丢失: " + currentPath_ +
-                  "（EUI-NEO 暂无退出拦截 API，无法阻断退出）");
+                  "（quit guard 已提供重试/放弃，本路径为兜底）");
     }
     // 笔记 git 自动提交：析构 join 后台线程（已在 onFileSaved 推进时间戳，
     // 本 onStop 也会经循环 saveEditor → onFileSaved 触发最后一次 commit）

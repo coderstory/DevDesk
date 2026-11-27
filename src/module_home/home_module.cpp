@@ -5,6 +5,7 @@
 #include "core/call_rate.h"
 #include "core/component_theme.h"
 #include "core/database.h"
+#include "core/event_bus.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/proxy_stats.h"
@@ -26,6 +27,7 @@
 #include <components/theme.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <cmath>
@@ -345,6 +347,11 @@ public:
     std::string iconGlyph() const override { return eui::utf8(0xF015); }  // fa-house
 
     void onStart() override {
+        // A-7：智能体工具改了待办 → 首页统计（待办/逾期）需重查；只置原子脏标记。
+        todoChangedSub_ = ::core::event::bus().subscribe(
+            ::core::event::kTodoChangedByTool, [this](const std::string&) {
+                todoChangedDirty_.store(true, std::memory_order_release);
+            });
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
             LOG_WARN("Home 模块启动：appDatabase() 为空，仪表盘显示空态");
@@ -357,6 +364,7 @@ public:
     }
 
     void onStop() override {
+        todoChangedSub_ = {};
         service_.reset();
         LOG_INFO("Home 模块停止");
     }
@@ -406,6 +414,10 @@ public:
     }
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
+        // A-7：智能体工具改待办 → 本帧重查统计（与 onPageEnter 同一条路径）。
+        if (todoChangedDirty_.exchange(false, std::memory_order_acq_rel)) {
+            refreshStats();
+        }
         const auto& t = core::theme::current();
         const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
         const float gap = t.sizes.spacingLarge * 1.25f; // 20
@@ -831,6 +843,9 @@ private:
     DashboardStats stats_;
     bool statsLoaded_ = false;
     std::string statsError_;
+    // A-7：智能体工具写待办 → 置脏，compose 首步重查（handler 可能来自工具线程，只碰原子）。
+    std::atomic<bool> todoChangedDirty_{false};
+    ::core::event::EventBus::Subscription todoChangedSub_;
     LastCallRate lastRate_;
     std::string lastRateError_;   // 非空 = 最近速率查询失败（卡显示「加载失败」）
     // 上一拍看到的活跃流数（只有 Token 卡的 timer 回调写它）：1→0 那一拍 = 流式刚结束 → 重查

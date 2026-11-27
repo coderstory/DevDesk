@@ -596,3 +596,55 @@ REGISTER_TEST(quitSaveGuardShowsWindowWhenBlocked, "退出 guard 阻止分支唤
     ::app::quit_save::resetForTest();
     return true;
 });
+
+REGISTER_TEST(quitSaveSavesBeforeExit, "退出 guard 保存缝（老板令）：保存成功直接放行，不弹旧确认框", {
+    ::app::quit_save::resetForTest();
+    static bool stubHas = true;
+    static int stubSaves = 0;
+    stubHas = true;
+    stubSaves = 0;
+    ::app::quit_save::setHandlers([]() -> bool { return stubHas; },
+                                  []() { stubHas = false; });
+    ::app::quit_save::setSaveHandler([]() -> bool {
+        ++stubSaves;
+        stubHas = false;  // 保存成功即清 dirty
+        return true;
+    });
+    DOCTEST_CHECK(::app::quit_save::guard());
+    DOCTEST_CHECK_EQ(stubSaves, 1);
+    DOCTEST_CHECK_FALSE(::app::quit_save::dialogOpenForTest());
+    ::app::quit_save::resetForTest();
+    return true;
+});
+
+REGISTER_TEST(quitSaveSaveFailRetry, "退出 guard 保存失败：阻止+弹窗；重试失败保持，重试成功退出", {
+    ::app::quit_save::resetForTest();
+    static bool stubHas = true;
+    static bool stubSaveOk = false;
+    static int stubSaves = 0;
+    stubHas = true;
+    stubSaveOk = false;
+    stubSaves = 0;
+    ::app::quit_save::setHandlers([]() -> bool { return stubHas; },
+                                  []() { stubHas = false; });
+    ::app::quit_save::setSaveHandler([]() -> bool {
+        ++stubSaves;
+        if (stubSaveOk) stubHas = false;
+        return stubSaveOk;
+    });
+
+    DOCTEST_CHECK_FALSE(::app::quit_save::guard());  // 首次保存失败 → 阻止
+    DOCTEST_CHECK(::app::quit_save::dialogOpenForTest());
+    DOCTEST_CHECK_EQ(stubSaves, 1);
+
+    DOCTEST_CHECK_FALSE(::app::quit_save::retrySave());  // 重试仍失败
+    DOCTEST_CHECK(::app::quit_save::dialogOpenForTest());
+    DOCTEST_CHECK_EQ(stubSaves, 2);
+
+    stubSaveOk = true;
+    DOCTEST_CHECK(::app::quit_save::retrySave());  // 重试成功 → 关弹窗 + requestExit
+    DOCTEST_CHECK_FALSE(::app::quit_save::dialogOpenForTest());
+    DOCTEST_CHECK_EQ(stubSaves, 3);
+    ::app::quit_save::resetForTest();
+    return true;
+});

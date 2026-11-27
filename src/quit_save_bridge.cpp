@@ -15,8 +15,12 @@ namespace {
 
 HasUnsavedHandler g_hasUnsaved = nullptr;
 DiscardHandler g_discard = nullptr;
+SaveNowHandler g_saveNow = nullptr;
 ShowMainHandler g_showMain = nullptr;
 bool g_dialogOpen = false;
+// 弹窗语义：SaveFailed = 保存失败（重试/放弃）；Unsaved = 未装配保存缝的旧确认语义
+enum class DialogMode { Unsaved, SaveFailed };
+DialogMode g_mode = DialogMode::Unsaved;
 
 }  // namespace
 
@@ -25,25 +29,42 @@ void setHandlers(HasUnsavedHandler hasUnsaved, DiscardHandler discard) {
     g_discard = discard;
 }
 
+void setSaveHandler(SaveNowHandler saveNow) {
+    g_saveNow = saveNow;
+}
+
 void setShowHandler(ShowMainHandler show) {
     g_showMain = show;
 }
 
 bool guard() {
-    // 未装配或无未保存修改 = 放行（退出直通，现行为不变）
+    // 未装配或无未保存修改 = 放行（退出直通）
     if (g_hasUnsaved == nullptr || !g_hasUnsaved()) {
         return true;
     }
-    // 有未保存修改：开确认弹窗（已开则维持）并阻止本次退出。
-    // 每次退出请求问一次（need272 语义），无缓存——「放弃修改并退出」清 dirty
-    // 后二次 requestExit 自然放行。
+    // 有未保存：装配了保存缝就先同步落盘；成功 = 直通退出（dirty 已清）。
+    if (g_saveNow != nullptr) {
+        if (g_saveNow()) {
+            return true;
+        }
+        g_mode = DialogMode::SaveFailed;
+    } else {
+        g_mode = DialogMode::Unsaved;
+    }
     g_dialogOpen = true;
-    // ②need:300：阻止 = 弹窗将画在主窗；主窗隐藏/最小化（托盘 Exit 态）时先
-    // 唤起，否则用户看不见确认弹窗也无法响应（应用看似卡死不退出）。
     if (g_showMain != nullptr) {
         g_showMain();
     }
     return false;
+}
+
+bool retrySave() {
+    if (g_saveNow != nullptr && g_saveNow()) {
+        g_dialogOpen = false;
+        app::requestExit();
+        return true;
+    }
+    return false;  // 仍失败：弹窗保持，用户可继续编辑（Esc/放弃退出）
 }
 
 void confirmDiscardAndExit() {
@@ -64,9 +85,10 @@ void drawConfirmDialog(eui::Ui& ui, const eui::Screen& screen) {
 
     ui_kit::DialogShellSpec spec;
     spec.id = "app.quitsave";
-    spec.title = "有未保存修改";
+    const bool saveFailed = g_mode == DialogMode::SaveFailed;
+    spec.title = saveFailed ? "保存失败" : "有未保存修改";
     spec.titleColor = t.colors.errorText;  // 警示类弹窗标题提强度（规范 §3.3）
-    spec.dangerConfirm = true;             // 主钮=丢弃修改，破坏性变体
+    spec.dangerConfirm = !saveFailed;      // 旧语义主钮=丢弃（危险）；保存失败主钮=重试
     spec.open = true;
     // need337 紧凑档：老板验收「文本观感好大」实拍定因=240 底盘空白松散——
     // 内容实占（头 69+正文 66+底 73）≈208，取 212 紧凑不空
@@ -84,20 +106,28 @@ void drawConfirmDialog(eui::Ui& ui, const eui::Screen& screen) {
             g_dialogOpen = false;
         }
     };
-    spec.cancel = {"放弃退出", [] { g_dialogOpen = false; }};
-    spec.confirm = {"放弃修改并退出", [] { confirmDiscardAndExit(); }};
+    if (saveFailed) {
+        spec.cancel = {"放弃并退出", [] { confirmDiscardAndExit(); }};
+        spec.confirm = {"重试保存", [] { retrySave(); }};
+    } else {
+        spec.cancel = {"放弃退出", [] { g_dialogOpen = false; }};
+        spec.confirm = {"放弃修改并退出", [] { confirmDiscardAndExit(); }};
+    }
     ui_kit::drawDialogShell(ui, screen, spec, t, wc,
                             [&](const ui_kit::DialogContentArea& area) {
             // 文本宽口径：drawDialogText 自减 inset（见 md_module_menu_poll 同款）
             const float textW = area.w + ui_kit::kDialogBodyInsetX;
-            ui_kit::drawDialogText(ui, "app.quitsave.msg.main", textW,
-                                   "有未保存的修改尚未写入磁盘，退出后将丢失。",
+            const char* mainText = saveFailed
+                ? "退出前保存失败，未落盘的编辑仍在内存中。可重试保存，或放弃修改并退出。"
+                : "有未保存的修改尚未写入磁盘，退出后将丢失。";
+            const char* subText = saveFailed
+                ? "「放弃并退出」将丢弃本次编辑内容。"
+                : "「放弃修改并退出」将丢弃未保存内容；「放弃退出」返回应用继续编辑。";
+            ui_kit::drawDialogText(ui, "app.quitsave.msg.main", textW, mainText,
                                    t.sizes.fontSizeBody, t.colors.textPrimary,
                                    {.y = area.y, .height = 20.0f,
                                     .lineHeight = 20.0f});
-            ui_kit::drawDialogText(ui, "app.quitsave.msg.sub", textW,
-                                   "「放弃修改并退出」将丢弃未保存内容；"
-                                   "「放弃退出」返回应用继续编辑。",
+            ui_kit::drawDialogText(ui, "app.quitsave.msg.sub", textW, subText,
                                    t.sizes.fontSizeSmall, t.colors.textTertiary,
                                    {.y = area.y + 30.0f, .height = 18.0f,
                                     .lineHeight = 18.0f});
@@ -111,8 +141,10 @@ bool dialogOpenForTest() {
 void resetForTest() {
     g_hasUnsaved = nullptr;
     g_discard = nullptr;
+    g_saveNow = nullptr;
     g_showMain = nullptr;
     g_dialogOpen = false;
+    g_mode = DialogMode::Unsaved;
 }
 
 }  // namespace app::quit_save
