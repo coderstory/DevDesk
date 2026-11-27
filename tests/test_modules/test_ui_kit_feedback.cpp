@@ -436,22 +436,21 @@ REGISTER_TEST(ui_kit_toast_level_icon_table,
     return true;
 })
 
-// 场景：ToastState 的 Level 四态映射 + isError 兼容镜像。
+// 场景：ToastState 的 Level 四态映射 + 旧 bool 入口等价性。
 // 事故：只有 bool isError 时，「信息」「警告」无处安放，反馈图标只能两套。
+// need533：isError 兼容镜像字段已删（生产零读点，只有本用例在读它自己）——
+// 语义完全由 level 承载，旧 bool 入口映射到 Success/Error 两档，等价性在本
+// 用例里直接断言 level。
 REGISTER_TEST(ui_kit_toast_state_level_mapping,
-              "ui_kit toast: Level 四态映射 + isError 兼容镜像", {
+              "ui_kit toast: Level 四态映射 + 旧 bool 入口映射到 Success/Error", {
     ui_kit::ToastState st;
     st.show("t", "b", ui_kit::ToastLevel::Warning);
     DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Warning);
-    DOCTEST_CHECK(!st.isError);
     st.show("t", "b", ui_kit::ToastLevel::Error);
     DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Error);
-    DOCTEST_CHECK(st.isError);   // 旧调用点读此字段
     st.show("t", "b", true);     // 旧 bool 入口 → Error
     DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Error);
-    DOCTEST_CHECK(st.isError);
     st.show("t", "b", false);    // 旧 bool 入口 → Success
     DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Success);
-    DOCTEST_CHECK(!st.isError);
     return true;
 })

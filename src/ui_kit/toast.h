@@ -38,7 +38,6 @@ struct ToastState {
     std::string title;
     std::string body;
     ToastLevel level = ToastLevel::Success;
-    bool isError = false;  // 兼容镜像（level == Error）；旧调用点仍读此字段
 
     // 等价于 showToast(title, msg, isError) / setStatus(msg, isError)。
     void show(std::string title, std::string body, bool isError = false) {
@@ -50,7 +49,6 @@ struct ToastState {
         this->title = std::move(title);
         this->body = std::move(body);
         this->level = level;
-        this->isError = (level == ToastLevel::Error);
         open = true;
     }
 
