@@ -3,6 +3,7 @@
 // 拆分第一步（抽编译单元）产物：类定义在 markdown_module_internal.h，
 // 本文件只承载成员函数体，纯代码搬移，逻辑与签名零变化。
 
+#include <ui_kit/density.h>  // need534：平台布局密度档
 #include "markdown_module_internal.h"
 
 #include <algorithm>  // std::clamp / std::min（need550 选区反查与矩形裁剪）
@@ -40,13 +41,14 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
     if (!outlineOpen_) return;
-    const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
+    // need534：页级内边距改走平台密度档（mac 32 不变 / Windows 24 紧凑）。
+    const float pad = ui_kit::density::pageInsetV();
     const float panelW = 264.0f;
     const float x = screen.width - pad - panelW;
-    const float y = pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
+    const float y = pad + ui_kit::density::headerH() + t.sizes.spacingLarge;
     // bug164：高度内容驱动，上限 = 原满高档（2026-10-25 批G：底补 32 下距与
     // 主体对齐——修前三态恒满高 681，空/少内容也占满整列）。
-    const float panelMaxH = screen.height - pad - ui_kit::kHeaderH -
+    const float panelMaxH = screen.height - pad - ui_kit::density::headerH() -
                             t.sizes.spacingLarge - pad;
     float panelContentH = 0.0f;
     if (outline_.empty()) {

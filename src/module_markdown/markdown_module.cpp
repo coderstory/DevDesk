@@ -3,6 +3,7 @@
 // 语法高亮在 md_highlight.*。类定义与共享助手在 markdown_module_internal.h，
 // 成员函数按 文件树/编辑器/预览/菜单轮询 四块分驻 md_module_*.cpp（拆分第一步）。
 
+#include <ui_kit/density.h>  // need534：平台布局密度档
 #include "markdown_module_internal.h"
 
 #include "core/platform_info.h"
@@ -225,7 +226,8 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
              .styleRevision;
     }
 
-    const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
+    // need534：页级内边距改走平台密度档（mac 32 不变 / Windows 24 紧凑）。
+    const float pad = ui_kit::density::pageInsetV();
     const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
     const float contentH = screen.height - pad;   // 高 = 窗口高 − 底内边距（顶距 0=标题顶格，底距 32）
     // UAT3 D-R3-3 c：面板宽每帧向目标 lerp（固定系数），距目标 <1px 即钉住；
@@ -242,7 +244,7 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     constexpr float kHeaderGap = 8.0f;   // 标题下间距（2026-10-25 拍板：16→8 收紧）
     // 池130：tab 带 32px 不再全局扣高（原树列跟着变矮）——只从 tab 带正下方那列
     //（编辑/实时/纯预览）顶部扣（tabBandInset），树列恒满高。
-    const float bodyH = contentH - ui_kit::kHeaderH - kHeaderGap;
+    const float bodyH = contentH - ui_kit::density::headerH() - kHeaderGap;
 
     // 页面底色 = 主窗口 clearColor，不自铺不透明底（半透/磨砂档才生效）
 
@@ -264,7 +266,7 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
                                ? midW
                                : contentW - sideW - gap;
         drawNoteTabBar(ui, pad + sideW + gap,
-                       ui_kit::kHeaderH + kHeaderGap, tabW, t, componentTheme);
+                       ui_kit::density::headerH() + kHeaderGap, tabW, t, componentTheme);
     }
 
     // 方案 A 边界把手：一颗把手管两端，取代旧 drawTreeExpandFab + md.tree.collapse
@@ -294,7 +296,7 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
                "+N 新建笔记、" + core::platform_info::shortcutModifierLabel() +
                "+S 保存、Esc 关浮层")
         .anchor(pad + contentW - headerLayout(contentW, t).actionsInnerW + 12.0f,
-                ui_kit::kHeaderH * 0.5f)
+                ui_kit::density::headerH() * 0.5f)
         .bounds(screen.width - pad, screen.height)
         .minWidth(560.0f)
         .maxWidth(560.0f)
@@ -373,7 +375,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
         core::theme::componentTokensWeChat(t);
     // UAT5 全局顶部收紧：kHeaderH 64→40（共享常量），标题行 24
     ui.row("md.header")
-        .size(contentW, ui_kit::kHeaderH)
+        .size(contentW, ui_kit::density::headerH())
         .alignItems(eui::Align::CENTER)
         .content([&] {
             // 页头三段宽随内容宽收口（宽档下限 216/160 + 右操作组 304，1000 档
@@ -385,7 +387,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
             // 模式 Tab 被推到最右、中间 ~400px 空隙）；Tab 左聚跟标题，spacer 推 actions 靠右
             const float kTitleColW = hl.titleW;
             ui.column("md.title")
-                .size(kTitleColW, ui_kit::kHeaderH)
+                .size(kTitleColW, ui_kit::density::headerH())
                 .gap(2.0f)
                 .content([&] {
                     // 行盒 32 = 全站页标题口径（about_module.cpp:202 kTitleH /

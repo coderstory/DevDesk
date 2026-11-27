@@ -54,6 +54,15 @@ add_library(devdesk_ui_kit STATIC
 
 devdesk_apply_warnings(devdesk_ui_kit)
 
+# need534（批次 D）：页面布局密度按平台选择实现（头文件平台无关，业务代码零
+# 平台宏 —— 与 core 的 theme_deepen / platform_info 同一模式）。
+# mac 侧 density_posix.cpp 的取值与改动前逐字相同（老板 2026-11-27 硬约束）。
+if(WIN32)
+    target_sources(devdesk_ui_kit PRIVATE density_win.cpp)
+else()
+    target_sources(devdesk_ui_kit PRIVATE density_posix.cpp)
+endif()
+
 target_include_directories(devdesk_ui_kit PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     # 只加到 src 为止：消费方一律 <ui_kit/xxx.h>，不把本目录自身加进 -I

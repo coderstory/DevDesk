@@ -262,6 +262,8 @@ add_executable(devdesk_tests
     # B-0 护栏（批次 B 弹窗几何）：内容区面积 / 字号缩放档 / 最小高与 compact /
     # 按钮右锚与第三动作左锚。改壳前必须绿，改壳后必须仍绿。
     test_modules/test_dialog_geometry.cpp
+    # need534（批次 D）：页面布局密度档契约（值域 + mac 档逐字不变守卫）
+    test_modules/test_density_metrics.cpp
     # need453 待办到期提醒：到期投递/同截止去重/完成归档排除/节流/单轮上限下轮补投
     test_modules/test_todo_due_watcher.cpp
     # need455 每小时整点数据库备份：跨点触发/不足一小时不备/保留份数裁剪/开关/失败路径
@@ -472,6 +474,11 @@ target_compile_definitions(devdesk_tests PRIVATE
     DEVDESK_VERSION="${PROJECT_VERSION}"
     DEVDESK_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
+# need534（批次 D）：test_density_metrics.cpp 的「mac 档逐字不变」用例只需要在
+# 非 Windows 跑（Windows 上 posix 档根本没编进来，断言会假红）。
+if(NOT WIN32)
+    target_compile_definitions(devdesk_tests PRIVATE DEVDESK_DENSITY_EXPECT_POSIX)
+endif()
 
 target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src

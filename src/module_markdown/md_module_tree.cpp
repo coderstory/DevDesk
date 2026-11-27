@@ -3,6 +3,7 @@
 // 拆分第一步（抽编译单元）产物：类定义在 markdown_module_internal.h，
 // 本文件只承载成员函数体，纯代码搬移，逻辑与签名零变化。
 
+#include <ui_kit/density.h>  // need534：平台布局密度档
 #include "markdown_module_internal.h"
 
 #include <algorithm>
@@ -49,7 +50,7 @@ void MarkdownModule::drawTreeHandle(eui::Ui& ui,
     const float handleX =
         (pad + gap) +
         (kTreePanelWidth - kTreeHandleW - gap) * lerpT;
-    const float handleY = pad + ui_kit::kHeaderH + t.sizes.spacingLarge +
+    const float handleY = pad + ui_kit::density::headerH() + t.sizes.spacingLarge +
                           bodyH * 0.5f - kTreeHandleH * 0.5f;
     // 箭头方向在中点两侧各持一态，但点击只调 toggleTreePanel → 目标态反向；
     // 不依赖箭头方向判当前态。折半为分界：>120px 显示左箭头（收起语义），

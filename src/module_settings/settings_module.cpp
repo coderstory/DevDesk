@@ -5,6 +5,7 @@
 // 依赖边界：module_* 互不依赖 —— claude 经 core 窄接口、模块开关经 module_toggle_bridge.h。
 // 渲染路径不做 fs 查询：外部状态统一在 refreshExternalState 装载，compose 只读快照。
 
+#include <ui_kit/density.h>  // need534：平台布局密度档
 #include "app_tools.h"
 #include "settings_config.h"
 #include "settings_ui_cards.h"
@@ -1321,14 +1322,15 @@ public:
         maybeAutoGithubSync();
         // 本地 git 探测收割/重探：非阻塞，结果驱动卡片灰字。
         maybeRefreshLocalGitProbe();
-        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
+        // need534：页级内边距改走平台密度档（mac 32 不变 / Windows 24 紧凑）。
+        const float pad = ui_kit::density::pageInsetV();
         const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
 
         // 页面底色 = 主窗口 clearColor，不自铺不透明底。
 
         // UAT5 全局顶部收紧：共享 kHeaderH 已 64→40（本页先行档并入共享源，
         // kSettingsHeaderH 删除）。cardsTopY 公式不变（100% 档 40+40+16+40+16=152）。
-        const float headerH = ui_kit::kHeaderH;
+        const float headerH = ui_kit::density::headerH();
         const float tabH = kSettingsTabHeight;
         // 日志 tail 读盘在后台线程，渲染恒读快照 → 切 tab / 首帧不闪空。
         if (settingsTab_ == kTabLog) {

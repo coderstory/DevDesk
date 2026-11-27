@@ -1,6 +1,7 @@
 // Todo 看板模块：Module 接口 + compose 骨架 + 拖拽状态机 + 归档折叠动画状态机 + 数据 reload + 写操作 + 右键菜单分发。
 // 看板绘制在 todo_ui_board.{h,cpp}，弹窗状态在 todo_dialogs.h，纯函数在 todo_ui_logic.h。
 // 两条通道（BoardActions / DialogHost）构造期绑定一次，回调体读模块当下状态，UI 单元不持有本类
+#include <ui_kit/density.h>  // need534：平台布局密度档
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/markdown_notes_source.h"
@@ -1068,10 +1069,11 @@ public:
         advanceColAnims();
 
         const auto& t = core::theme::current();
-        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
+        // need534：页级内边距改走平台密度档（mac 32 不变 / Windows 24 紧凑）。
+        const float pad = ui_kit::density::pageInsetV();
         const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
         const float contentH = screen.height - pad;          // 高 = 窗口高 − 顶内边距（底贴底、无下 padding）
-        const float headerH = ui_kit::kHeaderH;
+        const float headerH = ui_kit::density::headerH();
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
 
         // 装配看板前按列钳制滚动偏移：过滤/重载后卡数变少时旧偏移会越过内容底，
