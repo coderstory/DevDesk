@@ -68,8 +68,4 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                        ReleaseNewTaskDialogState& state,
                        const std::function<void(std::int64_t taskId)>& openTask);
 
-// 其余弹层由后续票据实现；保留声明避免并行开发期调用点断裂。
-void drawFullConfigEditorDialog(eui::Ui& ui);
-void drawWithdrawConfirmDialog(eui::Ui& ui);
-
 } // namespace module::release

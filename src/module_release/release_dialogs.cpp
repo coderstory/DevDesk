@@ -542,7 +542,4 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
                             });
 }
 
-void drawFullConfigEditorDialog(eui::Ui& ui) { (void)ui; }
-void drawWithdrawConfirmDialog(eui::Ui& ui) { (void)ui; }
-
 } // namespace module::release

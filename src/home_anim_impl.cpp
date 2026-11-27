@@ -18,8 +18,6 @@ namespace home_anim {
 static std::optional<bool> g_homeAnimEnabled;
 static std::optional<bool> g_homeAnimReduceOverride;
 
-int clamp01(int v) { return v < 0 ? 0 : v; }
-
 bool enabled() {
     if (!g_homeAnimEnabled.has_value()) {
         // 直读 app_config 行（settings.homeAnimEnabled；值 = JSON bool 文本）。
