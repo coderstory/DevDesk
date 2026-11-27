@@ -1,4 +1,0 @@
-slug: need3-budget
-date: 2026-10-31 18:56:00
-cwd:  /Users/coderstory/dev/DevDesk
-cmd:  /tmp/need3-scripts/budget_harness 
