@@ -1,25 +1,9 @@
-// src/ui_kit/dialog_form.cpp — 对话框外框 / 文本行 / 按钮对的唯一实现（边界见 .h）。
+// src/ui_kit/dialog_form.cpp — 对话框文本行 / 标题行的唯一实现（边界见 .h）。
+// need533（批次 C-1）：外框 drawDialogFrame 与按钮对 drawDialogButtons 已删
+// （全仓零调用，弹窗壳已统一走 dialog_shell）。
 #include <ui_kit/dialog_form.h>
 
-#include <components/button.h>
-#include <components/dialog.h>
-
 namespace ui_kit {
-
-void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& frame,
-                     const components::theme::ThemeColorTokens& themeTokens,
-                     const std::function<void()>& content) {
-    auto builder = components::dialog(ui, frame.id);
-    builder.open(frame.open)
-        .screen(screen.width, screen.height)
-        .size(frame.widthPx(), frame.height)
-        .theme(themeTokens);
-    // claude / markdown 不调 .zIndex()（用组件默认 1000），todo 显式给值。
-    if (frame.zIndex != kDialogZIndexUnset) {
-        builder.zIndex(frame.zIndex);
-    }
-    builder.onOpenChange(frame.onOpenChange).content(content).build();
-}
 
 void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
                     const std::string& text, float fontSize, const eui::Color& color,
@@ -60,97 +44,6 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
     textOptions.lineHeight = options.lineHeight;
     textOptions.bold = true;  // 标题一律 600（need322：弹窗标题档 700→600 随迁）
     drawDialogText(ui, id, dialogWidth, text, fontSize, color, textOptions);
-}
-
-namespace {
-
-// 按钮对公共几何：取消在左、确定在右，各 (w − 2×内缩 − gap)/2，行底距弹窗底 60。
-// dialogButtonGap() 单一来源已上移 ui_kit/metrics.h（与 dialog_shell 共用），此处不再重复
-// need530：行偏移与按钮高也进字号缩放通道（130% 档按钮不得压到底缘外）。
-inline float dialogButtonRowOffsetY() { return core::theme::scaled(60.0f); }
-inline float dialogButtonHeight() { return core::theme::scaled(40.0f); }
-
-// (w-68)/2 —— 68 = 28×2 + 12，还原构成，不留裸 68。
-float buttonWidth(float dialogWidth) {
-    return (dialogWidth - kDialogInsetX * 2.0f - dialogButtonGap()) * 0.5f;
-}
-
-// 单按钮：几何 + 文案字号 + 样式组合，最后统一 onClick。
-void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, float width,
-                       const DialogButtonSpec& spec, const core::theme::Tokens& t,
-                       const components::theme::ThemeColorTokens& themeTokens) {
-    auto button = components::button(ui, id);
-    button.position(x, y)
-        .size(width, dialogButtonHeight())
-        .text(spec.label)
-        .fontSize(core::theme::scaled(spec.fontSize));
-    switch (spec.style) {
-        case DialogButtonStyle::Secondary:
-            button.colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault);
-            break;
-        case DialogButtonStyle::SecondaryThemed:
-            button.theme(themeTokens, false)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault);
-            break;
-        case DialogButtonStyle::Primary:
-            button
-                .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radius);
-            break;
-        case DialogButtonStyle::PrimaryThemed:
-            button.theme(themeTokens, true)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radius);
-            break;
-        case DialogButtonStyle::Danger:
-            button.colors(t.colors.error, t.colors.error, t.colors.error)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radius);
-            break;
-        case DialogButtonStyle::DangerThemed:
-            button.theme(themeTokens, false)
-                .colors(t.colors.error, t.colors.error, t.colors.error)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radius);
-            break;
-        case DialogButtonStyle::DangerOutline:
-            button.colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.errorText)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault);
-            break;
-        case DialogButtonStyle::DangerOutlineThemed:
-            button.theme(themeTokens, false)
-                .textColor(t.colors.errorText)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault);
-            break;
-        case DialogButtonStyle::DangerSoftThemed:
-            // S2.1 Danger 默认态：浅红底（#FEE2E2 = error 20%）+ 红字；hover 红底白字
-            button.theme(themeTokens, components::ButtonVariant::Danger)
-                .radius(t.sizes.radius);
-            break;
-    }
-    button.onClick(spec.onClick).build();
-}
-
-} // namespace
-
-void drawDialogButtons(eui::Ui& ui, const std::string& id, float dialogWidth,
-                       float dialogHeight, const DialogButtonSpec& cancel,
-                       const DialogButtonSpec& confirm, const core::theme::Tokens& t,
-                       const components::theme::ThemeColorTokens& themeTokens) {
-    const float w = buttonWidth(dialogWidth);
-    const float y = dialogHeight - dialogButtonRowOffsetY();
-    buildDialogButton(ui, id + ".cancel", kDialogInsetX, y, w, cancel, t, themeTokens);
-    buildDialogButton(ui, id + ".confirm", kDialogInsetX + w + dialogButtonGap(), y,
-                      w, confirm, t, themeTokens);
 }
 
 } // namespace ui_kit

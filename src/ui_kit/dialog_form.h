@@ -23,23 +23,6 @@ namespace ui_kit {
 // zIndex 哨兵：不调 .zIndex()（用组件默认 1000）；todo 侧会显式给值。
 inline constexpr int kDialogZIndexUnset = -1;
 
-// 对话框外框：跨站点统一的 dialog 接线（除 content 与 zIndex 取值外全同）。
-struct DialogFrame {
-    std::string id;
-    DialogWidth width = DialogWidth::Standard;
-    float height = 0.0f;
-    bool open = false;
-    int zIndex = kDialogZIndexUnset;  // kDialogZIndexUnset = 不调 .zIndex()
-    std::function<void(bool)> onOpenChange;
-
-    float widthPx() const { return dialogWidthPx(width); }
-};
-
-// 绘制外框 + 执行 content（节点 id 不变）。
-void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& frame,
-                     const components::theme::ThemeColorTokens& themeTokens,
-                     const std::function<void()>& content);
-
 // 一行文本（说明 / 正文 / 标签 / 校验错误行的共用接线）
 // 现状排版：position + size + text + fontSize + lineHeight [+ fontWeight(700)] [+ wrap] + color。
 struct DialogTextOptions {
@@ -75,33 +58,5 @@ struct DialogTitleOptions {
 void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
                      const std::string& text, float fontSize, const eui::Color& color,
                      const DialogTitleOptions& options = {});
-
-// 标准按钮对
-// 9 种样式组合逐字复刻（不合并、不近似）；Themed = 走 .theme(themeTokens, primary)。
-enum class DialogButtonStyle {
-    Secondary,        // .colors(surfaceElevated/hover/active) + textPrimary + border
-    SecondaryThemed,  // .theme(themeTokens,false) + textPrimary + border
-    Primary,          // .colors(primary/primaryHover/primaryPressed) + onPrimary
-    PrimaryThemed,    // .theme(themeTokens,true) + onPrimary
-    Danger,           // .colors(error,error,error) + onPrimary
-    DangerThemed,     // .theme(themeTokens,false) + .colors(error,error,error) + onPrimary
-    DangerOutline,    // .colors(surfaceElevated/hover/active) + textColor(error) + border
-    DangerOutlineThemed,  // .theme(themeTokens,false) + textColor(error) + border
-    // S2.1 Danger 默认态：浅红底（error 20%）+ 红字，hover 红底白字（ButtonVariant::Danger）
-    DangerSoftThemed,
-};
-
-struct DialogButtonSpec {
-    std::string label;
-    float fontSize = 15.0f;
-    DialogButtonStyle style = DialogButtonStyle::Secondary;
-    std::function<void()> onClick;
-};
-
-// 取消 (28, h-60) + 确定 (28 + (w-68)/2 + 12, h-60)，各 (w-68)/2 × 40，圆角一律 t.sizes.radius。
-void drawDialogButtons(eui::Ui& ui, const std::string& id, float dialogWidth,
-                       float dialogHeight, const DialogButtonSpec& cancel,
-                       const DialogButtonSpec& confirm, const core::theme::Tokens& t,
-                       const components::theme::ThemeColorTokens& themeTokens);
 
 } // namespace ui_kit
