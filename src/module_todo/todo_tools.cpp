@@ -15,6 +15,7 @@
 #include "todo_ui_logic.h"
 
 #include <optional>
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -370,16 +371,16 @@ public:
         std::string err;
         if (!columnExists(svc_, *columnId, &err)) return toolError(err);
 
-        // 缺省位置 = 目标列列尾追加
-        int newPosition = 0;
+        // 缺省位置 = 目标列列尾追加；显式 position 钳到 [0, 列内任务数]，
+        // 防负数/超大值把列内位次打出空洞（后续追加会错位）。
+        auto colTasks = svc_.listTasks(*columnId);
+        if (colTasks.isFail()) {
+            return toolError("读取目标列任务失败: " + colTasks.errorMessage());
+        }
+        const int colSize = static_cast<int>(colTasks.value().size());
+        int newPosition = colSize;
         if (auto pos = intField(argsObj.value(), "position")) {
-            newPosition = static_cast<int>(*pos);
-        } else {
-            auto colTasks = svc_.listTasks(*columnId);
-            if (colTasks.isFail()) {
-                return toolError("读取目标列任务失败: " + colTasks.errorMessage());
-            }
-            newPosition = static_cast<int>(colTasks.value().size());
+            newPosition = std::clamp(static_cast<int>(*pos), 0, colSize);
         }
 
         if (auto r = svc_.moveTask(*id, *columnId, newPosition); r.isFail()) {

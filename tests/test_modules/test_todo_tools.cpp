@@ -720,3 +720,44 @@ REGISTER_TEST(todo_tools_changed_by_tool_event,
     DOCTEST_CHECK_EQ(count, 2);
     return true;
 })
+
+REGISTER_TEST(todo_tools_move_position_clamped,
+              "todo_tools: todo.move 的 position 钳到 [0, 列内任务数]（B-10）", {
+    ToolEnv env("move_clamp");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(cols.value().size() >= 2);
+    const int64_t c0 = cols.value()[0].id;
+    const int64_t c1 = cols.value()[1].id;
+    auto a = env.svc->createTask(c1, "A");
+    auto b = env.svc->createTask(c1, "B");
+    auto c = env.svc->createTask(c1, "C");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk() && c.isOk());
+
+    auto moveTool = [&](int64_t id, int64_t col, int pos) {
+        return runTool("todo.move",
+                       "{\"id\":" + std::to_string(id) +
+                           ",\"columnId\":" + std::to_string(col) +
+                           ",\"position\":" + std::to_string(pos) + "}");
+    };
+    auto r1 = moveTool(c.value().id, c0, -9);
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_CHECK_FALSE(r1.value().isError);
+    auto list0 = env.svc->listTasks(c0);
+    DOCTEST_REQUIRE(list0.isOk());
+    DOCTEST_REQUIRE_EQ(list0.value().size(), 1u);
+    DOCTEST_CHECK_EQ(list0.value()[0].position, 0);
+
+    auto r2 = moveTool(b.value().id, c0, 999);
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_FALSE(r2.value().isError);
+    auto list1 = env.svc->listTasks(c0);
+    DOCTEST_REQUIRE(list1.isOk());
+    DOCTEST_REQUIRE_EQ(list1.value().size(), 2u);
+    DOCTEST_CHECK_EQ(list1.value().back().id, b.value().id);
+    DOCTEST_CHECK_EQ(list1.value().back().position,
+                     static_cast<int>(list1.value().size()) - 1);
+    return true;
+})
