@@ -234,16 +234,6 @@ const char* statusToString(Status status) {
     return "unknown";
 }
 
-const char* authorizationToString(Authorization auth) {
-    switch (auth) {
-        case Authorization::Unknown: return "unknown";
-        case Authorization::NotDetermined: return "not_determined";
-        case Authorization::Denied: return "denied";
-        case Authorization::Authorized: return "authorized";
-    }
-    return "unknown";
-}
-
 void initialize() {
     if (g_initialized.exchange(true, std::memory_order_relaxed)) {
         return;   // 幂等：只允许真正初始化一次

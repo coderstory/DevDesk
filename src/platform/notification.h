@@ -56,7 +56,6 @@ struct Receipt {
 };
 
 const char* statusToString(Status status);
-const char* authorizationToString(Authorization auth);
 
 // 主线程调用一次；幂等。macOS 安装 delegate/激活观察者、异步查授权并在
 // NotDetermined 时异步请求（首次启动弹窗）。Windows/POSIX no-op。
