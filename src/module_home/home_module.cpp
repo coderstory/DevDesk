@@ -686,7 +686,8 @@ public:
                                                  ok ? "" : "加载失败",
                                                  stats_.overdueTodos > 0,
                                                  [this, target = card.target] {
-                                                     navigateTo(target);
+                                                     // B-15：逾期卡带负载，待办页据此直接弹逾期列表
+                                                     navigateTo(target, "overdue");
                                                  });
                                     break;
                                 case StatCardKind::ApiCalls:

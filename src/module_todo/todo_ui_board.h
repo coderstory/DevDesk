@@ -23,6 +23,9 @@ namespace module::todo::ui {
 struct BoardPlate {
     float height = 0.0f;
     float cardW = 0.0f;
+    // 板面左缘在 compose 空间的 x（= 页面内边距）。columnX 是列相对板面的偏移，
+    // 菜单锚点/命中换算要 page 坐标时必须加上它（Windows 紧凑档 pad=24 ≠ mac 32）
+    float originX = 0.0f;
     // 逐列实际几何（compose 空间，列左缘 + 当帧宽）：drawBoard 每帧填入，含归档折叠动画宽度。
     // 拖拽命中优先吃这两条向量——归档折叠窄条与展开宽列都按真实宽度命中
     std::vector<float> columnX;
@@ -37,6 +40,8 @@ struct BoardPlate {
 struct BoardActions {
     std::function<void(const std::string&)> searchChanged;
     std::function<void()> searchCancelled;
+    // 回车立即提交（C-6 防抖窗口内跳过等待；无待提交时 no-op）
+    std::function<void()> searchSubmitted;
     std::function<void()> overdueClicked;
     std::function<void()> addTaskClicked;
     std::function<void()> retryClicked;
@@ -48,6 +53,8 @@ struct BoardActions {
     std::function<void(double, double, double, double)> cardDragged;
     std::function<void(double, double, bool)> cardReleased;
     std::function<void()> archiveToggle;
+    // B-9：归档列灰字提示行「看全部」——本次会话取消 20 张渲染上限
+    std::function<void()> archiveSeeAll;
     // 普通列列头点击切换折叠（need#169）：参数 = 列下标；归档列仍走 archiveToggle（H20 口径不变）
     std::function<void(size_t)> columnToggle;
 };
@@ -58,6 +65,9 @@ struct BoardView {
     const std::vector<Task>& tasks;
     const std::unordered_set<int64_t>& searchMatchIds;
     const std::string& searchQuery;
+    // C-6：防抖窗口内 query 已更新但结果未应用 → 过滤仍按上一份已应用查询走
+    //（空 = 未激活搜索）。board 的过滤/空态文案只看它，不看 searchQuery。
+    bool searchActive = false;
     const std::map<int64_t, float>& columnScrolls;
     int64_t selectedTaskId = 0;
     bool dragActive = false;
@@ -79,6 +89,8 @@ struct BoardView {
     // H20 归档折叠动画进度（0=折叠，1=展开）：宽度插值 / 窄态与展开头交叉淡化 / 卡片内容淡入
     // 的唯一输入。动画由模块侧驱动（archiveExpanded 是目标态），本单元只按当帧值布局。
     float archiveT = 0.0f;
+    // B-9：本次会话「看全部」→ 归档列取消最近 20 张渲染上限（模块停用复位）
+    bool archiveShowAll = false;
     // 全列折叠泛化（need#169）：与 columns 对齐的普通列折叠进度/目标态；归档位以
     // archiveT/archiveExpanded 为准（同一模块状态源填入，仅口径不同）。构造后赋值。
     std::vector<float> columnCollapseT;

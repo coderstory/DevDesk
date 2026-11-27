@@ -20,6 +20,7 @@
 #include "core/theme.h"
 #include "core/time.h"
 #include "core/ui_geometry.h"
+#include "ui_kit/density.h"
 #include "ui_kit/metrics.h"
 
 namespace module::todo::ui {
@@ -649,11 +650,12 @@ struct BoardGeom {
     float boardTop = 0.0f;  // 看板区（列背景）顶边的模块空间 y
 };
 
-// 本头不碰 Ui，只收 Tokens；列模型固定四列，唯一消费者只吃顶边
+// 本头不碰 Ui，只收 Tokens；头部高走平台密度档（Windows 36 / mac 40，与模块
+// compose 的 density::headerH 同源——写死 kHeaderH 会在紧凑档把弹层锚点错开 4px）
 inline BoardGeom boardGeom(const core::theme::Tokens& t) {
     // 页面顶距 0（2026-10-25 拍板：标题顶格），板顶 = 页头 + 间距
     BoardGeom g;
-    g.boardTop = ui_kit::kHeaderH + t.sizes.spacingLarge;
+    g.boardTop = ui_kit::density::headerH() + t.sizes.spacingLarge;
     return g;
 }
 

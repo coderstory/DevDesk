@@ -170,6 +170,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                                     cb(text);
                                 })
                                 .onCancel([cb = v.act.searchCancelled] { cb(); })
+                                .onEnter([cb = v.act.searchSubmitted] { if (cb) cb(); })
                                 .build();
                             ui.text("todo.search.icon")
                                 .position(14.0f, 12.0f)
@@ -179,6 +180,29 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                                 .lineHeight(core::theme::scaled(16.0f))
                                 .color(t.colors.textTertiary)
                                 .build();
+                            // B-8：搜索框清除钮（有词才显示；清空走与 Esc 同一路径，
+                            // 立即提交=清空搜索并刷新）
+                            if (!v.searchQuery.empty()) {
+                                ui.rect("todo.search.clear.bg")
+                                    .position(searchW - 30.0f, 8.0f)
+                                    .size(24.0f, 24.0f)
+                                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                    .hoverColor(t.colors.primarySoftBg)
+                                    .radius(6.0f)
+                                    .onClick([cb = v.act.searchCancelled] { cb(); })
+                                    .build();
+                                ui.text("todo.search.clear")
+                                    .position(searchW - 30.0f, 8.0f)
+                                    .size(24.0f, core::theme::scaled(24.0f))
+                                    .icon(0xF00D)  // fa-xmark
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .lineHeight(core::theme::scaled(24.0f))
+                                    .horizontalAlign(eui::HorizontalAlign::Center)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(t.colors.textTertiary)
+                                    .onClick([cb = v.act.searchCancelled] { cb(); })
+                                    .build();
+                            }
                         })
                         .build();
 
@@ -330,6 +354,8 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                     .lineHeight(core::theme::scaled(24.0f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .color(t.colors.errorText)
+                    // 「点击重试」必须真的可点：整行（含括号文案）与下方按钮同一动作
+                    .onClick([cb = v.act.retryClicked] { cb(); })
                     .build();
                 components::button(ui, "todo.error.retry")
                     .position(contentW / 2.0f - 60.0f, bodyH / 2.0f)
@@ -354,8 +380,9 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
         // 此前是单行裸文字——与 release / agent / mcp / memory 各页形态都不一致。
         ui_kit::EmptyStateOptions opts;
         opts.message = "还没有任何列";
-        opts.guide =
-            "列是任务的分组。新建第一个任务时，系统会按你选的分类自动建出对应列。";
+        // 固定四列后「新建任务时按分类自动建列」已不存在（方案 B 收窄）：零列 =
+        // 数据异常态而不是引导态，文案只说事实与下一步（不再承诺自动建列）。
+        opts.guide = "列是任务的分组；当前没有列，启动时会自动补回默认四列。";
         opts.icon = 0xF00B;  // fa-table-columns
         ui_kit::emptyState(ui, "todo.empty", opts, 0.0f, 0.0f, contentW,
                            bodyH, t);
@@ -461,13 +488,13 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
 
     auto colTasks = tasksInColumn(v.tasks, col.id);
     // 搜索激活时只显示命中卡（命中集来自 service_->search）
-    colTasks = filterBySearch(colTasks, v.searchMatchIds, !v.searchQuery.empty());
+    colTasks = filterBySearch(colTasks, v.searchMatchIds, v.searchActive);
     // 归档列语义走 kind；按标题判会在重命名后失效
     const bool isArchive = (col.kind == "archive");
     // 归档列排序强制按 archived_at DESC（最近的在最上面），忽略手动 position——列内拖拽排序无效化
     auto archiveTasks = isArchive ? tasksInArchiveColumn(v.tasks, col.id) : std::vector<const Task*>{};
     auto archiveFiltered = isArchive
-        ? filterBySearch(archiveTasks, v.searchMatchIds, !v.searchQuery.empty())
+        ? filterBySearch(archiveTasks, v.searchMatchIds, v.searchActive)
         : std::vector<const Task*>{};
     const auto& renderTasks = isArchive ? archiveFiltered : colTasks;
     const size_t taskCount = renderTasks.size();
@@ -571,6 +598,14 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.primary)
+                    .build();
+                // C-1：收起钮说明（EUI tooltip 挂 hover 源，不占布局）
+                components::tooltip(target, id + ".archivetoggle.tooltip")
+                    .theme(core::theme::componentTokensWeChat(t))
+                    .source(id + ".archivetoggle.bg")
+                    .anchor(width - 28.0f, 30.0f)
+                    .bounds(width, kColumnHeaderHeight)
+                    .value("收起归档")
                     .build();
             }
         };
@@ -707,7 +742,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         // S2.8：空态走 ui_kit::emptyState；2026-11-07 池170：空列只留单行主句
         //（引导句按老板令移除；搜索无命中态保留 guide——非「空列」语义）
         ui_kit::EmptyStateOptions opts;
-        if (!v.searchQuery.empty()) {
+        if (v.searchActive) {
             opts.message = "无命中任务";
             opts.guide = "换个关键词，或清掉搜索条件。";
         } else if (isArchive) {
@@ -725,7 +760,8 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const auto componentTheme = core::theme::componentTokensWeChat(t);
     // 归档超出 20 张时列底留一行提示（计入容器高度，不遮卡片）
     const bool showArchiveLimit =
-        isArchive && cardsOn && taskCount > kArchiveRenderLimit;
+        isArchive && cardsOn && !v.archiveShowAll &&
+        taskCount > kArchiveRenderLimit;
     const float cardsH =
         height - kColumnHeaderHeight - (showArchiveLimit ? kArchiveLimitH : 0.0f);
     // 列内容容器 = 卡片落位淡入载体：opacity 门控 dragActive（跟手中整列 0.6 调暗，松手 0.6→1.0 淡回），
@@ -755,7 +791,9 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                     const float cardW = contentCardWidth(contentWidth);
                     // 归档展开最多渲染最近 20 张；其余列全量进入虚拟化窗口
                     const size_t renderLimit = (isArchive && cardsOn)
-                                                   ? std::min(taskCount, kArchiveRenderLimit)
+                                                   ? (v.archiveShowAll
+                                                          ? taskCount
+                                                          : std::min(taskCount, kArchiveRenderLimit))
                                                    : (isArchive ? size_t(0) : taskCount);
                     // H20 虚拟化：卡片定高 pitch，只构建可视区 + 上下各 3 张缓冲。
                     // 内容总高仍按 taskCount×pitch（归档展开按 20 张）由占位元素撑出，
@@ -808,16 +846,18 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             "仅展示最近 " + std::to_string(kArchiveRenderLimit) + " 张，另有 " +
             std::to_string(taskCount - kArchiveRenderLimit) +
             " 张较早归档未展示";
+        const float limitY = height - kArchiveLimitH + 6.0f;
+        constexpr float kSeeAllW = 64.0f;
         ui.rect(id + ".archivelimit.bg")
-            .position(12.0f, height - kArchiveLimitH + 6.0f)
+            .position(12.0f, limitY)
             .size(width - 24.0f, 32.0f)
             .color(t.colors.hover)
             .radius(7.0f)
             .opacity(contentAlpha)
             .build();
         ui.text(id + ".archivelimit.text")
-            .position(12.0f, height - kArchiveLimitH + 6.0f)
-            .size(width - 24.0f, core::theme::scaled(32.0f))
+            .position(12.0f, limitY)
+            .size(std::max(0.0f, width - 24.0f - kSeeAllW), core::theme::scaled(32.0f))
             .text(limitText)
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(core::theme::scaled(16.0f))
@@ -825,6 +865,30 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
             .opacity(contentAlpha)
+            .build();
+        // B-9：看全部（本次会话解除 20 张上限；模块停用复位）
+        const float seeAllX = width - 12.0f - kSeeAllW;
+        ui.text("todo.archive.seeall")
+            .position(seeAllX, limitY)
+            .size(kSeeAllW, core::theme::scaled(32.0f))
+            .text("看全部")
+            .fontSize(core::theme::scaled(12.0f))
+            .lineHeight(core::theme::scaled(32.0f))
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .fontWeight(600)
+            .color(t.colors.primary)
+            .opacity(contentAlpha)
+            .onClick([cb = v.act.archiveSeeAll] { if (cb) cb(); })
+            .build();
+        ui.rect("todo.archive.seeall.hit")
+            .position(seeAllX, limitY)
+            .size(kSeeAllW, 32.0f)
+            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+            .hoverColor(t.colors.primarySoftBg)
+            .radius(6.0f)
+            .opacity(contentAlpha)
+            .onClick([cb = v.act.archiveSeeAll] { if (cb) cb(); })
             .build();
     }
 }
@@ -838,6 +902,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const bool done = task.completedAt.has_value();
     // 拖拽中间态：被拖卡片半透明（拖动只记录，松手才落库）
     const bool dragging = v.dragActive && v.dragTaskId == task.id;
+    // B-1：选中态（点击卡片/右键/详情即记录 selectedTaskId）——可见主色描边 + 浅染
+    const bool selected = v.selectedTaskId != 0 && v.selectedTaskId == task.id;
     const float cardOpacity = dragging ? 0.45f : 1.0f;
     plate.cardW = width;  // compose 空间卡宽（拖拽命中 dpi 探针）
     const auto componentTheme = core::theme::componentTokensWeChat(t);
@@ -890,7 +956,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
                               isDueToday(task);
     const float finalCardOpacity = cardOpacity * (isArchiveCard ? 0.7f : 1.0f);
     const float menuAnchorX =
-        t.sizes.spacingLarge * 2.0f +
+        plate.originX +
         plate.columnX[static_cast<size_t>(colIndex)] +
         plate.columnWidth[static_cast<size_t>(colIndex)] * 0.5f;
     // E1-c（need297 批次E）卡果冻：hover 时间线走 jellyFrame 缝（pose/jellyTr 已在
@@ -900,11 +966,16 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-        .color(dueFaceColor(task.priority, t, overdueTint, dueTodayTint))
+        .color(selected
+                   ? eui::mixColor(dueFaceColor(task.priority, t, overdueTint, dueTodayTint),
+                                   t.colors.primary, 0.10f)
+                   : dueFaceColor(task.priority, t, overdueTint, dueTodayTint))
         .shadow(components::theme::shadow(componentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
-        .border(1.0f, overdueTint ? t.colors.error
-                                  : (dueTodayTint ? t.colors.warning
-                                                  : t.colors.borderDefault))
+        .border(selected ? 2.0f : 1.0f,
+                selected ? t.colors.primary
+                         : (overdueTint ? t.colors.error
+                                        : (dueTodayTint ? t.colors.warning
+                                                        : t.colors.borderDefault)))
         .radius(pose.radius + (t.sizes.radius - ui_kit::JellyOptions::kRestRadius))
         .transition(jellyTr)
         .animate(core::AnimProperty::Radius)
@@ -1030,6 +1101,16 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
             .color(t.colors.textTertiary)
             .opacity(finalCardOpacity)
             .build();
+        // C-1：关联文档图标说明（完整相对路径，只提示不可点）
+        components::tooltip(ui, id + ".docicon.tooltip")
+            .theme(componentTheme)
+            .source(id + ".docicon")
+            .anchor(kCardChipPadX + kDocIconW * 0.5f, chipY + kChipHeight * 0.5f)
+            .bounds(width, kCardHeight)
+            .minWidth(140.0f)
+            .maxWidth(320.0f)
+            .value("关联文档：" + task.docPath)
+            .build();
     }
 
     // 序号徽章已移除（§4 卡片构成 = 标题+优先级+截止，不含序号）；标题可用全宽
@@ -1051,6 +1132,18 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         // done 0.78：textPrimary 压白卡 7.2:1（0.6 仅 4.04，低于正文 4.5 档）
         .opacity(done ? 0.78f : finalCardOpacity)
         .build();
+    // C-1：标题省略时悬停看全文（tooltip 挂标题 hover，不占布局）
+    if (!task.title.empty()) {
+        components::tooltip(ui, id + ".title.tooltip")
+            .theme(componentTheme)
+            .source(id + ".title")
+            .value(task.title)
+            .anchor(width * 0.5f, groupTop + kCardTitleLineH * 0.5f)
+            .bounds(width, kCardHeight)
+            .minWidth(140.0f)
+            .maxWidth(360.0f)
+            .build();
+    }
 
     // chip 行按清单绘制（x 从左往右，y 随内容组；左内边距 16→10）
     float drawX = kCardChipPadX;

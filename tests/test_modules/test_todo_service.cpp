@@ -14,10 +14,13 @@
 #include "core/sqlite_db.h"
 #include "module_todo/todo_service.h"
 
+#include <algorithm>
 #include <ctime>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -1531,5 +1534,85 @@ REGISTER_TEST(todo_service_update_missing_task_fails,
     auto r = env.svc->updateTask(ghost);
     DOCTEST_CHECK(r.isFail());
     DOCTEST_CHECK(r.errorCode() == core::ErrorCode::NotFound);
+    return true;
+})
+
+REGISTER_TEST(todo_service_get_task_single_read,
+              "todo_service: getTask 单条读取（字段完整 + 不存在 NotFound）", {
+    TestEnv env("get_task");
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+
+    module::todo::NewTaskAttributes attrs;
+    attrs.description = "单条读取";
+    attrs.priority = module::todo::Priority::High;
+    attrs.dueAt = 2000000000;
+    auto made = env.svc->createTask(cols.value()[0].id, "getTask 目标", attrs);
+    DOCTEST_REQUIRE(made.isOk());
+
+    auto got = env.svc->getTask(made.value().id);
+    DOCTEST_REQUIRE(got.isOk());
+    DOCTEST_CHECK_EQ(got.value().id, made.value().id);
+    DOCTEST_CHECK_EQ(got.value().title, std::string("getTask 目标"));
+    DOCTEST_REQUIRE(got.value().description.has_value());
+    DOCTEST_CHECK_EQ(*got.value().description, std::string("单条读取"));
+    DOCTEST_CHECK(got.value().priority == module::todo::Priority::High);
+    DOCTEST_REQUIRE(got.value().dueAt.has_value());
+    DOCTEST_CHECK_EQ(*got.value().dueAt, static_cast<int64_t>(2000000000));
+    DOCTEST_REQUIRE(got.value().createdAt.has_value());
+    DOCTEST_CHECK(got.value().createdAt.value() > 0);
+    DOCTEST_CHECK_FALSE(got.value().completedAt.has_value());
+    DOCTEST_CHECK_FALSE(got.value().archivedAt.has_value());
+
+    auto miss = env.svc->getTask(999999);
+    DOCTEST_REQUIRE(miss.isFail());
+    DOCTEST_CHECK(miss.errorCode() == core::ErrorCode::NotFound);
+    DOCTEST_CHECK(miss.errorMessage().find("不存在") != std::string::npos);
+    return true;
+})
+
+// B-14：并发新建时「取 nextPosition + INSERT」必须同临界区，否则多线程读到同一 MAX+1，
+// 落库后位次重复（同列 position 不再是从 0 起的连续排列）。
+REGISTER_TEST(todo_service_create_concurrent_positions_unique,
+              "todo_service: 并发 createTask 位次唯一且连续（0..N-1）", {
+    TestEnv env("create_concurrent");
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    const int64_t columnId = cols.value().front().id;
+
+    constexpr int kThreads = 8;
+    constexpr int kPerThread = 5;
+    std::vector<int> positions;
+    positions.reserve(kThreads * kPerThread);
+    std::mutex mu;
+    std::vector<std::thread> workers;
+    workers.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        workers.emplace_back([&, i] {
+            for (int j = 0; j < kPerThread; ++j) {
+                auto r = env.svc->createTask(
+                    columnId, "并发" + std::to_string(i) + "-" + std::to_string(j));
+                if (r.isOk()) {
+                    std::lock_guard<std::mutex> lock(mu);
+                    positions.push_back(r.value().position);
+                }
+            }
+        });
+    }
+    for (auto& th : workers) th.join();
+
+    DOCTEST_REQUIRE_EQ(positions.size(),
+                       static_cast<size_t>(kThreads * kPerThread));
+    std::sort(positions.begin(), positions.end());
+    for (int i = 0; i < kThreads * kPerThread; ++i) {
+        DOCTEST_CHECK_EQ(positions[static_cast<size_t>(i)], i);
+    }
+
+    auto all = env.svc->listTasks(columnId);
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_CHECK_EQ(all.value().size(),
+                     static_cast<size_t>(kThreads * kPerThread));
     return true;
 })

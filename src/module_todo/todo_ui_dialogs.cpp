@@ -177,6 +177,27 @@ int64_t dayShiftEpoch(int dayOffset) {
 
 } // namespace
 
+// B-6：草稿判定 = 任意字段有值（含未回车的标签输入）。列归属不算草稿。
+bool NewTaskDialog::hasDraft() const {
+    return !title.empty() || !description.empty() || priority != Priority::None ||
+           dueAt.has_value() || !tags.empty() || !tagInput.empty();
+}
+
+// 遮罩/Esc 共用的关闭守卫：第一次只警告不关（状态条），第二次才真关。
+// 「取消」按钮走显式放弃（不看守卫），保证按钮文案与行为一致。
+bool NewTaskDialog::requestClose(PopupStack& popups, const DialogHost& host) {
+    if (hasDraft() && !discardArmed) {
+        discardArmed = true;
+        if (host.warn) {
+            host.warn("有未保存内容：再点一次遮罩/Esc 放弃，或点「取消」");
+        }
+        return false;
+    }
+    discardArmed = false;
+    popups.close(Popup::NewTask);
+    return true;
+}
+
 // 提交失败（空标题/服务错误）→ 弹窗内嵌红字、弹窗不关；成功 → 关窗。
 // 方案 A 富创建：描述/优先级/截止随标题一次落库（NewTaskAttributes），标签建成
 // 后由模块侧补一次 update（见 DialogHost::createTask 注释）。
@@ -215,7 +236,9 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .size(w, h)
         .theme(themeTokens)
         .zIndex(d.popups.zOf(Popup::NewTask))
-        .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::NewTask, v); })
+        .onOpenChange([&d, &host](bool v) {
+            if (!v) d.newTask.requestClose(d.popups, host);
+        })
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.newtask.title", w, "新建任务",
                                     ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
@@ -243,7 +266,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                     d.newTask.error.clear();  // 错误随下一次输入清除
                 })
                 .onEnter([&d, &host] { d.newTask.submit(d.popups, host); })
-                .onCancel([&d] { d.popups.close(Popup::NewTask); })
+                .onCancel([&d, &host] {
+                    // Esc 与遮罩同一守卫：首次有草稿只警告不关
+                    d.newTask.requestClose(d.popups, host);
+                })
                 .build();
 
             // 描述（可选）textarea
@@ -370,7 +396,11 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                 t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
                 {.y = h - 52.0f, .height = 16.0f, .lineHeight = 16.0f});
             drawDialogFooterButtons(ui, "todo.dialog.newtask", w, h, "创建",
-                                    [&d] { d.popups.close(Popup::NewTask); },
+                                    [&d] {
+                                        // 取消 = 显式放弃草稿（不受守卫；文案与行为一致）
+                                        d.newTask.discardArmed = false;
+                                        d.popups.close(Popup::NewTask);
+                                    },
                                     [&d, &host] { d.newTask.submit(d.popups, host); },
                                     t);
         })
@@ -386,18 +416,32 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
     // 列右键菜单入口已随固定四列删除，此处只构建任务菜单
     if (d.ctx.taskId == 0) return;
     std::vector<components::ContextMenuItem> items;
+    // 显示序 → 模块 onContextSelect 契约索引（0/1/2/3+i/删除末项）。归档卡隐藏
+    // 上移/下移后显示序与契约序错位，必须经此表映射，不能把显示下标直传模块。
+    std::vector<int> actions;
     {
         const Task* self = findTask(*host.tasks, d.ctx.taskId);
         if (self == nullptr) return;
-        items.push_back({"编辑"});
-        items.push_back({"上移"});
-        items.push_back({"下移"});
+        const Column* selfCol = findColumn(*host.columns, self->columnId);
+        // 归档列只读排序（archived_at DESC）：上移/下移写 position 无效，模块会报
+        // 「不支持手动移动」→ 菜单层直接不显示无效项，与详情只读态对称
+        const bool archived = selfCol != nullptr && selfCol->kind == "archive";
+        items.push_back({archived ? "查看" : "编辑"});
+        actions.push_back(0);
+        if (!archived) {
+            items.push_back({"上移"});
+            actions.push_back(1);
+            items.push_back({"下移"});
+            actions.push_back(2);
+        }
+        int moveCode = 3;
         for (const auto& c : *host.columns) {
-            if (c.id != self->columnId) {
-                items.push_back({"移动到「" + c.title + "」"});
-            }
+            if (c.id == self->columnId) continue;
+            items.push_back({"移动到「" + c.title + "」"});
+            actions.push_back(moveCode++);
         }
         items.push_back({"删除"});
+        actions.push_back(moveCode);   // = 3 + 其他列数（模块 deleteIndex 同式）
     }
 
     const BoardGeom g = boardGeom(t);
@@ -423,8 +467,16 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
         .items(std::move(items))
         .theme(themeTokens)
         .zIndex(d.popups.zOf(Popup::Ctx))
-        .onSelectPath([&host](const std::vector<int>& path) {
-            host.contextSelectPath(path);
+        .onSelectPath([&host, actions = std::move(actions)](
+                          const std::vector<int>& path) {
+            if (path.empty() || !host.contextSelectPath) return;
+            const int shownIdx = path.front();
+            if (shownIdx < 0 ||
+                shownIdx >= static_cast<int>(actions.size())) {
+                return;
+            }
+            host.contextSelectPath(
+                {actions[static_cast<size_t>(shownIdx)]});
         })
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::Ctx, v); })
         .build();
@@ -573,12 +625,13 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float rowH = 44.0f;
     constexpr float kMaxDialogH = 552.0f;     // UAT6 弹窗收口：bodyH=600→avail≈552
-    // need156 壳几何：内容区净高 = h−158；提示行 16 + 隙 8 后逐行 44 → h = 182 + 44n。
-    // 行数按封顶高度截断（标题保留总数，提示行标注截断）。
-    const size_t maxRows = static_cast<size_t>((kMaxDialogH - 182.0f) / rowH);  // = 8
-    const size_t shown = std::min(d.overdue.tasks.size(), maxRows);
-    const float h =
-        std::min(kMaxDialogH, 182.0f + rowH * static_cast<float>(shown));
+    // need156 壳几何：内容区净高 = h−158；提示行 16 + 隙 8 后逐行 44。
+    // B-2：不再按 8 行截断——全部行装进内容区 scrollView（封顶高内滚动可达），
+    // 请求高 = 182 + min(全部行高, 封顶剩余)；小窗由壳夹高后行区按 area.h 收。
+    const size_t n = d.overdue.tasks.size();
+    const float naturalRowsH = rowH * static_cast<float>(n);
+    const float desiredViewportH = std::min(naturalRowsH, kMaxDialogH - 182.0f);
+    const float h = 182.0f + desiredViewportH;
 
     // need156：迁标准弹窗壳。旧版无按钮（行点击跳详情 / 遮罩 / Esc 关），壳两槽留空。
     // 警告三角与 errorText 标题色经壳 titleIcon/titleColor 承接（need156 批B收尾）。
@@ -595,76 +648,118 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
                             [&](const ui_kit::DialogContentArea& area) {
-            std::string hint = "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情";
-            if (d.overdue.tasks.size() > shown) {
-                hint += "（仅显示前 " + std::to_string(shown) + " 条）";
-            }
+            // 行区高按壳夹后的内容区算（小窗 640 时不伸进底呼吸隙）
+            const float viewportH =
+                std::max(0.0f, std::min(naturalRowsH, area.h - 24.0f));
             ui_kit::drawDialogText(ui, "todo.dialog.overdue.hint",
-                                   area.w + ui_kit::kDialogBodyInsetX, hint,
+                                   area.w + ui_kit::kDialogBodyInsetX,
+                                   "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
                                    {.x = area.x, .y = area.y, .height = 16.0f,
                                     .lineHeight = 16.0f});
+            if (n == 0 || viewportH <= 0.0f) return;
 
             const int64_t now = static_cast<int64_t>(std::time(nullptr));
-            for (size_t i = 0; i < shown; ++i) {
-                const Task& task = d.overdue.tasks[i];
-                const float y = area.y + 24.0f + static_cast<float>(i) * rowH;
-                const std::string rowId =
-                    "todo.dialog.overdue.row." + std::to_string(i);
-                const Column* col = findColumn(*host.columns, task.columnId);
-                ui.rect(rowId)
-                    .position(area.x, y)
-                    .size(area.w, rowH - 6.0f)
-                    .states(t.colors.hover, t.colors.hover,
-                            t.colors.primarySoftBg)
-                    .radius(t.sizes.radius)
-                    .onClick([&d, &host, taskId = task.id] {
-                        d.popups.close(Popup::Overdue);
-                        if (const Task* found = findTask(*host.tasks, taskId)) {
-                            host.openDetail(*found);
-                        }
-                    })
-                    .build();
-                ui.text(rowId + ".title")
-                    .position(area.x + 12.0f, y + 10.0f)
-                    .size(area.w - 260.0f, core::theme::scaled(20.0f))
-                    .text(task.title)
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(core::theme::scaled(20.0f))
-                    .fontWeight(600)
-                    // 省略号三件套：长任务名截断，不压右侧 列名/截止/逾期天 三列
-                    .maxWidth(area.w - 260.0f)
-                    .overflow(core::TextOverflow::Ellipsis)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text(rowId + ".col")
-                    .position(area.x + area.w - 242.0f, y + 10.0f)
-                    .size(120.0f, core::theme::scaled(20.0f))
-                    .text(col != nullptr ? col->title : "?")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(core::theme::scaled(20.0f))
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.text(rowId + ".due")
-                    .position(area.x + area.w - 116.0f, y + 10.0f)
-                    .size(60.0f, core::theme::scaled(20.0f))
-                    .text(task.dueAt.has_value() ? formatDue(task.dueAt.value())
-                                                 : "-")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(core::theme::scaled(20.0f))
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.text(rowId + ".days")
-                    .position(area.x + area.w - 48.0f, y + 10.0f)
-                    .size(48.0f, core::theme::scaled(20.0f))
-                    // 入选按秒级，日历日差可能为 0（1 秒前到期）→ 行文案至少 1 天
-                    .text("逾期" + std::to_string(
-                               std::max(1, overdueDays(task.dueAt.value_or(0), now))) + "天")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(core::theme::scaled(20.0f))
-                    .color(t.colors.errorText)
-                    .build();
-            }
+            // 测量缓存键：行数（行高定长，内容高只随行数变）
+            const std::string scrollKey =
+                "todo.dialog.overdue.scroll.n" + std::to_string(n);
+            // 行 stack 直接进 scroll content（同 docpick 可用写法；不套 column，
+            // 否则行元素不进 UI 树，ui.find 找不到 row.N）
+            components::scrollView(ui, "todo.dialog.overdue.scroll")
+                .position(area.x, area.y + 24.0f)
+                .size(area.w, viewportH)
+                .theme(themeTokens)
+                .contentKey(scrollKey)
+                .content([&](eui::Ui& inner, float cw, float) {
+                    // C-10 列宽：右缘 逾期天 72（三位数不溢出）+ 截止 64 +
+                    // 列名 120，另留 8 缝；标题吃剩余宽并 Ellipsis
+                    constexpr float kDaysW = 72.0f;
+                    constexpr float kDueW = 64.0f;
+                    constexpr float kColW = 120.0f;
+                    constexpr float kGap = 8.0f;
+                    constexpr float kPadL = 12.0f;
+                    const float daysX = cw - kDaysW;
+                    const float dueX = daysX - kGap - kDueW;
+                    const float colX = dueX - kGap - kColW;
+                    const float titleW = std::max(0.0f, colX - kPadL - kGap);
+                    for (size_t i = 0; i < n; ++i) {
+                        const Task& task = d.overdue.tasks[i];
+                        inner.stack("todo.dialog.overdue.roww." + std::to_string(i))
+                            .size(cw, rowH)
+                            .content([&] {
+                                const std::string rowId =
+                                    "todo.dialog.overdue.row." + std::to_string(i);
+                                const Column* col =
+                                    findColumn(*host.columns, task.columnId);
+                                inner.rect(rowId)
+                                    .position(0.0f, 0.0f)
+                                    .size(cw, rowH - 6.0f)
+                                    .states(t.colors.hover, t.colors.hover,
+                                            t.colors.primarySoftBg)
+                                    .radius(t.sizes.radius)
+                                    .onClick([&d, &host, taskId = task.id] {
+                                        d.popups.close(Popup::Overdue);
+                                        if (const Task* found =
+                                                findTask(*host.tasks, taskId)) {
+                                            host.openDetail(*found);
+                                        }
+                                    })
+                                    .build();
+                                inner.text(rowId + ".title")
+                                    .position(kPadL, 10.0f)
+                                    .size(titleW, core::theme::scaled(20.0f))
+                                    .text(task.title)
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(core::theme::scaled(20.0f))
+                                    .fontWeight(600)
+                                    // 省略号三件套：长任务名截断，不压右侧三列
+                                    .maxWidth(titleW)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .color(t.colors.textPrimary)
+                                    .build();
+                                inner.text(rowId + ".col")
+                                    .position(colX, 10.0f)
+                                    .size(kColW, core::theme::scaled(20.0f))
+                                    .text(col != nullptr ? col->title : "?")
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(core::theme::scaled(20.0f))
+                                    .maxWidth(kColW)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .color(t.colors.textSecondary)
+                                    .build();
+                                inner.text(rowId + ".due")
+                                    .position(dueX, 10.0f)
+                                    .size(kDueW, core::theme::scaled(20.0f))
+                                    .text(task.dueAt.has_value()
+                                              ? formatDue(task.dueAt.value())
+                                              : "-")
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(core::theme::scaled(20.0f))
+                                    .maxWidth(kDueW)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .color(t.colors.textSecondary)
+                                    .build();
+                                inner.text(rowId + ".days")
+                                    .position(daysX, 10.0f)
+                                    .size(kDaysW, core::theme::scaled(20.0f))
+                                    // 入选按秒级，日历日差可能为 0（1 秒前到期）
+                                    // → 行文案至少 1 天；三位数天 Ellipsis 兜底
+                                    .text("逾期" +
+                                          std::to_string(std::max(
+                                              1, overdueDays(
+                                                     task.dueAt.value_or(0), now))) +
+                                          "天")
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(core::theme::scaled(20.0f))
+                                    .maxWidth(kDaysW)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .color(t.colors.errorText)
+                                    .build();
+                            })
+                            .build();
+                    }
+                })
+                .build();
     });
 }
 
@@ -748,6 +843,23 @@ bool DetailDialog::requestClose(PopupStack& popups, const DialogHost& host) {
     return true;
 }
 
+namespace {
+
+// 只读输入框态（B-6）：只读不能只靠空 onChange「丢弃」——要显式 readOnly
+// 拦掉粘贴/删除等内建编辑，并把字/底/边框降灰（textTertiary / borderMuted）
+components::InputStyle roInputStyle(const components::theme::ThemeColorTokens& tk,
+                                    const core::theme::Tokens& t) {
+    components::InputStyle s(tk);
+    s.text = t.colors.textTertiary;
+    s.placeholder = t.colors.textTertiary;
+    s.cursor = t.colors.textTertiary;
+    s.border = t.colors.borderMuted;
+    s.focusBorder = t.colors.borderMuted;
+    return s;
+}
+
+} // namespace
+
 // 任务详情弹窗重设计（UAT5，demo task-new-dialog-redesign.html 详情面板）：
 // 删除/标记完成上移头部（危险操作与保存分离）；标题/描述直接可编辑；
 // 优先级|截止 segment 双列（与新建弹窗同一语言）；标签 = 可删 chips + 添加输入；
@@ -772,6 +884,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                            screen.width -
                                                themeTokens.metrics.spacing.overlay));
     const bool ro = d.detail.readOnly;
+    const components::InputStyle roStyle = roInputStyle(themeTokens, t);
     // 关联文档存在性（H31）：只对已关联任务判定；提供方缺回调按存在处理（详情不
     // 灰态）。每帧判定——改名/删除后下一帧即灰。
     const bool docLinked = !d.detail.docPath.empty();
@@ -1045,6 +1158,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .placeholder("任务标题…")
                                 .fontSize(t.sizes.fontSizeBody + 1.0f)
                                 .theme(themeTokens)
+                                .readOnly(ro)
+                                .style(ro ? roStyle
+                                          : components::InputStyle(themeTokens))
                                 .onChange(ro ? std::function<void(const std::string&)>{}
                                              : [&d](const std::string& text) {
                                                    d.detail.title = text;
@@ -1068,6 +1184,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .multiline(true)
                                 .scrollbar(true)
                                 .theme(themeTokens)
+                                .readOnly(ro)
+                                .style(ro ? roStyle
+                                          : components::InputStyle(themeTokens))
                                 .onChange(ro ? std::function<void(const std::string&)>{}
                                              : [&d](const std::string& text) {
                                                    d.detail.description = text;
@@ -1209,6 +1328,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .placeholder(ro ? "（只读）" : "+ 添加标签，回车添加")
                                 .fontSize(t.sizes.fontSizeSmall)
                                 .theme(themeTokens)
+                                .readOnly(ro)
+                                .style(ro ? roStyle
+                                          : components::InputStyle(themeTokens))
                                 .onChange(ro ? std::function<void(const std::string&)>{}
                                              : [&d](const std::string& text) {
                                                    d.detail.tagInput = text;
@@ -1383,10 +1505,10 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
     const float rowH = 44.0f;
     constexpr float kMaxDialogH = 552.0f;
     const size_t n = d.docPickNotes.size();
-    // 内容区净高 = h−158：提示行 16 + 隙 8 + 视口；视口 = 全部行高与封顶剩余取小
-    //（内容 = 全部行高，超视口即滚动可达）。
-    const float viewportH = std::min(
-        rowH * static_cast<float>(n), kMaxDialogH - 182.0f);
+    // C-11：请求高按封顶行区预算；小窗下壳会把高夹到「视口−96」，行区实际高
+    // 在 content 里按 area.h 重算（列表不伸进底呼吸隙）。
+    const float naturalRowsH = rowH * static_cast<float>(n);
+    const float viewportH = std::min(naturalRowsH, kMaxDialogH - 182.0f);
     const float h = 182.0f + viewportH;
 
     // need156：迁标准弹窗壳。列表仍装进 scrollView（内容区唯一内滚区），行数不截断。
@@ -1411,6 +1533,10 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                                {.x = area.x, .y = area.y, .height = 16.0f,
                                 .lineHeight = 16.0f});
         if (n > 0) {
+            // C-11：行区高按壳夹后的内容区算（小窗 640 时 listH 收窄，不越底隙）
+            const float listH =
+                std::max(0.0f, std::min(naturalRowsH, area.h - 24.0f));
+            if (listH <= 0.0f) return;
             // 测量缓存键：行数 + 逐行 relPath 字节数（内容高随两者变）
             std::string scrollKey =
                 "todo.dialog.docpick.scroll.n" + std::to_string(n);
@@ -1419,7 +1545,7 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
             }
             components::scrollView(ui, "todo.dialog.docpick.scroll")
                 .position(area.x, area.y + 24.0f)
-                .size(area.w, viewportH)
+                .size(area.w, listH)
                 .theme(themeTokens)
                 .contentKey(scrollKey)
                 .content([&](eui::Ui& inner, float cw, float) {

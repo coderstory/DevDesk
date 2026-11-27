@@ -50,6 +50,24 @@ using platform::tool_kit::strField;
 // 整数字段：缺失 / 非数值 → nullopt
 using platform::tool_kit::intField;
 
+// ASCII 不区分大小写的子串包含（与 SQLite LIKE 的 ASCII 折叠口径对齐；中文按字节相等）。
+bool containsAsciiCaseInsensitive(const std::string& haystack,
+                                  const std::string& needle) {
+    if (needle.empty()) return true;
+    if (needle.size() > haystack.size()) return false;
+    const auto lower = [](char c) {
+        return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
+    };
+    for (std::size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
+        std::size_t j = 0;
+        for (; j < needle.size(); ++j) {
+            if (lower(haystack[i + j]) != lower(needle[j])) break;
+        }
+        if (j == needle.size()) return true;
+    }
+    return false;
+}
+
 // Task → JSON 对象文本（list / create / update 的统一出参元素形状）
 Result<std::string> taskToJsonText(const Task& t) {
     pj::JsonObject o;
@@ -67,6 +85,13 @@ Result<std::string> taskToJsonText(const Task& t) {
     o.set("completedAt", t.completedAt.has_value()
                              ? pj::JsonValue(t.completedAt.value())
                              : pj::JsonValue(nullptr));
+    o.set("archivedAt", t.archivedAt.has_value()
+                            ? pj::JsonValue(t.archivedAt.value())
+                            : pj::JsonValue(nullptr));
+    o.set("docPath", pj::makeString(t.docPath));
+    o.set("createdAt", t.createdAt.has_value()
+                           ? pj::JsonValue(t.createdAt.value())
+                           : pj::JsonValue(nullptr));
     auto text = pj::stringify(pj::JsonValue(std::move(o)));
     if (text.isFail()) {
         return Result<std::string>::fail(core::ErrorCode::Internal,
@@ -75,17 +100,9 @@ Result<std::string> taskToJsonText(const Task& t) {
     return Result<std::string>::ok(text.value());
 }
 
-// 按 id 线性找任务；服务层按 id 写操作对幽灵 id 多为静默 no-op，存在性前置检查让错误可见。不存在 → NotFound
+// 按 id 取任务；服务层 getTask 已把「不存在」显式化成 NotFound（不再整表线性扫）。
 Result<Task> findTask(TodoService& svc, int64_t id) {
-    auto all = svc.listAllTasks();
-    if (all.isFail()) {
-        return propagate<Task>(all);
-    }
-    for (const auto& t : all.value()) {
-        if (t.id == id) return Result<Task>::ok(t);
-    }
-    return Result<Task>::fail(core::ErrorCode::NotFound,
-                              "任务不存在: id=" + std::to_string(id));
+    return svc.getTask(id);
 }
 
 // todo.create 的扩展属性解析（description / priority / dueAt → NewTaskAttributes）。
@@ -154,7 +171,7 @@ public:
     std::string name() const override { return "todo.list"; }
 
     std::string schemaJson() const override {
-        return R"({"name":"todo.list","description":"列出待办任务（含 id/标题/列/优先级/完成态）；可按完成态或逾期过滤","input_schema":{"type":"object","properties":{"completed":{"type":"boolean","description":"true=只看已完成，false=只看未完成，缺省=全部"},"overdue":{"type":"boolean","description":"true=只看已逾期任务（按自然日口径：截止日期早于今天本地零点且未完成——当天截止不算逾期，与 Todo 页逾期弹窗口径一致，2026-11-16 起）；completed=true 时不可用（互斥）；缺省/false=不按逾期过滤"}}}})";
+        return R"({"name":"todo.list","description":"列出待办任务（含 id/标题/列/优先级/完成态/归档时间/关联文档/创建时间）；默认不含已归档列","input_schema":{"type":"object","properties":{"completed":{"type":"boolean","description":"true=只看已完成，false=只看未完成，缺省=全部"},"overdue":{"type":"boolean","description":"true=只看已逾期任务（按自然日口径：截止日期早于今天本地零点且未完成——当天截止不算逾期，与 Todo 页逾期弹窗口径一致，2026-11-16 起）；completed=true 时不可用（互斥）；缺省/false=不按逾期过滤"},"columnId":{"type":"integer","description":"只看该列任务；缺省=未归档列全部（已归档列默认不返回，显式传归档列 id 才返回）"},"keyword":{"type":"string","description":"标题/描述包含该子串（ASCII 不区分大小写）"},"limit":{"type":"integer","description":"返回条数上限，缺省 50，钳 1..200"}}}})";
     }
 
     Result<ToolResult> execute(const ToolArgs& args) override {
@@ -175,6 +192,31 @@ public:
             overdue = o.asBool();
         }
 
+        // B-4：列 / 关键词 / 条数上限三个可选过滤。显式 columnId 必须真实存在
+        // （缺省与 todo.move 同口径拒绝幽灵列，不静默给空列表）。
+        std::optional<int64_t> columnId;
+        if (argsObj.value().has("columnId")) {
+            pj::JsonValue v = argsObj.value().get("columnId");
+            if (!v.isNumber()) return toolError("参数 columnId 必须是整数");
+            columnId = v.asInt();
+            std::string err;
+            if (!columnExists(svc_, *columnId, &err)) return toolError(err);
+        }
+
+        std::optional<std::string> keyword;
+        if (argsObj.value().has("keyword")) {
+            pj::JsonValue v = argsObj.value().get("keyword");
+            if (!v.isString()) return toolError("参数 keyword 必须是字符串");
+            if (!v.asString().empty()) keyword = v.asString();
+        }
+
+        int limit = 50;
+        if (argsObj.value().has("limit")) {
+            pj::JsonValue v = argsObj.value().get("limit");
+            if (!v.isNumber()) return toolError("参数 limit 必须是整数");
+            limit = std::clamp(static_cast<int>(v.asInt()), 1, 200);
+        }
+
         // 逾期集合本身只含未完成任务，与 completed=true 语义直接矛盾：
         // 返回错误让调用方纠正，而不是静默给空列表（LLM 会把空列表误读成「没有逾期」）。
         if (completed.value_or(false) && overdue.value_or(false)) {
@@ -183,25 +225,58 @@ public:
                 "（逾期任务本身即未完成）");
         }
 
+        // 默认口径不含归档列：归档任务需要显式 columnId 指定归档列才返回（P 段视图
+        // 默认折叠，工具侧沿用同一「不主动翻旧账」口径）。
+        std::vector<int64_t> archiveColumnIds;
+        if (!columnId.has_value() && !overdue.value_or(false)) {
+            auto cols = svc_.listColumns();
+            if (cols.isFail()) {
+                return toolError("读取列失败: " + cols.errorMessage());
+            }
+            for (const auto& c : cols.value()) {
+                if (c.kind == "archive") archiveColumnIds.push_back(c.id);
+            }
+        }
+        const auto inArchiveColumn = [&archiveColumnIds](int64_t id) {
+            for (int64_t a : archiveColumnIds) {
+                if (a == id) return true;
+            }
+            return false;
+        };
+
         // 逾期口径直接复用服务层 listOverdue()（core/overdue.h 唯一真源），
-        // 与 Todo 页逾期弹窗保持一致，工具层不另写比较逻辑。
-        auto tasks = overdue.value_or(false) ? svc_.listOverdue()
-                                             : svc_.listAllTasks();
+        // 与 Todo 页逾期弹窗保持一致；其余走列/整表读取，过滤在工具层统一做。
+        auto tasks = overdue.value_or(false)      ? svc_.listOverdue()
+                     : columnId.has_value() ? svc_.listTasks(*columnId)
+                                            : svc_.listAllTasks();
         if (tasks.isFail()) {
             return toolError("读取任务失败: " + tasks.errorMessage());
         }
 
-        // 数组组装：逐任务 stringify 后文本拼接（platform::json 无数组追加 API）
+        // 数组组装：逐任务 stringify 后文本拼接（platform::json 无数组追加 API）。
+        // limit 在全部过滤之后截断（先过滤再计数，避免「前 N 条全不命中 → 看起来没数据」）。
         std::string joined;
+        int emitted = 0;
         for (const auto& t : tasks.value()) {
             if (completed.has_value() &&
                 t.completedAt.has_value() != completed.value()) {
                 continue;
             }
+            if (!columnId.has_value() && inArchiveColumn(t.columnId)) {
+                continue;
+            }
+            if (keyword.has_value() &&
+                !containsAsciiCaseInsensitive(t.title, *keyword) &&
+                !(t.description.has_value() &&
+                  containsAsciiCaseInsensitive(*t.description, *keyword))) {
+                continue;
+            }
+            if (emitted >= limit) break;
             auto one = taskToJsonText(t);
             if (one.isFail()) return toolError(one.errorMessage());
             if (!joined.empty()) joined += ",";
             joined += one.value();
+            ++emitted;
         }
         const std::string content = "{\"tasks\":[" + joined + "]}";
         // 自有拼接必须可解析（joinBlockArray 同款校验）；失败 = 不变量破坏

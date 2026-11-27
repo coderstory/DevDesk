@@ -262,6 +262,142 @@ REGISTER_TEST(todo_tools_list_overdue_filter,
 })
 
 
+// B-4：todo.list 的列 / 关键词 / limit 过滤 + 出参归档/文档/创建时间。
+// 默认口径不含归档列：归档任务只在显式 columnId=归档列时返回。
+REGISTER_TEST(todo_tools_list_filters_fields_and_default_archive_exclusion,
+              "todo.list: 默认排除归档列 + columnId/keyword/limit + archivedAt/docPath/createdAt", {
+    ToolEnv env("list_filters");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoColId = 0;
+    int64_t archiveColId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoColId = c.id;
+        if (c.kind == "archive") archiveColId = c.id;
+    }
+    DOCTEST_REQUIRE(todoColId > 0);
+    DOCTEST_REQUIRE(archiveColId > 0);
+
+    module::todo::NewTaskAttributes attrs;
+    attrs.description = "季度 summary";
+    auto a1 = env.svc->createTask(todoColId, "Alpha 报告", attrs);
+    DOCTEST_REQUIRE(a1.isOk());
+    auto a1Full = a1.value();
+    a1Full.docPath = "notes/alpha.md";
+    DOCTEST_REQUIRE(env.svc->updateTask(a1Full).isOk());
+
+    auto a2 = env.svc->createTask(todoColId, "beta 杂项");
+    DOCTEST_REQUIRE(a2.isOk());
+    auto arch = env.svc->createTask(todoColId, "旧归档");
+    DOCTEST_REQUIRE(arch.isOk());
+    DOCTEST_REQUIRE(
+        env.svc->moveTask(arch.value().id, archiveColId, 0).isOk());
+
+    // 默认：两条未归档；归档卡只在显式指定归档列时出现
+    auto def = runTool("todo.list", "{}");
+    DOCTEST_REQUIRE(def.isOk());
+    DOCTEST_CHECK_FALSE(def.value().isError);
+    auto defParsed = platform::json::parse(def.value().contentJson);
+    DOCTEST_REQUIRE(defParsed.isOk());
+    DOCTEST_CHECK_EQ(defParsed.value().asObject().get("tasks").size(), 2);
+    DOCTEST_CHECK(def.value().contentJson.find("旧归档") == std::string::npos);
+
+    auto archivedOnly = runTool(
+        "todo.list", "{\"columnId\":" + std::to_string(archiveColId) + "}");
+    DOCTEST_REQUIRE(archivedOnly.isOk());
+    DOCTEST_CHECK_FALSE(archivedOnly.value().isError);
+    auto archParsed = platform::json::parse(archivedOnly.value().contentJson);
+    DOCTEST_REQUIRE(archParsed.isOk());
+    DOCTEST_CHECK_EQ(archParsed.value().asObject().get("tasks").size(), 1);
+    DOCTEST_CHECK(archivedOnly.value().contentJson.find("旧归档") !=
+                  std::string::npos);
+    // 归档时间有值（数字，不是 null）
+    DOCTEST_CHECK(archivedOnly.value().contentJson.find("\"archivedAt\":null") ==
+                  std::string::npos);
+    DOCTEST_CHECK(archivedOnly.value().contentJson.find("\"archivedAt\":") !=
+                  std::string::npos);
+
+    // keyword 命中描述（大小写不敏感只对 ASCII 有意义，中文按字节匹配）
+    auto byDesc = runTool("todo.list", R"({"keyword":"SUMMARY"})");
+    DOCTEST_REQUIRE(byDesc.isOk());
+    auto byDescParsed = platform::json::parse(byDesc.value().contentJson);
+    DOCTEST_REQUIRE(byDescParsed.isOk());
+    DOCTEST_CHECK_EQ(byDescParsed.value().asObject().get("tasks").size(), 1);
+    DOCTEST_CHECK(byDesc.value().contentJson.find("Alpha 报告") !=
+                  std::string::npos);
+
+    auto byTitle = runTool("todo.list", R"({"keyword":"alpha"})");
+    DOCTEST_REQUIRE(byTitle.isOk());
+    auto byTitleParsed = platform::json::parse(byTitle.value().contentJson);
+    DOCTEST_REQUIRE(byTitleParsed.isOk());
+    DOCTEST_CHECK_EQ(byTitleParsed.value().asObject().get("tasks").size(), 1);
+    // 出参补字段：关联文档 / 创建时间（有值）/ 归档时间（未归档 = null）
+    DOCTEST_CHECK(byTitle.value().contentJson.find("\"docPath\":\"notes/alpha.md\"") !=
+                  std::string::npos);
+    DOCTEST_CHECK(byTitle.value().contentJson.find("\"createdAt\":") !=
+                  std::string::npos);
+    DOCTEST_CHECK(byTitle.value().contentJson.find("\"createdAt\":null") ==
+                  std::string::npos);
+    DOCTEST_CHECK(byTitle.value().contentJson.find("\"archivedAt\":null") !=
+                  std::string::npos);
+
+    // limit 钳 1..200：0 → 1 条；1 → 1 条
+    auto limited = runTool("todo.list", R"({"limit":0})");
+    DOCTEST_REQUIRE(limited.isOk());
+    auto limitedParsed = platform::json::parse(limited.value().contentJson);
+    DOCTEST_REQUIRE(limitedParsed.isOk());
+    DOCTEST_CHECK_EQ(limitedParsed.value().asObject().get("tasks").size(), 1);
+
+    // 参数类型 / 幽灵列错误回喂
+    auto badLimit = runTool("todo.list", R"({"limit":"5"})");
+    DOCTEST_REQUIRE(badLimit.isOk());
+    DOCTEST_CHECK(badLimit.value().isError);
+    auto ghostCol = runTool("todo.list", R"({"columnId":999999})");
+    DOCTEST_REQUIRE(ghostCol.isOk());
+    DOCTEST_CHECK(ghostCol.value().isError);
+    DOCTEST_CHECK(ghostCol.value().contentJson.find("列不存在") !=
+                  std::string::npos);
+
+    // schema 宣传新参数
+    auto found = core::ToolRegistry::instance().find("todo.list");
+    DOCTEST_REQUIRE(found.isOk());
+    const std::string schema = found.value()->schemaJson();
+    DOCTEST_CHECK(schema.find("\"columnId\"") != std::string::npos);
+    DOCTEST_CHECK(schema.find("\"keyword\"") != std::string::npos);
+    DOCTEST_CHECK(schema.find("\"limit\"") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(todo_tools_list_limit_clamped,
+              "todo.list: limit 缺省 50、钳 1..200（超量数据）", {
+    ToolEnv env("list_limit");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+    DOCTEST_REQUIRE(seedTasks(*env.svc, 205, "批量"));
+
+    auto def = runTool("todo.list", "{}");
+    DOCTEST_REQUIRE(def.isOk());
+    auto defParsed = platform::json::parse(def.value().contentJson);
+    DOCTEST_REQUIRE(defParsed.isOk());
+    DOCTEST_CHECK_EQ(defParsed.value().asObject().get("tasks").size(), 50);
+
+    auto maxLimit = runTool("todo.list", R"({"limit":9999})");
+    DOCTEST_REQUIRE(maxLimit.isOk());
+    auto maxParsed = platform::json::parse(maxLimit.value().contentJson);
+    DOCTEST_REQUIRE(maxParsed.isOk());
+    DOCTEST_CHECK_EQ(maxParsed.value().asObject().get("tasks").size(), 200);
+
+    auto explicit200 = runTool("todo.list", R"({"limit":200})");
+    DOCTEST_REQUIRE(explicit200.isOk());
+    auto e200Parsed = platform::json::parse(explicit200.value().contentJson);
+    DOCTEST_REQUIRE(e200Parsed.isOk());
+    DOCTEST_CHECK_EQ(e200Parsed.value().asObject().get("tasks").size(), 200);
+    return true;
+})
+
 REGISTER_TEST(todo_tools_create_default_first_column,
               "todo.create: 缺省列=待办列（kind='todo'），service 真实落库 + 返回新 id", {
     ToolEnv env("create");

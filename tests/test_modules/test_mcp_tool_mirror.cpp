@@ -326,7 +326,7 @@ REGISTER_TEST(mcp_tool_mirror_capture_args,
 
 // ---- 落点 6：F-05 annotations 分支（协议组装行） ----
 REGISTER_TEST(mcp_tool_mirror_annotations_branch,
-              "ToolMirror: annotations 分支 destructive 带 hint/plain 与内置无键", {
+              "ToolMirror: annotations 分支 destructive hint / 只读 readOnlyHint / 内置无键", {
     MirrorFixture fixture;
     DOCTEST_CHECK(
         fixture.regSource(
@@ -370,10 +370,16 @@ REGISTER_TEST(mcp_tool_mirror_annotations_branch,
     DOCTEST_CHECK(annotations.asObject().get("readOnlyHint").isBool() &&
                   !annotations.asObject().get("readOnlyHint").asBool());
 
-    // 非破坏镜像 / 原生内置 → 无 annotations 键（spec 可选省略）
+    // 非破坏镜像 → annotations 带 readOnlyHint=true（C-15：只读工具默认放行依据）。
+    // 原生内置工具不经镜像，仍无 annotations 键。
     const auto plain = toolEntryByName(root, "mirror_plain");
     DOCTEST_REQUIRE(plain.isObject());
-    DOCTEST_CHECK_FALSE(plain.asObject().has("annotations"));
+    DOCTEST_CHECK(plain.asObject().has("annotations"));
+    const auto plainAnnotations = plain.asObject().get("annotations");
+    DOCTEST_REQUIRE(plainAnnotations.isObject());
+    DOCTEST_CHECK(plainAnnotations.asObject().get("readOnlyHint").isBool() &&
+                  plainAnnotations.asObject().get("readOnlyHint").asBool());
+    DOCTEST_CHECK_FALSE(plainAnnotations.asObject().has("destructiveHint"));
     const auto stub = toolEntryByName(root, "mirror_stub_builtin");
     DOCTEST_REQUIRE(stub.isObject());
     DOCTEST_CHECK_FALSE(stub.asObject().has("annotations"));

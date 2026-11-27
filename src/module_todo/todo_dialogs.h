@@ -131,6 +131,9 @@ struct NewTaskDialog {
     std::vector<std::string> tags;
     std::string tagInput;  // 标签输入框（回车追加，未落库）
     std::string error;      // 内嵌红字（claude formError_ 模式）
+    // B-6 草稿守卫：遮罩/Esc 关闭时若已填内容，第一次只警告（状态条），
+    // 再触发一次才真关；「取消」按钮是显式放弃，不受守卫（文案与行为一致）
+    bool discardArmed = false;
 
     // 打开时清全部字段（错误随下一次输入清除）
     void reset(int64_t column) {
@@ -138,6 +141,7 @@ struct NewTaskDialog {
         title.clear();
         description.clear();
         priority = Priority::None;
+        discardArmed = false;
         dueAt = std::nullopt;
         dueChoice = DueChoice::Today;
         tags.clear();
@@ -145,6 +149,10 @@ struct NewTaskDialog {
         error.clear();
     }
     void addTag() { appendTag(tags, tagInput); }
+    // 已填任何字段（含未回车的标签草稿）= 有草稿，遮罩/Esc 关闭要走守卫
+    bool hasDraft() const;
+    // 关闭统一入口（遮罩/Esc 共用）：首次有草稿只警告不关；false = 被守卫拦下
+    bool requestClose(PopupStack& popups, const DialogHost& host);
     // 提交失败（空标题/服务错误）→ 弹窗内嵌红字、弹窗不关；成功 → 关窗。
     void submit(PopupStack& popups, const DialogHost& host);
 };

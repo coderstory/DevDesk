@@ -42,6 +42,7 @@ struct Task {
     int position = 0;
     std::optional<int64_t> completedAt;  // Unix 秒；std::nullopt = 未完成
     std::optional<int64_t> archivedAt;   // Unix 秒；std::nullopt = 未归档（进归档列时置当前时间戳，出归档列置 NULL）
+    std::optional<int64_t> createdAt;    // Unix 秒；schema 为 NOT NULL，读取失败时留 nullopt
 };
 
 // 新建任务时可一次给定的内容属性（std::nullopt = 不设置）。
@@ -82,6 +83,10 @@ public:
 
     // 列出所有任务（按 column_id, position ASC）
     core::Result<std::vector<Task>> listAllTasks();
+
+    // 按 id 读单条任务（id 不存在 → NotFound）。工具层做存在性前置检查用，
+    // 避免为了找一条任务把整表读出来。
+    core::Result<Task> getTask(int64_t id);
 
     // 新建任务（追加到列末尾）—— 只给标题的既有入口，签名与语义都不动
     core::Result<Task> createTask(int64_t columnId, const std::string& title);

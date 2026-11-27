@@ -868,6 +868,47 @@ REGISTER_TEST(home_todo_overdue_consistency,
     return true;
 })
 
+// B-15：首页逾期统计卡向待办页传 overdue 负载（A 路负责消费弹逾期列表）。
+REGISTER_TEST(home_overdue_card_nav_payload,
+              "Home: 逾期卡点击负载 overdue（目标页可凭 consumePendingPayload 取到）", {
+    core::Router router;
+    test_support::ScopedAppRouter scoped(&router);
+
+    // navigateTo 对未注册页会回退 Home（负载不落地）——注册一个占位 Todo 页，
+    // 使用例只验证 Home 侧负载，不依赖真实 Todo 模块。
+    struct StubTodoModule : core::Module {
+        core::PageId pageId() const override { return core::PageId::Todo; }
+        std::string displayName() const override { return "Todo"; }
+        std::string iconGlyph() const override { return ""; }
+        void compose(eui::Ui&, const eui::Screen&) override {}
+    };
+    StubTodoModule todoStub;
+    router.registerModule(&todoStub);
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    eui::Screen screen;
+    screen.width = 1200.0f;
+    screen.height = 720.0f;
+    eui::Ui ui;
+    ui.begin("home_overdue_payload");
+    mod->compose(ui, screen);
+    ui.end();
+
+    const auto* press = ui.find("home.stat.overdue.press");
+    DOCTEST_REQUIRE(press != nullptr);
+    DOCTEST_REQUIRE(press->onClick != nullptr);
+    press->onClick();
+
+    DOCTEST_CHECK(router.currentPage() == core::PageId::Todo);
+    DOCTEST_CHECK_EQ(router.consumePendingPayload(core::PageId::Todo),
+                     std::string("overdue"));
+    // 一次性消费：取走后为空
+    DOCTEST_CHECK_EQ(router.consumePendingPayload(core::PageId::Todo),
+                     std::string(""));
+    router.unregisterModule(&todoStub);
+    return true;
+})
+
 // C-2（need380）：趋势卡折叠用例随图表卡整卡移除（折叠功能不复存在）。
 
 // 防（need338，need334 同根因迁 home 统计卡）：jelly zIndex(20)/scale 曾挂 .bg，

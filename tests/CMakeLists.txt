@@ -182,6 +182,9 @@ add_executable(devdesk_tests
     test_modules/test_agent_system_prompt.cpp
     test_modules/test_direct_llm_client.cpp
     test_modules/test_todo_ui.cpp
+    # 并行批 B 弹窗域守卫：逾期全量滚动（B-2）/天数列宽（C-10）/选择器小窗高（C-11）/
+    # 右键菜单按状态过滤（B-5）/新建草稿守卫与只读输入（B-6）
+    test_modules/test_todo_dialogs.cpp
     # 池15 归档动画观察缝：快照查询 + 在途重复触发收编回插四帧边界断言
     test_modules/test_todo_anim_seam.cpp
     test_modules/test_ui_modern.cpp

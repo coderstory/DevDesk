@@ -20,6 +20,7 @@
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
 #include "ui_kit/card.h"      // cardSurface / kCardGlassAlpha
+#include "ui_kit/density.h"   // pageInsetV：页级内边距按平台密度档（Windows 紧凑 24 / mac 32）
 #include "ui_kit/metrics.h"  // kHeaderH：看板几何断言基准高
 
 #include <eui/dsl.h>
@@ -125,6 +126,12 @@ eui::KeyEvent ctrlArrow(eui::InputKey key) {
     e.action = eui::KeyAction::Press;
     test_support::setShortcutModifier(e.modifiers);
     return e;
+}
+
+// C-6：搜索防抖窗口（180ms）——无头用例没有时间推进回调，等真实壁钟过窗口后
+// 下一次 compose 才真正查库。给 240ms 余量，避免慢机抖动。
+void waitSearchDebounce() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(240));
 }
 
 } // namespace
@@ -318,8 +325,16 @@ REGISTER_TEST(todo_ui_keyboard_move,
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 未选中时 Ctrl+↓ 不消费
-    DOCTEST_CHECK(!mod->onKeyEvent(ctrlArrow(eui::InputKey::Down)));
+    // 无选中：第一次 Ctrl+↓ 先选中首卡（B-1：消费但不移动），再按才移动
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlArrow(eui::InputKey::Down)));
+    {
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(3));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("甲"));  // 未移动
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("乙"));
+        DOCTEST_CHECK_EQ(ts.value()[2].title, std::string("丙"));
+    }
 
     {
         Frame frame(mod.get());
@@ -2213,10 +2228,12 @@ REGISTER_TEST(todo_ui_error_state_and_retry,
         const auto* retry = frame.ui.find("todo.error.retry.bg");
         DOCTEST_REQUIRE(retry != nullptr);
         DOCTEST_REQUIRE(retry->onClick != nullptr);
+        // 「（点击重试）」文案本身必须可点（C-7）：同一回调，不是只画个括号
+        DOCTEST_REQUIRE(errText->onClick != nullptr);
         // 看板不渲染（无列背景）
         DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") == nullptr);
 
-        // 数据库晚注册 → 点重试 → 恢复
+        // 数据库晚注册 → 点「（点击重试）」文案 → 恢复（文案即入口）
         std::error_code ec2;
         std::filesystem::remove(path, ec2);
         auto r = ::core::Database::open(path);
@@ -2224,7 +2241,7 @@ REGISTER_TEST(todo_ui_error_state_and_retry,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto db = std::make_unique<::core::Database>(std::move(r.value()));
         ::core::registerAppDatabase(&db->db());
-        retry->onClick();
+        errText->onClick();
     }
     {
         Frame frame(mod.get());
@@ -2614,7 +2631,8 @@ REGISTER_TEST(todo_ui_success_ops_silent_no_toast,
         DOCTEST_CHECK(moved.value()[0].completedAt.has_value());
     }
 
-    // ③ 错误通道保留：无选中 Ctrl+↑ → 引导 toast 照常弹出
+    // ③ 错误通道保留：B-1 起有任务时第一次方向键先选中首张卡（不弹引导）；
+    // 已在顶部再按上移 → 边界提示照常弹出
     // UAT6：视图状态跨模块实例持久化（selectedTaskId 存 app_config），
     // 需要先清掉前一个模块的选中记录，否则 mod2 的 restoreViewState 会恢复选中
     {
@@ -2624,14 +2642,23 @@ REGISTER_TEST(todo_ui_success_ops_silent_no_toast,
         }
         std::unique_ptr<::core::Module> mod2(create_todo_module());
         mod2->onStart();
-        DOCTEST_CHECK(!mod2->onKeyEvent(ctrlArrow(eui::InputKey::Up)));
+        // 第一次方向键：先选中首张卡（返回 true = 已消费），不弹引导
+        DOCTEST_CHECK(mod2->onKeyEvent(ctrlArrow(eui::InputKey::Up)));
+        {
+            Frame f(mod2.get());
+            const auto* toast = f.ui.find("todo.toast");
+            DOCTEST_REQUIRE(toast != nullptr);
+            DOCTEST_CHECK_EQ(toast->opacity, 0.0f);
+        }
+        // 已选中后再上移（就在顶部）→ 边界提示走错误通道
+        DOCTEST_CHECK(mod2->onKeyEvent(ctrlArrow(eui::InputKey::Up)));
         Frame f(mod2.get());
         const auto* toast = f.ui.find("todo.toast");
         DOCTEST_REQUIRE(toast != nullptr);
         DOCTEST_CHECK_EQ(toast->opacity, 1.0f);
         const auto* title = f.ui.find("todo.toast.title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK(title->text.find("先点击卡片选中任务") != std::string::npos);
+        DOCTEST_CHECK(title->text.find("已经在最上面了") != std::string::npos);
         mod2->onStop();
     }
 
@@ -2789,6 +2816,12 @@ REGISTER_TEST(todo_ui_search_filter,
         ev.text = "命中";
         input->onTextInput(ev);
         frame.refresh();
+        // C-6：防抖窗口内不过滤（query 已更新，结果尚未应用）——两张卡照常可见
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+        // 过了防抖窗口，下一次 compose 查库 → 只显示命中卡
+        waitSearchDebounce();
+        frame.refresh();
         // 只显示命中卡（命中列照常渲染）
         const auto* card0 = frame.ui.find("todo.col.4.card.0.title");
         DOCTEST_REQUIRE(card0 != nullptr);
@@ -2832,6 +2865,7 @@ REGISTER_TEST(todo_ui_search_enter_noop,
         core::TextInputEvent ev;
         ev.text = "命中";
         input->onTextInput(ev);
+        waitSearchDebounce();
         frame.refresh();
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
 
@@ -2859,6 +2893,399 @@ REGISTER_TEST(todo_ui_search_enter_noop,
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
     }
 
+    mod->onStop();
+    return true;
+})
+
+// ---- B-1 选中态 / B-7 搜索展开普通列 / B-8 清除钮 / B-12 搜索态拖拽 /
+// ---- B-9 归档看全部 / C-5 逾期心跳 / C-6 防抖 / C-16 停模块复位 ----
+
+REGISTER_TEST(todo_ui_selected_card_visible_and_first_arrow,
+              "todo_ui: 点击卡片可见选中态；无选中首次方向键先选中首卡（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("选中列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "选中任务甲");
+    auto b = env.svc->createTask(col.value().id, "选中任务乙");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 无选中：第一次 Ctrl/⌘+↑ 先选中首张卡（返回 true = 已消费），不移动
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlArrow(eui::InputKey::Up)));
+    {
+        Frame frame(mod.get());
+        const auto* card0 = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card0 != nullptr);
+        const auto& t = core::theme::current();
+        DOCTEST_CHECK_EQ(card0->border.width, 2.0f);
+        DOCTEST_CHECK(colorNear(card0->border.color, t.colors.primary));
+        const auto* card1 = frame.ui.find("todo.col.4.card.1.bg");
+        DOCTEST_REQUIRE(card1 != nullptr);
+        DOCTEST_CHECK_EQ(card1->border.width, 1.0f);
+    }
+    // 点击第二张：选中态随之移动（卡片 onClick 打开详情，选中态在模块侧记录）
+    {
+        Frame frame(mod.get());
+        const auto* card1 = frame.ui.find("todo.col.4.card.1.bg");
+        DOCTEST_REQUIRE(card1 != nullptr);
+        DOCTEST_REQUIRE(card1->onClick != nullptr);
+        card1->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        const auto* card0 = frame.ui.find("todo.col.4.card.0.bg");
+        const auto* card1 = frame.ui.find("todo.col.4.card.1.bg");
+        DOCTEST_REQUIRE(card0 != nullptr && card1 != nullptr);
+        DOCTEST_CHECK_EQ(card0->border.width, 1.0f);
+        DOCTEST_CHECK_EQ(card1->border.width, 2.0f);
+    }
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_search_debounce_enter_and_clear_button,
+              "todo_ui: 搜索防抖 180ms + 回车立即 + 「×」清除钮（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("防抖列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto hit = env.svc->createTask(col.value().id, "防抖命中");
+    auto miss = env.svc->createTask(col.value().id, "防抖无关");
+    DOCTEST_REQUIRE(hit.isOk() && miss.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        auto* input = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "命中";
+        input->onTextInput(ev);
+        frame.refresh();
+        // 防抖窗口内：不过滤、清除钮已可见
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.search.clear") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.search.clear.bg") != nullptr);
+        // 回车跳过防抖立即查库
+        auto* inputEnter = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(inputEnter != nullptr);
+        DOCTEST_REQUIRE(inputEnter->onKeyEvent != nullptr);
+        core::KeyEvent enter;
+        enter.key = core::InputKey::Enter;
+        enter.action = core::KeyAction::Press;
+        inputEnter->onKeyEvent(enter);
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
+        // 「×」清空：立即恢复、按钮消失
+        auto* clear = frame.ui.find("todo.search.clear");
+        DOCTEST_REQUIRE(clear != nullptr);
+        DOCTEST_REQUIRE(clear->onClick != nullptr);
+        clear->onClick();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.search.clear") == nullptr);
+    }
+    // 纯防抖路径（不用回车）：窗口内保持未过滤，过后自动过滤
+    {
+        Frame frame(mod.get());
+        auto* input = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "命中";
+        input->onTextInput(ev);
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+        waitSearchDebounce();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
+    }
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_search_expands_normal_column,
+              "todo_ui: 搜索命中自动展开普通列，清空后还原折叠（B-7）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("搜索折叠列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "折叠命中");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 先手动折叠 col.4（自定义列追加在默认四列之后）
+    {
+        Frame frame(mod.get());
+        const auto* head = frame.ui.find("todo.col.4.head");
+        DOCTEST_REQUIRE(head != nullptr);
+        DOCTEST_REQUIRE(head->onClick != nullptr);
+        head->onClick();
+        // 无头不补播动画：直接落目标态
+        mod->onPageEnter();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.head") == nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.expand.bg") != nullptr);
+    }
+    // 搜索命中 → 自动展开并记住折叠前态
+    {
+        Frame frame(mod.get());
+        auto* input = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "折叠命中";
+        input->onTextInput(ev);
+        frame.refresh();
+        waitSearchDebounce();
+        frame.refresh();
+        // 无头不补播动画：落位后再做结构断言
+        mod->onPageEnter();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.head") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.expand.bg") == nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.title") != nullptr);
+    }
+    // 清空搜索 → 还原搜索前折叠态（走动画，不瞬跳；onPageEnter 落位便于结构断言）
+    {
+        Frame frame(mod.get());
+        auto* input = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        core::KeyEvent esc;
+        esc.key = core::InputKey::Escape;
+        esc.action = core::KeyAction::Press;
+        input->onKeyEvent(esc);
+        frame.refresh();
+        mod->onPageEnter();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.head") == nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.expand.bg") != nullptr);
+    }
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_drag_in_search_cancelled,
+              "todo_ui: 搜索态拖拽落库前取消并提示（B-12）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto src = env.svc->createColumn("搜索拖源列");
+    auto dst = env.svc->createColumn("搜索拖目标列");
+    DOCTEST_REQUIRE(src.isOk() && dst.isOk());
+    auto mover = env.svc->createTask(src.value().id, "被拖的搜索任务");
+    DOCTEST_REQUIRE(mover.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_search_drag_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    composeLayout();
+    // 搜索命中该卡 → 结果应用
+    {
+        const auto* input = ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "被拖的搜索";
+        input->onTextInput(ev);
+        waitSearchDebounce();
+        composeLayout();
+    }
+    const auto* card = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(card != nullptr);
+    const eui::Rect cardBounds{card->frame.x, card->frame.y, card->frame.width,
+                               card->frame.height};
+    eui::PointerEvent pe;
+    card->onPress(pe, cardBounds);
+    const auto* dstBg = ui.find("todo.col.5.bg");
+    DOCTEST_REQUIRE(dstBg != nullptr);
+    core::dsl::DragEvent ev;
+    ev.x = dstBg->frame.x + dstBg->frame.width / 2.0f;
+    ev.y = dstBg->frame.y + 56.0f + 4.0f;
+    ev.totalX = 80.0;
+    ev.totalY = 0.0;
+    card->onDrag(ev);
+    composeLayout();
+    const auto* rel = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(rel != nullptr);
+    eui::PointerEvent up;
+    up.x = ev.x;
+    up.y = ev.y;
+    up.action = eui::PointerAction::Release;
+    rel->onRelease(up, eui::Rect{});
+    composeLayout();
+
+    // 数据未移动 + 明确提示
+    auto srcTasks = env.svc->listTasks(src.value().id);
+    DOCTEST_REQUIRE(srcTasks.isOk());
+    DOCTEST_REQUIRE_EQ(srcTasks.value().size(), static_cast<size_t>(1));
+    auto dstTasks = env.svc->listTasks(dst.value().id);
+    DOCTEST_REQUIRE(dstTasks.isOk());
+    DOCTEST_CHECK(dstTasks.value().empty());
+    const auto* title = ui.find("todo.toast.title");
+    DOCTEST_REQUIRE(title != nullptr);
+    DOCTEST_CHECK(title->text.find("搜索状态下不支持拖拽排序") != std::string::npos);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_archive_see_all,
+              "todo_ui: 归档 20 张上限 + 「看全部」本次会话解除（B-9）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int archiveIndex = -1;
+    int64_t archiveId = 0;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        if (cols.value()[i].kind == "archive") {
+            archiveIndex = static_cast<int>(i);
+            archiveId = cols.value()[i].id;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(archiveIndex >= 0);
+    for (int i = 0; i < 21; ++i) {
+        auto r = env.svc->createTask(archiveId, "归档" + std::to_string(i));
+        DOCTEST_REQUIRE(r.isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    const std::string colId = "todo.col." + std::to_string(archiveIndex);
+    {
+        Frame frame(mod.get());
+        const auto* expand = frame.ui.find(colId + ".expand.bg");
+        DOCTEST_REQUIRE(expand != nullptr);
+        DOCTEST_REQUIRE(expand->onClick != nullptr);
+        expand->onClick();
+        mod->onPageEnter();
+        frame.refresh();
+        frame.ui.layout(frame.screen);   // frame.height 要 layout 后才有几何
+        const auto* spacer = frame.ui.find(colId + ".vspacer");
+        DOCTEST_REQUIRE(spacer != nullptr);
+        DOCTEST_CHECK_EQ(spacer->frame.height,
+                         module::todo::ui::columnContentHeight(20));
+        DOCTEST_CHECK(frame.ui.find(colId + ".archivelimit.text") != nullptr);
+        const auto* seeAll = frame.ui.find("todo.archive.seeall");
+        DOCTEST_REQUIRE(seeAll != nullptr);
+        DOCTEST_REQUIRE(seeAll->onClick != nullptr);
+        seeAll->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        frame.ui.layout(frame.screen);
+        const auto* spacer = frame.ui.find(colId + ".vspacer");
+        DOCTEST_REQUIRE(spacer != nullptr);
+        DOCTEST_CHECK_EQ(spacer->frame.height,
+                         module::todo::ui::columnContentHeight(21));
+        DOCTEST_CHECK(frame.ui.find(colId + ".archivelimit.text") == nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.archive.seeall") == nullptr);
+    }
+    // 停模块复位：新实例回到 20 张上限
+    mod->onStop();
+    std::unique_ptr<::core::Module> mod2(create_todo_module());
+    mod2->onStart();
+    {
+        Frame frame(mod2.get());
+        const auto* expand = frame.ui.find(colId + ".expand.bg");
+        DOCTEST_REQUIRE(expand != nullptr);
+        expand->onClick();
+        mod2->onPageEnter();
+        frame.refresh();
+        frame.ui.layout(frame.screen);
+        const auto* spacer = frame.ui.find(colId + ".vspacer");
+        DOCTEST_REQUIRE(spacer != nullptr);
+        DOCTEST_CHECK_EQ(spacer->frame.height,
+                         module::todo::ui::columnContentHeight(20));
+        DOCTEST_CHECK(frame.ui.find(colId + ".archivelimit.text") != nullptr);
+    }
+    mod2->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_stop_resets_transient_state,
+              "todo_ui: 停模块复位弹层/搜索/选中（C-16）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("复位列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "复位任务甲");
+    auto b = env.svc->createTask(col.value().id, "复位任务乙");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    {
+        Frame frame(mod.get());
+        auto* input = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "复位任务甲";
+        input->onTextInput(ev);
+        waitSearchDebounce();
+        frame.refresh();
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 打开详情 + 记录选中
+    }
+    {
+        Frame frame(mod.get());
+        // 常驻构建的弹窗节点关闭态也在树里：看 opacity 而不是 find != nullptr
+        const auto* panel = frame.ui.find("todo.dialog.detail.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK_EQ(panel->opacity, 1.0f);
+    }
+    mod->onStop();
+    mod->onStart();
+    {
+        Frame frame(mod.get());
+        // 弹层已复位（关闭态 opacity=0；节点常驻构建，find 判空不成立）
+        const auto* detailPanel = frame.ui.find("todo.dialog.detail.panel");
+        DOCTEST_REQUIRE(detailPanel != nullptr);
+        DOCTEST_CHECK_EQ(detailPanel->opacity, 0.0f);
+        // 搜索词已清空：两张卡都回来（不再按旧查询过滤）
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+        // 选中已复位：卡边框回到默认 1px
+        const auto* card0 = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card0 != nullptr);
+        DOCTEST_CHECK_EQ(card0->border.width, 1.0f);
+    }
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_overdue_refresh_heartbeat,
+              "todo_ui: 页头逾期计数挂 30s 低频心跳（C-5）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+    const auto* timer = frame.ui.find("todo.overdue.refresh");
+    DOCTEST_REQUIRE(timer != nullptr);
+    DOCTEST_CHECK(timer->timerSeconds > 0.0f);
+    DOCTEST_CHECK_EQ(timer->timerSeconds, 30.0f);
+    DOCTEST_REQUIRE(timer->onTimer != nullptr);
+    timer->onTimer();   // 到点只置标记 + 要帧；下一帧重算，不崩
+    frame.refresh();
     mod->onStop();
     return true;
 })
@@ -3410,7 +3837,8 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         DOCTEST_CHECK(frame.ui.find(cid + ".priobar") == nullptr);
     }
 
-    // 判据 d：选中态——点击卡后色条仍存在、卡面仍浅染（H16：无 selbar、无旧底色 tint 回归）
+    // 判据 d：选中态——点击卡后主色描边 + 卡面浅染叠加（B-1：选中可见；
+        // H16 优先级浅染仍是底，不引入 selbar/旧底色 tint 回归）
     {
         Frame f2(mod.get());
         const auto* card = f2.ui.find("todo.col.4.card.3.bg");
@@ -3420,12 +3848,14 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         Frame f3(mod.get());
         const auto* selBg = f3.ui.find("todo.col.4.card.3.bg");
         DOCTEST_REQUIRE(selBg != nullptr);
-        // 选中态边框 = 统一 1px 分割线
-        DOCTEST_CHECK_EQ(selBg->border.width, 1.0f);
-        DOCTEST_CHECK(colorNear(selBg->border.color, t.colors.borderDefault));
-        // 选中态卡面仍为 High→error 浅染（不再走 primarySoftBg + priority tint）；H15 cardSurface 基底
+        // 选中态边框 = 2px 主色（B-1 选中可见）
+        DOCTEST_CHECK_EQ(selBg->border.width, 2.0f);
+        DOCTEST_CHECK(colorNear(selBg->border.color, t.colors.primary));
+        // 选中态卡面 = High→error 浅染再叠 10% 主色（H15 cardSurface 基底）
         DOCTEST_CHECK(colorNear(selBg->color,
-                                eui::mixColor(ui_kit::cardSurface(t), t.colors.error, 0.12f)));
+                                eui::mixColor(eui::mixColor(ui_kit::cardSurface(t),
+                                                           t.colors.error, 0.12f),
+                                              t.colors.primary, 0.10f)));
         // need368：优先级色条已删
         DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.priobar") == nullptr);
         // 旧选中左竖线已退役
@@ -3447,8 +3877,12 @@ REGISTER_TEST(todo_ui_priority_card_bar,
     for (int i = 0; i < 4; ++i) {
         const auto* bg = light.ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        // 四档浅染底（None 纯白），textPrimary 对比度 ≥ 4.5:1
-        DOCTEST_CHECK(colorNear(bg->color, kExpectFaceLight[i]));
+        // 四档浅染底（None 纯白），textPrimary 对比度 ≥ 4.5:1；card.3 仍处选中态（+10% 主色）
+        eui::Color expect = kExpectFaceLight[i];
+        if (i == 3) {
+            expect = eui::mixColor(expect, tl.colors.primary, 0.10f);
+        }
+        DOCTEST_CHECK(colorNear(bg->color, expect));
         DOCTEST_CHECK(contrastRatio(bg->color, tl.colors.textPrimary) >= 4.5f);
     }
     ::core::theme::setDark();  // 恢复默认
@@ -4294,7 +4728,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
 // 创建/编辑弹窗 Esc=取消（onCancel，不是误提交）
 
 REGISTER_TEST(todo_ui_esc_cancel_dialogs,
-              "todo_ui: 新建任务 Esc=取消不落库；详情标签 Esc=清草稿（headless）", {
+              "todo_ui: 新建任务 Esc 两击放弃不落库；详情标签 Esc=清草稿（headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
 
@@ -4332,7 +4766,13 @@ REGISTER_TEST(todo_ui_esc_cancel_dialogs,
         eui::KeyEvent esc;
         esc.key = eui::InputKey::Escape;
         esc.action = eui::KeyAction::Press;
+        // B-6：第一次 Esc（焦点在输入框 → onCancel）只警告，弹窗不关、不落库
         DOCTEST_CHECK(hit->onKeyEvent(esc));   // 被 onCancel 消费
+        frame.refresh();
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newtask.panel")->opacity, 1.0f);
+        DOCTEST_CHECK(!taskExists(escTask));
+        // 第二次 Esc 走模块级兜底（无焦点输入路径）：守卫已 armed → 关闭
+        DOCTEST_CHECK(mod->onKeyEvent(esc));
         frame.refresh();
         DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newtask.panel")->opacity, 0.0f);
         DOCTEST_CHECK(!taskExists(escTask));   // 旧行为：Esc→onEnter=submitNewTask 会落库
@@ -4633,12 +5073,13 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
     using namespace module::todo;
     const core::theme::Tokens& t = core::theme::current();
 
-    // 板面几何：顶边 = pad + kHeaderH + spacingLarge（pad = spacingLarge*2，S4.2
-    // 弹性内边距 32）。boardGeom 只剩顶边求值——n 列均匀数学与 cardLeft 随固定
+    // 板面几何：顶边 = 页头 + spacingLarge（页头高走平台密度档：Windows 36 / mac 40，
+    // 与模块 compose 同源；旧口径写死 kHeaderH=40 会在紧凑档把弹层锚点错开 4px）。
+    // boardGeom 只剩顶边求值——n 列均匀数学与 cardLeft 随固定
     // 四列、菜单 x 改走 ctx.anchorX 一并退役
     const ui::BoardGeom g3 = ui::boardGeom(t);
     DOCTEST_CHECK_EQ(g3.boardTop,
-                     ui_kit::kHeaderH + t.sizes.spacingLarge);  // 顶距 0（批L）
+                     ui_kit::density::headerH() + t.sizes.spacingLarge);  // 顶距 0（批L）
 
     // 卡片顶边：卡步进 = 卡高 + 卡间距
     DOCTEST_CHECK_EQ(ui::cardTop(g3, 0), g3.boardTop + ui::kColumnHeaderHeight);
@@ -5169,7 +5610,9 @@ REGISTER_TEST(todo_ui_h20_board_render,
     layoutFrame();
 
     const auto& t = core::theme::current();
-    const float contentW = 1600.0f - t.sizes.spacingLarge * 4.0f;  // module: pad 32×2
+    // 内容宽 = 窗口宽 − 双侧页面内边距（平台密度档：Windows 24 / mac 32，不再写死 32）
+    const float pad = ui_kit::density::pageInsetV();
+    const float contentW = 1600.0f - pad * 2.0f;
     const float gap = t.sizes.spacingLarge;
     // 期望值直接取生产公式，避免测试自带一份会漂移的列宽推导
     const auto widths = module::todo::ui::boardColumnWidths(contentW, gap, 4, archiveIndex, 0.0f);
@@ -5193,8 +5636,8 @@ REGISTER_TEST(todo_ui_h20_board_render,
         }
         prevRight = bg->frame.x + bg->frame.width;
     }
-    // 右缘 = 窗口宽 − 双侧 pad（pad = 2×spacingLarge = 32/侧）
-    DOCTEST_CHECK(std::fabs(prevRight - (1600.0f - t.sizes.spacingLarge * 2.0f)) < 0.5f);
+    // 右缘 = 窗口宽 − 右侧 pad（pad = pageInsetV）
+    DOCTEST_CHECK(std::fabs(prevRight - (1600.0f - pad)) < 0.5f);
 
     // 折叠态：竖排窄态存在，普通列头/加号/展开按钮都不画
     DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".title") == nullptr);
@@ -5273,13 +5716,13 @@ REGISTER_TEST(todo_ui_h20_board_render,
     layoutFrame();
     DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".archivetoggle.bg") != nullptr);
 
-    // ---- 1000×640 最小档：内容宽按真实 pad（2×spacingLarge = 32/侧）复算 ----
+    // ---- 1000×640 最小档：内容宽按真实 pad（pageInsetV，Windows 24/侧）复算 ----
     // 展开态：归档封顶 kArchiveExpandedW，普通列平分剩余；onPageEnter 落目标态（不补播动画）
     screen.width = 1000.0f;
     screen.height = 640.0f;
     mod->onPageEnter();
     layoutFrame();
-    const float contentW1000 = screen.width - t.sizes.spacingLarge * 4.0f;  // 936
+    const float contentW1000 = screen.width - pad * 2.0f;
     const auto wExpanded = module::todo::ui::boardColumnWidths(contentW1000, gap, 4,
                                                                archiveIndex, 1.0f);
     DOCTEST_CHECK(std::fabs(wExpanded.archive -
@@ -5297,7 +5740,7 @@ REGISTER_TEST(todo_ui_h20_board_render,
         right1000 = bg->frame.x + bg->frame.width;
     }
     DOCTEST_CHECK(std::fabs(right1000 -
-                            (screen.width - t.sizes.spacingLarge * 2.0f)) < 0.5f);  // 968
+                            (screen.width - pad)) < 0.5f);
 
     // 折叠态：归档 = W×25%，其余三列均分剩余宽
     const auto* toggle = ui.find(colId(archiveIndex) + ".archivetoggle.bg");
@@ -5326,7 +5769,7 @@ REGISTER_TEST(todo_ui_h20_board_render,
         right1000 = bg->frame.x + bg->frame.width;
     }
     DOCTEST_CHECK(std::fabs(right1000 -
-                            (screen.width - t.sizes.spacingLarge * 2.0f)) < 0.5f);
+                            (screen.width - pad)) < 0.5f);
     // 折叠结构：普通列头让位给竖排窄态
     DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".title") == nullptr);
     DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".expand.bg") != nullptr);
@@ -5420,7 +5863,9 @@ REGISTER_TEST(todo_ui_need169_column_toggle,
     };
     layoutFrame();
     const auto& t = core::theme::current();
-    const float contentW = 1600.0f - t.sizes.spacingLarge * 4.0f;
+    // 内容宽 = 窗口宽 − 双侧页面内边距（平台密度档）
+    const float pad = ui_kit::density::pageInsetV();
+    const float contentW = 1600.0f - pad * 2.0f;
     const float gap = t.sizes.spacingLarge;
     auto colId = [&](int idx) { return "todo.col." + std::to_string(idx); };
 
@@ -5455,7 +5900,7 @@ REGISTER_TEST(todo_ui_need169_column_toggle,
         }
         prevRight = bg->frame.x + bg->frame.width;
     }
-    DOCTEST_CHECK(std::fabs(prevRight - (1600.0f - t.sizes.spacingLarge * 2.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(prevRight - (1600.0f - pad)) < 0.5f);
 
     // 点窄态条展开回来：结构还原、宽度回全展开口径
     const auto* reExpand = ui.find(colId(normalIdx) + ".expand.bg");
@@ -5701,16 +6146,27 @@ REGISTER_TEST(todo_card_jelly_whole_stack_layer,
         DOCTEST_CHECK(bg2->zIndex == 0);     // 玻璃面不再压内容
     }
     // 时间线行进中：wrapper 缩放、bg 恒 1（卡内无固定尺寸错位层 → 无灰底）
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    // 并行分片负载下固定 sleep(150ms) 可能等不到动画中途帧：限时轮询到 scale 离开 1。
     {
-        Frame frame(mod.get());
-        auto* wrap = frame.ui.find(root + ".jelly");
-        auto* bg = frame.ui.find(root + ".bg");
-        DOCTEST_REQUIRE(wrap != nullptr);
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(offOne(wrap->transform.scale.x));
-        DOCTEST_CHECK(nearOne(bg->transform.scale.x));
-        DOCTEST_CHECK(nearOne(bg->transform.scale.y));
+        bool sawOff = false;
+        bool bgStillOne = false;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!sawOff && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            Frame frame(mod.get());
+            auto* wrap = frame.ui.find(root + ".jelly");
+            auto* bg = frame.ui.find(root + ".bg");
+            DOCTEST_REQUIRE(wrap != nullptr);
+            DOCTEST_REQUIRE(bg != nullptr);
+            if (offOne(wrap->transform.scale.x)) {
+                sawOff = true;
+                bgStillOne = nearOne(bg->transform.scale.x) &&
+                             nearOne(bg->transform.scale.y);
+            }
+        }
+        DOCTEST_CHECK(sawOff);
+        DOCTEST_CHECK(bgStillOne);
     }
     // hover 退出（todo 无去抖，集合即擦）→ 回落
     {

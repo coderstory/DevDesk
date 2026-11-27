@@ -10,6 +10,7 @@
 #include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "core/time.h"   // C-17：自动归档计数用本地零点
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环续帧）
 #include "core/component_theme.h"
 #include "core/event_bus.h"
@@ -31,7 +32,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <ctime>
 #include <map>
 #include <memory>
 #include <optional>
@@ -54,10 +54,10 @@ constexpr int64_t kArchiveHoverExpandMs = 300;
 // 拖离/取消且本次为自动展开 → 200ms 后收回（设计 §5.3；延迟避免手抖回弹）
 constexpr int64_t kArchiveAutoCollapseDelayMs = 200;
 
-// C-1（need380）：启动归档 toast 的回看窗口秒数——清扫在启动迁移序跑（远早于本模块
-// onStart），窗口须覆盖「迁移→模块启动」的启动耗时；偏大只增加误报面（窗口内既有
-// 手动归档），偏小则漏报。正常启动 <2s，120s 覆盖慢盘冷启动。
-constexpr int64_t kAutoArchiveToastSlackSec = 120;
+// C-6：搜索防抖窗口（输入后 ~180ms 再查库；清空/回车立即提交）
+constexpr int64_t kSearchDebounceMs = 180;
+// C-5：逾期计数低频重算（页头 badge 随时间/跨日刷新；不每帧查库）
+constexpr int64_t kOverdueRefreshMs = 30000;
 
 // 壁钟毫秒（steady_clock 单调钟，不受系统时间调整影响）。与 H13 71ce7d4c 同源：
 // 进度一律由「起始壁钟 + 已过毫秒」反算，不依赖 EUI onFrame 的 dt 累积
@@ -134,30 +134,12 @@ public:
         restoreViewState();
         LOG_INFO("Todo 模块启动（" + std::to_string(columns_.size()) + " 列 / " +
                  std::to_string(tasks_.size()) + " 任务）");
-        // C-1（need380 wave5-c）：冷启动自动归档的感知补偿，规则本体不动
-        //（core::schema::archiveDoneTasksBeforeToday，启动迁移序先于本模块跑）。
-        // 清扫单事务内把命中任务的 archived_at 统一置为迁移时刻，本模块启动晚于
-        // 迁移，只能事后窗口计数。
-        // shortcut: ±120s 窗口计数，升级触发 = 窗口内混入手动归档致误报 → core 清扫上报条数
-        if (!autoArchiveToastShown_) {
-            autoArchiveToastShown_ = true;
-            const auto bootFloor = static_cast<int64_t>(std::time(nullptr)) -
-                                   kAutoArchiveToastSlackSec;
-            const int64_t archId = archiveColId();
-            int archivedNow = 0;
-            for (const auto& task : tasks_) {
-                if (task.columnId == archId && task.archivedAt.has_value() &&
-                    task.archivedAt.value() >= bootFloor) {
-                    ++archivedNow;
-                }
-            }
-            if (archivedNow > 0) {
-                toast_.show("自动归档",
-                            std::to_string(archivedNow) +
-                                " 条已完成任务已自动归档，可在归档列查看",
-                            ui_kit::ToastLevel::Info);
-            }
-        }
+        // C-17：冷启动自动归档的感知补偿（规则本体不动）。
+        // 清扫 = core::schema::archiveDoneTasksBeforeToday（启动迁移序先于本模块跑），
+        // 单事务内把命中任务的 archived_at 统一置为清扫时刻。模块可能在清扫后很久
+        // 才被开启（>120s）——旧的「模块 onStart ±120s 窗口」会漏报，故按「今天被
+        // 自动归档」的形态计数（见 countAutoArchivedToday）。
+        announceAutoArchive();
     }
 
     // H20：切页回来不补播离开时中断的归档折叠动画——直接落目标态（首帧同口径）；
@@ -186,7 +168,20 @@ public:
         toolChangedSub_ = {};
         // 池405：后台重载线程引用 service_（service_ 不随停模块析构），停模块前先回收
         stopAsyncReload();
-        if (viewDirty_) saveViewState();
+        // C-16：停模块复位瞬态（弹层/搜索词/选中卡/看全部），下次开启不沿用。
+        // 复位后无条件落盘视图态：把 selectedTaskId=0 写回，防下次 onStart restore 旧选中。
+        dialogs_ = ui::DialogSet{};
+        searchQuery_.clear();
+        appliedSearchQuery_.clear();
+        searchMatchIds_.clear();
+        searchPendingAtMs_ = 0;
+        selectedTaskId_ = 0;
+        archiveShowAll_ = false;
+        searchAutoExpanded_ = false;
+        searchExpandPrev_ = false;
+        searchColAutoPrev_.clear();
+        overdueRefreshAtMs_ = 0;
+        saveViewState();
         // 只注销工具，不 reset service_：agent run 线程可能正执行 todo.* 工具（持 TodoService&），reset = UAF。
         // service_ 交给成员析构（声明序 todoTools_ 在前 → 先析构，引用不悬垂）
         detachTools();
@@ -259,6 +254,14 @@ public:
                 ++it;
             }
         }
+        // B-7：搜索自动展开记忆同样按列 id 剪枝（删列后不残留）
+        for (auto it = searchColAutoPrev_.begin(); it != searchColAutoPrev_.end();) {
+            if (std::find(liveIds.begin(), liveIds.end(), it->first) == liveIds.end()) {
+                it = searchColAutoPrev_.erase(it);
+            } else {
+                ++it;
+            }
+        }
         // 拖拽中任务被外部删除 → 锚点失效，复位防悬垂
         if (drag_.active && ui::findTask(tasks_, drag_.taskId) == nullptr) {
             drag_ = DragState{};
@@ -274,6 +277,10 @@ public:
             // 读取失败不降级成「0 条」：badge 保留上次值并把失败报出去
             setStatus("逾期任务查询失败", data.overdueError);
         }
+        // 刚查过库：低频重算窗口顺延（C-5）
+        overdueRefreshAtMs_ = steadyNowMs() + kOverdueRefreshMs;
+        // 重载后立即按当前输入重查（输入态防抖在途也一并提交，避免旧结果滞留）
+        searchPendingAtMs_ = 0;
         if (!searchQuery_.empty()) refreshSearch();
         // 重载/删卡后列内卡数可能减少：按上次视口高钳制，防旧偏移遗留空白列
         clampColumnScrolls(lastColumnViewportH_);
@@ -283,6 +290,38 @@ public:
         if (!service_) return;
         ++reloadStamp_;   // 同步重载越过后台轮次 → 在途后台结果作废（reap 处判）
         applyReloadResult(queryAll(*service_));
+    }
+
+    // C-17：自动归档清扫的落库形态 = 归档列 + archived_at 在「今天」+ 完成时间早于
+    // 今天零点或未记完成时间（清扫判据就是 completed_at IS NULL OR < 当日零点，
+    // 见 core::schema::archiveDoneTasksBeforeToday）。按形态计数而不是按「模块启动
+    // 时刻回看 120s」：清扫跑在进程启动迁移里，模块可能更晚才开启（关闭态→设置
+    // 里打开），窗口法会漏报。
+    int countAutoArchivedToday() const {
+        if (tasks_.empty()) return 0;
+        const int64_t archId = archiveColId();
+        const int64_t midnight = static_cast<int64_t>(
+            core::time::localMidnightUnix(core::time::nowUnix()));
+        int n = 0;
+        for (const auto& task : tasks_) {
+            if (task.columnId != archId) continue;
+            if (!task.archivedAt.has_value() || task.archivedAt.value() < midnight) continue;
+            if (task.completedAt.has_value() && task.completedAt.value() >= midnight) continue;
+            ++n;
+        }
+        return n;
+    }
+
+    // C-17：提示一次（沿用页头 toast 通道）。lead = 场景前缀（库导入后…）。高水位去重
+    // 防同一批重复刷屏：只有比上次报过的多才再报。
+    void announceAutoArchive(const char* lead = "") {
+        const int n = countAutoArchivedToday();
+        if (n <= 0 || n <= autoArchiveAnnouncedCount_) return;
+        autoArchiveAnnouncedCount_ = n;
+        toast_.show("自动归档",
+                    std::string(lead) + std::to_string(n) +
+                        " 条已完成任务已自动归档，可在归档列查看",
+                    ui_kit::ToastLevel::Info);
     }
 
     // 池405：db 导入触发的全量重查搬 worker（UI 线程只收割）。结果槽单生产单消费：
@@ -306,6 +345,10 @@ public:
             reloadInFlight_.store(false, std::memory_order_release);
             LOG_ERROR(std::string("Todo: 后台重载线程创建失败，改同步重载: ") + e.what());
             applyReloadResult(queryAll(*service_));
+            if (announceAutoArchiveAfterReload_) {
+                announceAutoArchiveAfterReload_ = false;
+                announceAutoArchive("库导入后 ");
+            }
         }
     }
 
@@ -321,6 +364,11 @@ public:
         }
         applyReloadResult(std::move(reloadResult_));
         LOG_INFO("Todo: 后台重载完成，看板数据已刷新");
+        // C-17：库导入（远端库替换）会补跑迁移=再做一次归档清扫，这里补一次提示
+        if (announceAutoArchiveAfterReload_) {
+            announceAutoArchiveAfterReload_ = false;
+            announceAutoArchive("库导入后 ");
+        }
         ::core::platform::requestUiUpdate();
     }
 
@@ -333,12 +381,14 @@ public:
 
     void refreshSearch() {
         searchMatchIds_.clear();
+        // C-6：本函数 = 「查询真正发生」的唯一落点；把当下输入记为已应用查询
+        appliedSearchQuery_ = searchQuery_;
         if (!searchQuery_.empty() && service_) {
             auto r = service_->search(searchQuery_);
             if (r.isFail()) {
                 setStatus("搜索失败", r.errorMessage());
-                // 命中集已清空，仍要收口归档自动展开状态（查询失败不保留旧命中表的展开）
-                syncSearchArchiveExpand();
+                // 命中集已清空，仍要收口自动展开状态（查询失败不保留旧命中表的展开）
+                syncSearchAutoExpand();
                 clampColumnScrolls(lastColumnViewportH_);
                 return;
             }
@@ -347,10 +397,38 @@ public:
                 searchMatchIds_.insert(t.id);
             }
         }
-        // H20：命中集变化后统一同步「归档命中 → 自动展开 / 无命中或清空 → 还原」
-        syncSearchArchiveExpand();
+        // H20 + B-7：命中集变化后统一同步「列命中 → 自动展开 / 无命中或清空 → 还原」
+        syncSearchAutoExpand();
         // 过滤后卡数变少 → 旧偏移可能越过内容底，立即钳制防虚拟窗口越界空白
         clampColumnScrolls(lastColumnViewportH_);
+    }
+
+    // C-6：防抖窗口推进（compose 首步）：到点后真正查库。事件驱动主循环靠帧泵
+    // （todo.archive.anim.driver）在窗口在途时持续出帧，不依赖下一次输入。
+    void advanceSearchDebounce() {
+        if (searchPendingAtMs_ == 0) return;
+        if (steadyNowMs() < searchPendingAtMs_) return;
+        searchPendingAtMs_ = 0;
+        refreshSearch();
+    }
+
+    // C-5：逾期计数低频重算（口径同 core/overdue.h：未完成 + 截止日早于今天 +
+    // 仅在 todo/doing 列）。页头 badge 不再只依赖重读/开弹窗，跨日也会在 ≤30s 内更新。
+    size_t computeOverdueCount() const {
+        size_t n = 0;
+        for (const auto& task : tasks_) {
+            if (!ui::isOverdue(task)) continue;
+            const Column* col = ui::findColumn(columns_, task.columnId);
+            if (col != nullptr && (col->kind == "todo" || col->kind == "doing")) ++n;
+        }
+        return n;
+    }
+
+    void maybeRefreshOverdue() {
+        const int64_t now = steadyNowMs();
+        if (overdueRefreshAtMs_ != 0 && now < overdueRefreshAtMs_) return;
+        overdueRefreshAtMs_ = now + kOverdueRefreshMs;
+        overdueCount_ = computeOverdueCount();
     }
 
     void openOverdueDialog() {
@@ -367,6 +445,7 @@ public:
         }
         dialogs_.overdue.tasks = std::move(r).value();
         overdueCount_ = dialogs_.overdue.tasks.size();
+        overdueRefreshAtMs_ = steadyNowMs() + kOverdueRefreshMs;
         dialogs_.popups.open(ui::Popup::Overdue);
     }
 
@@ -537,7 +616,7 @@ public:
     // 可见卡数 = 搜索过滤后（归档按展开态封顶 20）；滚动上限 = 内容高 − 列视口高
     void clampColumnScrolls(float viewportH) {
         lastColumnViewportH_ = std::max(0.0f, viewportH);
-        const bool searching = !searchQuery_.empty();
+        const bool searching = !appliedSearchQuery_.empty();
         for (const auto& col : columns_) {
             auto it = columnScrolls_.find(col.id);
             if (it == columnScrolls_.end()) continue;
@@ -546,8 +625,9 @@ public:
             size_t count = colTasks.size();
             if (col.kind == "archive") {
                 const ColCollapseState& st = colState(col.id, true);
-                count = (st.expanded || st.t >= 0.4f) ? std::min(count, size_t{20})
-                                                      : size_t{0};
+                const size_t archiveCap = archiveShowAll_ ? count
+                                                          : std::min(count, size_t{20});
+                count = (st.expanded || st.t >= 0.4f) ? archiveCap : size_t{0};
             }
             const float maxScroll =
                 std::max(0.0f, ui::columnContentHeight(count) - lastColumnViewportH_);
@@ -659,6 +739,12 @@ public:
                 archiveAutoCollapseAtMs_ = steadyNowMs() + kArchiveAutoCollapseDelayMs;
             }
         }
+        // B-12：搜索态落库前直接取消（渲染顺序 ≠ 全量行号，插入位不可靠）：
+        // 不移动数据，给一次明确提示。
+        if (!searchQuery_.empty()) {
+            setStatus("搜索状态下不支持拖拽排序，请先清空搜索");
+            return;
+        }
         if (target < 0 || target >= static_cast<int>(columns_.size())) return;
         const auto& dst = columns_[static_cast<size_t>(target)];
         if (target == from) {
@@ -694,6 +780,23 @@ public:
     }
 
     // 键盘/菜单共用的上移下移（position 语义见 todo_ui_logic.h）
+    // B-1：无选中时第一次方向键先选中首张卡（跳过归档列；搜索态按当前过滤结果）。
+    // 空板返回 0 → 调用方保留原引导 toast。
+    int64_t firstSelectableTaskId() const {
+        const bool searching = !appliedSearchQuery_.empty();
+        auto firstIn = [&](bool includeArchive) -> int64_t {
+            for (const auto& col : columns_) {
+                if (!includeArchive && col.kind == "archive") continue;
+                auto list = ui::tasksInColumn(tasks_, col.id);
+                list = ui::filterBySearch(list, searchMatchIds_, searching);
+                if (!list.empty()) return list.front()->id;
+            }
+            return 0;
+        };
+        const int64_t id = firstIn(false);
+        return id != 0 ? id : firstIn(true);
+    }
+
     void moveTaskByKeyboard(bool up) {
         // 归档列内禁止 Ctrl+↑/↓ 移动（排序强制 archived_at DESC，位置写入无效）
         const Task* self = ui::findTask(tasks_, selectedTaskId_);
@@ -738,6 +841,12 @@ public:
             // H20 创建入口唯一：与页头「新建任务」同口径（kind='todo' 定位待办列）
             openNewTaskForTodoColumn();
             LOG_INFO("跨模块负载：打开新建任务弹窗");
+            return;
+        }
+        // B-15：首页逾期卡 → 待办页并直接打开逾期弹窗（C 路负责首页发出该负载）
+        if (payload == "overdue" || payload == "action:overdue") {
+            openOverdueDialog();
+            LOG_INFO("跨模块负载：打开逾期弹窗");
             return;
         }
         LOG_WARN("Todo: 未识别的跳转负载: " + payload);
@@ -803,12 +912,15 @@ public:
 
     // 归档列搜索命中数 = searchMatchIds_ ∩ 归档列任务（自动展开判据；board 侧同源自算「N 命中」）
     size_t archiveHitCount() const {
-        if (searchQuery_.empty() || searchMatchIds_.empty()) return 0;
-        const int64_t id = ui::findColumnByKind(columns_, "archive");
-        if (id == 0) return 0;
+        return columnHitCount(ui::findColumnByKind(columns_, "archive"));
+    }
+
+    // 某列搜索命中数（B-7 普通列自动展开判据，与归档同口径）
+    size_t columnHitCount(int64_t colId) const {
+        if (appliedSearchQuery_.empty() || searchMatchIds_.empty() || colId == 0) return 0;
         size_t n = 0;
         for (const auto& t : tasks_) {
-            if (t.columnId == id && searchMatchIds_.count(t.id) != 0) ++n;
+            if (t.columnId == colId && searchMatchIds_.count(t.id) != 0) ++n;
         }
         return n;
     }
@@ -857,14 +969,18 @@ public:
             onArchiveToggle();
             return;
         }
+        // B-7：手动折叠/展开优先——淡出搜索自动展开记忆，清空搜索时不回滚用户本次选择
+        searchColAutoPrev_.erase(colId);
         beginColAnim(colId, !colState(colId, false).expanded);
     }
 
-    // 搜索联动（设计 §5.5/§5.7）：归档命中 > 0 → 自动展开并记住展开前目标态；
-    // 查询清空或命中归零 → 还原搜索前状态（同样走动画，不瞬跳）。
+    // 搜索联动（设计 §5.5/§5.7；B-7 推广到普通列）：命中 > 0 的折叠列 → 自动展开并
+    // 记住展开前目标态；查询清空或命中归零 → 还原搜索前状态（同样走动画，不瞬跳）。
+    // 归档列保持 H20 原口径（独立标记，不受普通列映射影响）。
     // 由 refreshSearch 收口（输入/清空/重新加载/查询失败都会经过）。
-    void syncSearchArchiveExpand() {
-        const bool searching = !searchQuery_.empty();
+    void syncSearchAutoExpand() {
+        const bool searching = !appliedSearchQuery_.empty();
+        // ---- 归档列（H20 原逻辑不变）----
         const size_t hits = archiveHitCount();
         if (searching && hits > 0) {
             if (!searchAutoExpanded_) {
@@ -877,6 +993,25 @@ public:
             searchAutoExpanded_ = false;
             if (colState(archiveColId(), true).expanded != searchExpandPrev_) {
                 beginArchiveAnim(searchExpandPrev_);
+            }
+        }
+        // ---- B-7：普通列（待办 / 进行中 / 已完成 + 自定义列）----
+        for (const auto& col : columns_) {
+            if (col.kind == "archive") continue;
+            auto it = searchColAutoPrev_.find(col.id);
+            const bool hasHit = searching && columnHitCount(col.id) > 0;
+            if (hasHit) {
+                if (it == searchColAutoPrev_.end()) {
+                    const bool cur = colState(col.id, false).expanded;
+                    searchColAutoPrev_[col.id] = cur;
+                    if (!cur) beginColAnim(col.id, true);
+                }
+            } else if (it != searchColAutoPrev_.end()) {
+                const bool prev = it->second;
+                searchColAutoPrev_.erase(it);
+                if (colState(col.id, false).expanded != prev) {
+                    beginColAnim(col.id, prev);
+                }
             }
         }
     }
@@ -996,6 +1131,12 @@ public:
             dialogs_.detail.requestClose(dialogs_.popups, dialogHost_);
             return true;
         }
+        if (top == ui::Popup::NewTask) {
+            // B-6 模块级兜底：焦点不在输入框时 Esc 也要走草稿守卫（与 input.onCancel/
+            // 遮罩同一 requestClose：有草稿首次只警告，第二次才关）
+            dialogs_.newTask.requestClose(dialogs_.popups, dialogHost_);
+            return true;
+        }
         dialogs_.popups.close(top);
         return true;
     }
@@ -1051,6 +1192,7 @@ public:
                 dbImportedDirty_.store(true, std::memory_order_release);
             } else {
                 LOG_INFO("Todo: 检测到库导入，后台重载看板数据");
+                announceAutoArchiveAfterReload_ = true;   // C-17：导入迁移里的清扫同样要提示
                 startAsyncReload();
             }
         }
@@ -1063,6 +1205,9 @@ public:
         }
 
         consumeNavPayload();
+        // C-6：防抖到点才查库；C-5：逾期 badge 低频重算（均不每帧查库）
+        advanceSearchDebounce();
+        maybeRefreshOverdue();
 
         // 列折叠（need#169 全列）：compose 首步按壁钟推进各列进度（含归档拖拽悬停
         // 300ms 计时与拖离后 200ms 自动收回），再装配 boardView 供看板读「目标态 + 当前进度」
@@ -1097,6 +1242,7 @@ public:
             .tasks = tasks_,
             .searchMatchIds = searchMatchIds_,
             .searchQuery = searchQuery_,
+            .searchActive = !appliedSearchQuery_.empty(),
             .columnScrolls = columnScrolls_,
             .selectedTaskId = selectedTaskId_,
             .dragActive = drag_.active,
@@ -1112,6 +1258,7 @@ public:
             .act = boardActions_,
             .archiveExpanded = archSt.expanded};
         boardView.archiveT = archSt.t;
+        boardView.archiveShowAll = archiveShowAll_;
         boardView.loading = reloadInFlight_.load(std::memory_order_acquire);
         // need#169：全列折叠进度/目标态按列序装配（归档位同源填充；board 归档路径仍读 archiveT）
         boardView.columnCollapseT.assign(columns_.size(), 1.0f);
@@ -1127,18 +1274,29 @@ public:
             .padding(pad, 0.0f, pad, pad)  // 上=0 标题顶格（2026-10-25 拍板）——EUI padding 序=(left,top,right,bottom)
             .gap(t.sizes.spacingLarge)
             .content([&] {
+                // 板面左缘 = 页面内边距（平台密度档）：菜单锚点/坐标换算的 page 原点
+                boardPlate_.originX = pad;
                 ui::drawHeader(page, contentW, headerH, bodyH, t, boardView);
                 ui::drawBoard(page, contentW, bodyH, t, boardView, boardPlate_);
                 // H20 归档折叠帧泵（照 md.tree.anim.driver / H13 的 1x1 空 onFrame 先例）：
                 // 真机主循环事件驱动，指针静止时无输入即不 compose；动画/300ms 悬停计时/
                 // 200ms 待收回在途挂本元素，runtime 每帧置 animating_ 持续出帧推进，
                 // 收敛后不再挂载自动剪除，零常驻功耗。
-                if (colAnimsNeedFrame()) {
+                if (colAnimsNeedFrame() || searchPendingAtMs_ != 0) {
                     page.stack("todo.archive.anim.driver")
                         .size(1.0f, 1.0f)
                         .onFrame([](float) {})
                         .build();
                 }
+                // C-5：30s 低频心跳（0 尺寸 onTimer）——跨日/时间流逝后重算页头逾期数，
+                // 不常驻高频轮询；回调只置标记 + 要一帧，真正重算在 compose。
+                page.stack("todo.overdue.refresh")
+                    .size(0.0f, 0.0f)
+                    .onTimer(30.0f, [this] {
+                        overdueRefreshAtMs_ = 0;
+                        ::core::platform::requestUiUpdate();
+                    })
+                    .build();
             })
             .build();
 
@@ -1176,6 +1334,14 @@ public:
         if (!event.modifiers.shortcut()) return false;
         if (service_ == nullptr) return false;
         if (selectedTaskId_ == 0 || ui::findTask(tasks_, selectedTaskId_) == nullptr) {
+            // B-1：第一次方向键先选中首张卡（再按一次才移动）；空板才走引导提示
+            const int64_t first = firstSelectableTaskId();
+            if (first != 0) {
+                selectedTaskId_ = first;
+                saveViewState();
+                ::core::platform::requestUiUpdate();
+                return true;
+            }
             setStatus("先点击卡片选中任务，再用 " +
                       ::core::platform_info::shortcutModifierLabel() + "+↑/↓ 移动");
             return false;
@@ -1212,15 +1378,32 @@ private:
 
     ui::BoardActions boardActions_{
         .searchChanged = [this](const std::string& value) {
+            // C-6：输入只更新文本并起防抖窗口，不每键同步查库；清空立即提交。
+            // 首次从空到有值立即查（搜索框常整词输入，等 150ms 会让展开/命中滞后一帧；
+            // probe 的 S1 也是整词一次输入）；后续追加输入才走防抖。
             searchQuery_ = value;
-            refreshSearch();
+            searchPendingAtMs_ = 0;
+            if (value.empty() || appliedSearchQuery_.empty()) {
+                refreshSearch();
+                return;
+            }
+            searchPendingAtMs_ = steadyNowMs() + kSearchDebounceMs;
+            // 事件驱动主循环：窗口在途需要帧泵（compose 里挂 todo.archive.anim.driver）
+            ::core::platform::requestUiUpdate();
         },
         .searchCancelled = [this] {
-            // 清除只挂 Esc（onCancel），Enter 无副作用
+            // 清除（Esc / 搜索框「×」）：立即提交空查询
+            searchPendingAtMs_ = 0;
             if (!searchQuery_.empty()) {
                 searchQuery_.clear();
                 refreshSearch();
             }
+        },
+        .searchSubmitted = [this] {
+            // 回车：跳过防抖立即查库（无待提交时 no-op，保持既有 Enter 无副作用口径）
+            if (searchPendingAtMs_ == 0) return;
+            searchPendingAtMs_ = 0;
+            refreshSearch();
         },
         .overdueClicked = [this] {
             if (overdueCount_ > 0) openOverdueDialog();
@@ -1295,6 +1478,13 @@ private:
             finishDrag(target);
         },
         .archiveToggle = [this] { onArchiveToggle(); },
+        .archiveSeeAll = [this] {
+            // B-9：本次会话解除归档 20 张上限（onStop 复位）
+            if (archiveShowAll_) return;
+            archiveShowAll_ = true;
+            clampColumnScrolls(lastColumnViewportH_);
+            ::core::platform::requestUiUpdate();
+        },
         .columnToggle = [this](size_t colIndex) {
             if (colIndex < columns_.size()) onColumnToggle(columns_[colIndex].id);
         },
@@ -1383,13 +1573,25 @@ private:
 
     ui_kit::ToastState toast_;
 
-    // C-1（need380）：启动归档 toast 每会话一次（onStart 重入被 started_ 挡，本位兜底）
-    bool autoArchiveToastShown_ = false;
+    // C-17：自动归档提示高水位（已报过的条数；只报新增，0 = 未报过）
+    int autoArchiveAnnouncedCount_ = 0;
+    // C-17：本次后台重载由库导入触发 → 重载落地后补一次归档提示
+    bool announceAutoArchiveAfterReload_ = false;
 
     std::string searchQuery_;
+    // C-6：结果已实际应用的那份查询（防抖窗口内 searchQuery_ 领先于它；
+    // board 过滤看 appliedSearchQuery_ 是否为空 = v.searchActive）
+    std::string appliedSearchQuery_;
+    // 防抖截止壁钟 ms（0 = 无待提交）；到点由 compose 首步 advanceSearchDebounce 查库
+    int64_t searchPendingAtMs_ = 0;
     std::unordered_set<int64_t> searchMatchIds_;
 
     size_t overdueCount_ = 0;
+    // C-5：下次逾期计数重算壁钟（0 = 下一帧重算；30s 心跳 onTimer 置 0 后要帧）
+    int64_t overdueRefreshAtMs_ = 0;
+
+    // B-9：本次会话归档「看全部」（onStop 复位 → 下次开启回到 20 张）
+    bool archiveShowAll_ = false;
 
     // 数据加载错误（空 = 正常；与空态区分）
     std::string loadError_;
@@ -1407,6 +1609,8 @@ private:
     // 搜索联动：归档命中 > 0 自动展开，记住展开前目标态；清空搜索/命中归零还原
     bool searchAutoExpanded_ = false;
     bool searchExpandPrev_ = false;
+    // B-7：普通列搜索自动展开前的目标态（colId → 展开前 expanded）；清空/无命中还原
+    std::map<int64_t, bool> searchColAutoPrev_;
 };
 
 } // namespace module::todo

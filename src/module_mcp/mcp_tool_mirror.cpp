@@ -93,7 +93,8 @@ bool AgentToolAdapter::isDestructive() const { return source_->isDestructive(); 
 
 std::string AgentToolAdapter::annotationsSuffix() const {
     if (!isDestructive()) {
-        return "";
+        // C-15：非破坏性工具补 readOnlyHint=true，客户端可据此默认放行只读调用。
+        return R"(,"annotations":{"readOnlyHint":true})";
     }
     return R"(,"annotations":{"destructiveHint":true,"readOnlyHint":false})";
 }

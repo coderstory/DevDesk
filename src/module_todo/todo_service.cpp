@@ -176,6 +176,12 @@ core::Result<Task> TodoService::parseTaskRow(const core::data::SqlRow& row) {
             t.archivedAt = archivedResult.value();
         }
     }
+    if (!row.isNull("created_at")) {
+        auto createdResult = row.getInt64("created_at");
+        if (createdResult.isOk()) {
+            t.createdAt = createdResult.value();
+        }
+    }
     return core::Result<Task>::ok(std::move(t));
 }
 
@@ -380,7 +386,7 @@ core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) 
 
 core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at, created_at "
         "FROM todo_tasks WHERE column_id = ? ORDER BY position ASC");
     if (prep.isFail()) {
         return core::propagate<std::vector<Task>>(prep);
@@ -408,7 +414,7 @@ core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
 
 core::Result<std::vector<Task>> TodoService::listAllTasks() {
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at, created_at "
         "FROM todo_tasks ORDER BY column_id ASC, position ASC");
     if (prep.isFail()) {
         return core::propagate<std::vector<Task>>(prep);
@@ -430,6 +436,28 @@ core::Result<std::vector<Task>> TodoService::listAllTasks() {
     return core::Result<std::vector<Task>>::ok(std::move(out));
 }
 
+core::Result<Task> TodoService::getTask(int64_t id) {
+    auto prep = db_.prepare(
+        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at, created_at "
+        "FROM todo_tasks WHERE id = ?");
+    if (prep.isFail()) {
+        return core::propagate<Task>(prep);
+    }
+    auto& stmt = prep.value();
+    if (auto r = stmt.bind(1, id); r.isFail()) {
+        return core::propagate<Task>(r);
+    }
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) {
+        return core::propagate<Task>(rows);
+    }
+    if (rows.value().empty()) {
+        return core::Result<Task>::fail(core::ErrorCode::NotFound,
+                                        "任务不存在: id=" + std::to_string(id));
+    }
+    return parseTaskRow(rows.value()[0]);
+}
+
 core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& title) {
     // 旧入口 = 属性全不设置；委托到带属性重载，杜绝第二份 INSERT 实现漂移
     return createTask(columnId, title, NewTaskAttributes{});
@@ -437,6 +465,10 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
 
 core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& title,
                                            const NewTaskAttributes& attrs) {
+    // B-14：取 nextPosition 与 INSERT 必须同临界区，否则两个并发新建读到同一 MAX+1、
+    // 落库后位次重复（recursive_mutex 可重入，内部 prepare/step 再持一次无副作用）。
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+
     auto nextPosResult = nextTaskPosition(columnId);
     if (nextPosResult.isFail()) {
         return core::propagate<Task>(nextPosResult);
@@ -525,6 +557,7 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     t.dueAt = attrs.dueAt;
     t.position = pos;
     t.tags = {};
+    t.createdAt = now;
     return core::Result<Task>::ok(std::move(t));
 }
 
@@ -832,7 +865,7 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
         return listAllTasks();
     }
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at, created_at "
         "FROM todo_tasks "
         "WHERE title LIKE ? ESCAPE '\\' "
         "   OR (description IS NOT NULL AND description LIKE ? ESCAPE '\\') "
@@ -876,7 +909,7 @@ core::Result<std::vector<Task>> TodoService::listOverdue() {
     // 逾期谓词单源：core/overdue.h 的 kWhereSql（与 HomeService::getStats 共用，改一处两边同步）
     const std::string sql =
         std::string(
-            "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
+            "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at, created_at "
             "FROM todo_tasks WHERE ") +
         core::overdue::kWhereSql + " ORDER BY due_at ASC";
     auto prep = db_.prepare(sql);
