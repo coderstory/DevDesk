@@ -16,7 +16,6 @@
 #include "github_sync_test_seam.h"
 #include "local_git_probe.h"
 #include "project_card_store.h"
-#include "project_cards_card.h"
 #include "settings_ui_logic.h"
 #include "notepad_assoc_card.h"   // drawNotepadAssocCard（F-18 开关行卡）
 #include "notepad_assoc_logic.h"  // 状态字四态 / 卡高契约 / 未生效摘要（F-18 判定）
@@ -218,7 +217,6 @@ public:
         githubSyncStore_ = std::make_unique<GithubSyncStore>(::core::appDatabase());
         githubSyncCfg_ = githubSyncStore_->load();
         // 需-11 项目卡：启动时装载列表快照（后续刷新点 = 进页面 + 增删改后）
-        refreshProjectCards();
         // 上次退出推送未完成 → 卡片黄字「有未同步改动」，同步成功即清。
         if (auto notice = githubSyncStore_->hasUnsyncedNotice();
             notice.isOk() && notice.value()) {
@@ -310,7 +308,6 @@ public:
         // 进页面 = 外部状态刷新点；变化频率低，不需要每帧重查。
         refreshExternalState();
         // 需-11 项目卡：进页面重查列表（覆盖「MCP 侧/他页改动后回来」的陈旧快照）
-        refreshProjectCards();
         // H1: 进页面不自动弹错误弹窗——错误留在卡片里、用户点「查看详情」才弹
         githubSyncErrorDialog_.open = false;
         // Token 显形仅本页停留期有效（manual 13 章「离开页面恢复掩码」）：
@@ -1648,131 +1645,6 @@ private:
         openDropdown_ = applyDropdownOpen(openDropdown_, d, v);
     }
 
-    // ── 需-11 项目卡：列表快照 + 表单草稿（全 UI 线程读写，无并发面）──
-    void refreshProjectCards() {
-        auto* db = ::core::appDatabase();
-        if (db == nullptr) {
-            projectCards_.clear();
-            return;
-        }
-        auto list = listProjectCards(*db);
-        projectCards_ = list.isOk() ? std::move(list.value())
-                                         : std::vector<ProjectCard>{};
-    }
-
-    void setProjectCardField(ProjectCardField field, const std::string& v) {
-        switch (field) {
-            case ProjectCardField::Name: projectCardDraft_.name = v; break;
-            case ProjectCardField::RepoPath: projectCardDraft_.repoPath = v; break;
-            case ProjectCardField::StartCommand:
-                projectCardDraft_.startCommand = v;
-                break;
-            case ProjectCardField::TestCommand:
-                projectCardDraft_.testCommand = v;
-                break;
-            case ProjectCardField::DeployMethod:
-                projectCardDraft_.deployMethod = v;
-                break;
-            case ProjectCardField::TestDbUrl:
-                projectCardDraft_.testDbUrl = v;
-                break;
-            case ProjectCardField::KeyModules:
-                projectCardDraft_.keyModules = v;
-                break;
-        }
-        projectCardStatus_.clear();   // 编辑即清反馈，避免旧错误常驻
-    }
-
-    void projectCardNewDraft() {
-        projectCardDraft_ = ProjectCard{};
-        projectCardEditingExisting_ = false;
-        projectCardSelectedName_.clear();
-        projectCardStatus_.clear();
-        projectCardStatusError_ = false;
-    }
-
-    void projectCardSelect(const std::string& name) {
-        for (const auto& c : projectCards_) {
-            if (c.name != name) continue;
-            projectCardDraft_ = c;
-            projectCardEditingExisting_ = true;
-            projectCardSelectedName_ = c.name;
-            projectCardStatus_.clear();
-            projectCardStatusError_ = false;
-            return;
-        }
-    }
-
-    void projectCardSaveDraft() {
-        auto* db = ::core::appDatabase();
-        if (db == nullptr) {
-            projectCardStatus_ = "数据库未就绪，保存失败";
-            projectCardStatusError_ = true;
-            return;
-        }
-        const std::string rawDraftName = projectCardDraft_.name;
-        auto saved = upsertProjectCard(*db, projectCardDraft_);
-        if (saved.isFail()) {
-            projectCardStatus_ = saved.errorMessage();
-            projectCardStatusError_ = true;
-            return;
-        }
-        // 回读取规范化名（store 内部 trim；「 订单中心 」与「订单中心」同卡），
-        // 后面的改名判定必须用规范化名，否则带空格保存会被误判成改名 → 误删原卡。
-        auto reread = getProjectCard(*db, rawDraftName);
-        if (reread.isFail()) {
-            projectCardStatus_ = "已保存，但回读失败：" + reread.errorMessage();
-            projectCardStatusError_ = true;
-            refreshProjectCards();
-            return;
-        }
-        const std::string& canonicalName = reread.value().name;
-        // 改名保存 = 重命名：name 是主键，upsert 只会新增 → 先删旧名再落新名。
-        // 删旧名失败时两卡并存（用户可手删），反馈出来不静默。
-        if (projectCardEditingExisting_ &&
-            projectCardSelectedName_ != canonicalName) {
-            auto dropped = deleteProjectCard(*db, projectCardSelectedName_);
-            if (dropped.isFail()) {
-                projectCardStatus_ = "已保存「" + canonicalName + "」，但旧卡「" +
-                                     projectCardSelectedName_ + "」删除失败：" +
-                                     dropped.errorMessage();
-                projectCardStatusError_ = true;
-                refreshProjectCards();
-                return;
-            }
-        }
-        projectCardEditingExisting_ = true;
-        projectCardSelectedName_ = canonicalName;
-        projectCardStatus_ = "已保存「" + canonicalName + "」";
-        projectCardStatusError_ = false;
-        refreshProjectCards();
-    }
-
-    void projectCardDeleteCurrent() {
-        if (!projectCardEditingExisting_ || projectCardSelectedName_.empty()) {
-            projectCardStatus_ = "删除作用于已选中的已有卡片（先在下方列表点选）";
-            projectCardStatusError_ = true;
-            return;
-        }
-        auto* db = ::core::appDatabase();
-        if (db == nullptr) {
-            projectCardStatus_ = "数据库未就绪，删除失败";
-            projectCardStatusError_ = true;
-            return;
-        }
-        const std::string gone = projectCardSelectedName_;
-        auto removed = deleteProjectCard(*db, gone);
-        if (removed.isFail()) {
-            projectCardStatus_ = removed.errorMessage();
-            projectCardStatusError_ = true;
-            return;
-        }
-        projectCardNewDraft();
-        projectCardStatus_ = "已删除「" + gone + "」";
-        projectCardStatusError_ = false;
-        refreshProjectCards();
-    }
-
     // 卡片回调装配（compose 每帧）：lambda 只捕获 this；卡片按值拷进元素回调 → 不悬垂。
     SettingsCardActions cardActions() {
         SettingsCardActions a;
@@ -1841,17 +1713,6 @@ private:
         a.githubSyncShowErrorDetail = [this] { showGithubSyncErrorDetail(); };
         a.toggleGithubSyncTokenVisibility = [this] { githubSyncTokenVisible_ = !githubSyncTokenVisible_; };
         a.toggleGithubSyncDetail = [this] { githubSyncDetailExpanded_ = !githubSyncDetailExpanded_; };
-
-        // 需-11 项目卡回调
-        a.setProjectCardField = [this](ProjectCardField f, const std::string& v) {
-            setProjectCardField(f, v);
-        };
-        a.projectCardNew = [this] { projectCardNewDraft(); };
-        a.projectCardSave = [this] { projectCardSaveDraft(); };
-        a.projectCardDelete = [this] { projectCardDeleteCurrent(); };
-        a.projectCardSelect = [this](const std::string& name) {
-            projectCardSelect(name);
-        };
 
         // 网页访问（need#490 W6）
         a.applyWebAccessEnabled = [this](bool on) { applyWebAccessEnabled(on); };
@@ -1963,13 +1824,6 @@ private:
         in.mcpRunning = mcpRunning_;
         in.mcpLivePort = mcpLivePort_;
         in.mcpLastError = mcpLastError_;
-        // 需-11 项目卡快照（列表指针 + 草稿副本 + 反馈）
-        in.projectCards = &projectCards_;
-        in.projectCardDraft = projectCardDraft_;
-        in.projectCardEditingExisting = projectCardEditingExisting_;
-        in.projectCardSelectedName = projectCardSelectedName_;
-        in.projectCardStatus = projectCardStatus_;
-        in.projectCardStatusError = projectCardStatusError_;
         // .md 文件关联（F-10）：回读归属快照（compose 节流查询写入）
         in.notepadAssocState = notepadAssocState_;
         in.notepadExtStates = notepadExtStates_;
@@ -2321,14 +2175,6 @@ private:
     bool webPortFeedbackError_ = false;
     bool webBindingConfirm_ = false;
     std::string webError_;
-    // 需-11 项目卡：列表快照（刷新点 = onStart/onPageEnter/增删改）+ 表单草稿与
-    // 反馈。selectedName 是「装载草稿时的原名」：改名保存删它、删除按钮删它。
-    std::vector<ProjectCard> projectCards_;
-    ProjectCard projectCardDraft_;
-    bool projectCardEditingExisting_ = false;
-    std::string projectCardSelectedName_;
-    std::string projectCardStatus_;
-    bool projectCardStatusError_ = false;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志/同步）
     std::vector<std::string> logTail_;    // 日志文件末尾行内存快照（compose 只渲染）

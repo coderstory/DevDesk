@@ -229,7 +229,6 @@ add_executable(devdesk_tests
     # 需-11 project_info MCP 工具：中文命中/缺 name 明确错误/未知名清单/装配接线
     test_modules/test_project_info_tool.cpp
     # 需-11 项目卡设置卡：表单/列表/删除门控/按钮回调/卡高几何（无头 compose）
-    test_modules/test_project_cards_card.cpp
     test_modules/test_local_git_probe.cpp
     # F-18 记事本关联纯逻辑（接管退役 test_md_assoc_logic.cpp）
     test_modules/test_notepad_assoc.cpp

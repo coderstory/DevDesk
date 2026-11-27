@@ -13,7 +13,6 @@ add_library(devdesk_module_settings STATIC
     github_sync_logic.cpp
     git_error_dialog.cpp
     project_card_store.cpp
-    project_cards_card.cpp
     project_info_tool.cpp
 )
 

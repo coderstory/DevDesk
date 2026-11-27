@@ -69,12 +69,6 @@ struct SettingsCardsIn {
     std::string mcpLastError;            // 桥快照：Failed 时非空
 
     // 需-11 项目卡快照（「同步」tab 项目卡卡）
-    const std::vector<ProjectCard>* projectCards = nullptr;  // 列表（null = 按空渲染）
-    ProjectCard projectCardDraft;             // 表单草稿副本（compose 每帧从模块成员拷贝）
-    bool projectCardEditingExisting = false;  // true = 草稿来自已存卡（删除可用）
-    std::string projectCardSelectedName;      // 选中卡名（列表高亮 + 删除/改名目标）
-    std::string projectCardStatus;            // 反馈行文案（空 = 空白占位）
-    bool projectCardStatusError = false;      // true = 红字；false = 三级字
 
     // 代理端口行反馈位（need155 §5.2，机制=MCP 端口行同款；追加末尾——本结构
     // compose 侧按位置聚合初始化，中段插字段会错位）
@@ -144,11 +138,6 @@ struct SettingsCardActions {
     std::function<void()> discardMcpPortDraft;                 // Esc 丢弃
 
     // 需-11 项目卡回调
-    std::function<void(ProjectCardField, const std::string&)> setProjectCardField;  // 字段编辑
-    std::function<void()> projectCardNew;      // 新建态（清草稿）
-    std::function<void()> projectCardSave;     // 保存草稿（upsert；改名 = 删旧名落新名）
-    std::function<void()> projectCardDelete;   // 删除选中卡
-    std::function<void(const std::string&)> projectCardSelect;  // 点列表行装入表单
 
     // 网页访问（need#490 W6）：新回调一律追加末尾。
     std::function<void(bool)> applyWebAccessEnabled;  // 开关（start/stop）
