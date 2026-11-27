@@ -121,6 +121,8 @@ std::string disclosureLabelFor(const std::string& tableName) {
     if (tableName == "github_sync_state") return "Token 与同步状态";
     // 需-11：项目卡含测试库地址（可能带凭据），随 skip 清单整表不上传
     if (tableName == "project_cards") return "项目卡（含测试库地址）";
+    // P2-16：滚动位置/选中项是本机使用现场，跨机导入会互相覆盖 → 整表不上传
+    if (tableName == "ui_view_state") return "本机视图状态";
     return tableName;
 }
 
