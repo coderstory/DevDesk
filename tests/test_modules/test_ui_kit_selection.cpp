@@ -13,6 +13,7 @@
 #include "doctest.h"
 #include "core/theme.h"
 #include "ui_kit/selection_bar.h"
+#include "ui_kit/text_metrics.h"  // need532：wtab 指示条宽与文字宽同源
 #include "ui_kit/wtab.h"
 #include "ui_kit/wswitch.h"
 #include <eui/dsl.h>
@@ -307,3 +308,92 @@ REGISTER_TEST(ui_kit_wtab_slide_interpolation,
     DOCTEST_CHECK(endAbsX > startX + 60.0f);  // 目标 ≈ start + 80（tab 右移一位）
     return true;
 })
+
+// ★ need532（批次 B-2）：wtab 参数逐项对齐设计稿 §4。
+// 断三件设计稿硬性项：
+//   ① 指示条宽 = 文字宽（不含内边距）——此前用手写估算式，与真实 shaping 有偏差；
+//   ② tab 宽 = 文字宽 + 内边距×2（页面级 20 / 弹窗级 14）；
+//   ③ tab 间 gap = 页面级 8 / 弹窗级 4。
+REGISTER_TEST(ui_kit_wtab_row_padding_and_gap_per_level,
+              "ui_kit wtabRow：内边距 20/14 与 gap 8/4 按页面级/弹窗级分档", {
+    const auto& t = core::theme::current();
+
+    // 页面级：单 tab 行 → 用 tab 宽反推内边距（tabW = textW + padX×2）
+    eui::Ui uiPage;
+    uiPage.begin("w02c_tab_pad_page");
+    ui_kit::wtabRow(uiPage, "p", {"全部"}, 0, "", 0.0f, 0.0f, 400.0f, 40.0f, t,
+                    [](int) {}, ui_kit::kWtabFontSize);
+    uiPage.end();
+    const auto* pageTab = uiPage.find("p.tab.0");
+    DOCTEST_REQUIRE(pageTab != nullptr);
+    const float pageTextW = ui_kit::cachedTextWidth(
+        "全部", core::theme::scaled(ui_kit::kWtabFontSize), 400.0f);
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(pageTab->width.value - (pageTextW + 20.0f * 2.0f)) < 0.5f,
+        std::string("页面级 tab 宽 ") + std::to_string(pageTab->width.value));
+
+    // 弹窗级：内边距 14
+    eui::Ui uiDialog;
+    uiDialog.begin("w02c_tab_pad_dialog");
+    ui_kit::wtabRow(uiDialog, "d", {"全部"}, 0, "", 0.0f, 0.0f, 400.0f, 36.0f, t,
+                    [](int) {}, ui_kit::kWtabSmallFontSize);
+    uiDialog.end();
+    const auto* dlgTab = uiDialog.find("d.tab.0");
+    DOCTEST_REQUIRE(dlgTab != nullptr);
+    const float dlgTextW = ui_kit::cachedTextWidth(
+        "全部", core::theme::scaled(ui_kit::kWtabSmallFontSize), 400.0f);
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(dlgTab->width.value - (dlgTextW + 14.0f * 2.0f)) < 0.5f,
+        std::string("弹窗级 tab 宽 ") + std::to_string(dlgTab->width.value));
+
+    // gap：两个 tab 时第二个的 x − 第一个右缘 = 8（页面）/ 4（弹窗）
+    eui::Ui uiGap;
+    uiGap.begin("w02c_tab_gap_page");
+    ui_kit::wtabRow(uiGap, "g", {"甲乙", "丙丁"}, 0, "", 0.0f, 0.0f, 400.0f, 40.0f, t,
+                    [](int) {}, ui_kit::kWtabFontSize);
+    uiGap.end();
+    uiGap.layout(400.0f, 40.0f);
+    auto* t0 = uiGap.find("g.tab.0");
+    auto* t1 = uiGap.find("g.tab.1");
+    DOCTEST_REQUIRE(t0 != nullptr);
+    DOCTEST_REQUIRE(t1 != nullptr);
+    const float pageGap = t1->frame.x - (t0->frame.x + t0->frame.width);
+    DOCTEST_CHECK_MESSAGE(std::fabs(pageGap - 8.0f) < 0.5f,
+                          std::string("页面级 gap ") + std::to_string(pageGap));
+
+    eui::Ui uiGap2;
+    uiGap2.begin("w02c_tab_gap_dialog");
+    ui_kit::wtabRow(uiGap2, "h", {"甲乙", "丙丁"}, 0, "", 0.0f, 0.0f, 400.0f, 36.0f, t,
+                    [](int) {}, ui_kit::kWtabSmallFontSize);
+    uiGap2.end();
+    uiGap2.layout(400.0f, 36.0f);
+    auto* s0 = uiGap2.find("h.tab.0");
+    auto* s1 = uiGap2.find("h.tab.1");
+    DOCTEST_REQUIRE(s0 != nullptr);
+    DOCTEST_REQUIRE(s1 != nullptr);
+    const float dlgGap = s1->frame.x - (s0->frame.x + s0->frame.width);
+    DOCTEST_CHECK_MESSAGE(std::fabs(dlgGap - 4.0f) < 0.5f,
+                          std::string("弹窗级 gap ") + std::to_string(dlgGap));
+    return true;
+});
+
+// ★ need532：指示条宽应等于真实文字宽（设计稿 §4 硬性项「宽 = 文字宽不含
+// padding」）。此前用手写估算式，长文案下指示条可比文字明显偏宽/偏窄。
+REGISTER_TEST(ui_kit_wtab_indicator_width_matches_text,
+              "ui_kit wtab：指示条宽 = 真实文字宽（非估算式）", {
+    const auto& t = core::theme::current();
+    const std::string label = "运行历史";
+    eui::Ui ui;
+    ui.begin("w02c_tab_ind_width");
+    ui_kit::wtab(ui, "tab.w", label, true, 0.0f, 0.0f, 200.0f, 40.0f, t);
+    ui.end();
+
+    const auto* ind = ui.find("tab.w.ind");
+    DOCTEST_REQUIRE(ind != nullptr);
+    const float realW =
+        ui_kit::cachedTextWidth(label, core::theme::scaled(ui_kit::kWtabFontSize), 400.0f);
+    DOCTEST_CHECK_MESSAGE(std::fabs(ind->width.value - realW) < 0.5f,
+                          std::string("指示条宽 ") + std::to_string(ind->width.value) +
+                              " 文字宽 " + std::to_string(realW));
+    return true;
+});

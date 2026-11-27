@@ -9,6 +9,8 @@
 // 组内上次激活 tab 的指示条目标几何，本帧按 elapsed 手工插值画 <id>.ind。
 #include <ui_kit/wtab.h>
 
+#include <ui_kit/text_metrics.h>
+
 #include <components/theme.h>
 
 #include <algorithm>
@@ -68,15 +70,20 @@ std::string windowKey(const eui::Ui& ui) {
     return std::to_string(reinterpret_cast<std::uintptr_t>(&ui));
 }
 
-// 文本宽度估算：release chipWidth / schedule textWidth 同式（CJK 0.43 /
-// ASCII 0.56 × 字号 + 1.6 字号基宽；略偏大只多留白、不裁字）。
+// 文本宽度：走 ui_kit 统一缓存估宽（与真实 shaping 同结果）。
+// need532：此前是本文件手写的 CJK 0.43 / ASCII 0.56 估算式——指示条宽
+// （= 文字宽，设计稿 §4 硬性项）与 tab 宽都依赖它，估算偏差会直接体现为
+// 指示条比文字长/短。改用 cachedTextWidth 后与文字渲染同源。
 float wtabTextWidth(const std::string& text, float fontSize) {
-    float w = fontSize * 1.6f;
-    for (unsigned char c : text) {
-        w += (c >= 0x80) ? fontSize * 0.43f : fontSize * 0.56f;
-    }
-    return w;
+    return cachedTextWidth(text, core::theme::scaled(fontSize), 400.0f);
 }
+
+// 设计稿 §4：tab 水平内边距 = 页面级 20 / 弹窗级 14；tab 间 gap = 页面级 8 /
+// 弹窗级 4。等级由 fontSize 判定（同 hover 圆角的既有判档口径）。
+constexpr float kPadXPage = 20.0f;
+constexpr float kPadXDialog = 14.0f;
+constexpr float kGapPage = 8.0f;
+constexpr float kGapDialog = 4.0f;
 
 } // namespace
 
@@ -188,11 +195,14 @@ void wtabRow(eui::Ui& ui, const std::string& idBase,
              const std::function<void(int)>& onTab, float fontSize) {
     const float tabH = kWtabHeight;
     const float tabY = y + (h - tabH) * 0.5f;
-    const float gap = core::theme::scaled(8.0f);  // spacing 8 档
+    // 设计稿 §4：页面级 gap 8 / 弹窗级 4；水平内边距 20 / 14（两侧合计即 tab 宽增量）。
+    const bool dialogLevel = (fontSize == kWtabSmallFontSize);
+    const float gap = core::theme::scaled(dialogLevel ? kGapDialog : kGapPage);
+    const float padX = core::theme::scaled(dialogLevel ? kPadXDialog : kPadXPage);
     float cx = x;
     for (std::size_t i = 0; i < labels.size(); ++i) {
         const bool active = static_cast<int>(i) == selected;
-        const float tabW = wtabTextWidth(labels[i], fontSize) + 24.0f;
+        const float tabW = wtabTextWidth(labels[i], fontSize) + padX * 2.0f;
         wtab(ui, idBase + ".tab." + std::to_string(i), labels[i], active, cx,
              tabY, tabW, tabH, t,
              [onTab, i] {
