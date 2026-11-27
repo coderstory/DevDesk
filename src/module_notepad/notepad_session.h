@@ -15,7 +15,7 @@
 
 #include "core/result.h"  // Result<void>（另存为落地单点返回面）
 #include "notepad_encoding.h"
-#include "notepad_find.h"  // FindHit / kFindNoHit（查找态字段集）
+#include "ui_kit/text_find.h"  // FindHit / kFindNoHit（查找态字段集）
 
 // eui::Ui / Screen / KeyEvent 在 EUI-NEO 里是 core::dsl 的**类型别名**
 //（eui/dsl.h:9-10、types.h:36），不可在本头前向声明 class/struct——那会撞成
@@ -26,6 +26,9 @@
 #include <components/markdown.h>  // MarkdownStyle（need345 预览选区样式快照字段）
 
 namespace module::notepad {
+
+using ::ui_kit::text_find::FindHit;
+using ::ui_kit::text_find::kFindNoHit;
 
 // 模块内共享（notepad_module.cpp / notepad_session.cpp 同模块内部使用，非公开 API）：
 // 注册表本体 + pageId 全局递增序号（pageId = notepad.<seq>，跨清空单调递增）。

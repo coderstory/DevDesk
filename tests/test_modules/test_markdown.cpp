@@ -865,7 +865,51 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     return true;
 })
 
-// 2b. 目录树展开/收起 + 缩进 layout 级验证
+// 2026-11-27：查找/替换条（notepad 纯引擎回流 ui_kit/text_find）键盘入口与控件在册。
+REGISTER_TEST(md_find_bar_shortcuts,
+              "markdown: Ctrl+F/H 打开查找/替换条；Ctrl+H 带替换行；Esc 关闭（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "findbar", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "alpha beta\nalpha\n"));
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    frame("fb1");
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    frame("fb2");
+    DOCTEST_REQUIRE(ui.find(kEditorInputId) != nullptr);
+
+    DOCTEST_CHECK(mod->onKeyEvent(test_support::pressShortcut(eui::InputKey::F)));
+    frame("fb3");
+    DOCTEST_REQUIRE(ui.find("md.find.bar") != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.find.query") != nullptr);
+    DOCTEST_CHECK(ui.find("md.find.replace") == nullptr);  // 纯查找不带替换行
+
+    DOCTEST_CHECK(mod->onKeyEvent(test_support::pressShortcut(eui::InputKey::H)));
+    frame("fb4");
+    DOCTEST_REQUIRE(ui.find("md.find.replace") != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.find.replaceAll") != nullptr);
+
+    eui::KeyEvent esc;
+    esc.key = eui::InputKey::Escape;
+    DOCTEST_CHECK(mod->onKeyEvent(esc));
+    frame("fb5");
+    DOCTEST_CHECK(ui.find("md.find.bar") == nullptr);
+    mod->onStop();
+    return true;
+})
 
 REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起/缩进 layout（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "tree", kDbName);

@@ -8,6 +8,8 @@
 #（spec 2026-09-27-refactor-incremental §4.1）。
 add_library(devdesk_ui_kit STATIC
     toast.cpp
+    # 查找/替换纯函数引擎（notepad 原 notepad_find，2026-11-27 上提到 ui_kit 供多模块复用）
+    text_find.cpp
     dialog_form.cpp
     card.cpp
     splash.cpp

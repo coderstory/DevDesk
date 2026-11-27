@@ -4,20 +4,20 @@
 // 全边界（缩短文本/命中在文末/0 剩余/下一命中贴替换末）/replaceAll 计数
 // /mergeRuns 命中层切分与当前命中合成。
 #include "doctest.h"
-#include "module_notepad/notepad_find.h"
+#include "ui_kit/text_find.h"
 
 #include <string>
 #include <vector>
 
-using module::notepad::FindHit;
-using module::notepad::FindOptions;
-using module::notepad::findAll;
-using module::notepad::kFindNoHit;
-using module::notepad::mergeRuns;
-using module::notepad::nextFrom;
-using module::notepad::prevFrom;
-using module::notepad::replaceAll;
-using module::notepad::replaceOneAt;
+using ui_kit::text_find::FindHit;
+using ui_kit::text_find::FindOptions;
+using ui_kit::text_find::findAll;
+using ui_kit::text_find::kFindNoHit;
+using ui_kit::text_find::mergeRuns;
+using ui_kit::text_find::nextFrom;
+using ui_kit::text_find::prevFrom;
+using ui_kit::text_find::replaceAll;
+using ui_kit::text_find::replaceOneAt;
 
 namespace {
 

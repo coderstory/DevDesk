@@ -6,10 +6,13 @@
 #include "markdown_module_internal.h"
 
 #include "core/app_config.h"  // appconfig::set（字号偏好落库，池163）
+#include <core/platform/platform.h>  // requestUiUpdate（查找条重绘）
 
 #include <components/button.h>  // 字号步进对（need161）
 
 #include <utility>  // std::move（check-std-includes：不靠传递包含）
+#include <algorithm>  // std::min（替换全部后的光标钳制）
+#include <cstdio>   // std::snprintf（查找命中计数）
 
 namespace module::markdown {
 
@@ -32,6 +35,9 @@ void MarkdownModule::drawEditorColumn(eui::Ui& ui,
     drawTextColumnChrome(
         ui, "md.editor", bodyH, midW, t,
         componentTheme, tabBandInset(), [&](const TextColumnGeometry& g) {
+            // 查找/替换条（2026-11-27）：打开时压到编辑器顶部，正文区让出高度。
+            const float findBarH =
+                findOpen_ ? (findReplaceMode_ ? 72.0f : 38.0f) : 0.0f;
             // 1px 底边线（池128）：default 态唯一边界指示；focus 时组件绿边
             // 同位覆盖（后画者在上），失焦回到底线。
             ui.rect("md.editor.input.baseline")
@@ -40,8 +46,8 @@ void MarkdownModule::drawEditorColumn(eui::Ui& ui,
                 .color(t.colors.borderDefault)
                 .build();
             components::input(ui, kEditorInputId)
-                .position(g.x, g.y)
-                .size(g.w, g.h)
+                .position(g.x, g.y + findBarH)
+                .size(g.w, g.h - findBarH)
                 .value(editorText_)
                 .placeholder("在这里写 Markdown…")
                 .multiline(true)
@@ -68,9 +74,18 @@ void MarkdownModule::drawEditorColumn(eui::Ui& ui,
                     using InputState =
                         components::input_detail::InputModel::InputState;
                     auto& st = ui.state<InputState>(kEditorInputId);
-                    return highlighter_.runsForLine(
+                    auto runs = highlighter_.runsForLine(
                         st.preedit ? st.preedit->text : st.text, lineText,
                         lineStartByte);
+                    if (!findOpen_ || findHits_.empty()) return runs;
+                    const auto& tNow = core::theme::current();
+                    const ui_kit::text_find::FindHit* curHit =
+                        findCur_ < findHits_.size() ? &findHits_[findCur_]
+                                                    : nullptr;
+                    return ui_kit::text_find::mergeRuns(
+                        runs, findHits_, curHit, lineText,
+                        static_cast<size_t>(lineStartByte), tNow.colors.primary,
+                        tNow.colors.errorText, true);
                 })
                 // 输入框右键菜单直挂 input（onContextMenu），坐标经统一换算（窗口 → 页面坐标）。
                 .onContextMenu([this](const eui::PointerEvent& ev,
@@ -82,6 +97,7 @@ void MarkdownModule::drawEditorColumn(eui::Ui& ui,
                     editorCtxOpen_ = true;
                 })
                 .build();
+            if (findOpen_) drawFindBar(ui, g, t, componentTheme);
         });
 }
 
@@ -97,6 +113,29 @@ bool MarkdownModule::handleEditorKey(eui::Ui& ui, const eui::KeyEvent& event) {
     const bool plain = !shortcut && !event.modifiers.shift &&
                        !event.modifiers.alt && !event.modifiers.super;
     bool handled = false;
+    if (shortcut && !event.modifiers.shift && !event.modifiers.alt) {
+        if (event.key == eui::InputKey::F) {
+            findOpen_ = true;
+            findReplaceMode_ = false;
+            refreshFindHits();
+            ::core::platform::requestUiUpdate();
+            return true;
+        }
+        if (event.key == eui::InputKey::H) {
+            findOpen_ = true;
+            findReplaceMode_ = true;
+            refreshFindHits();
+            ::core::platform::requestUiUpdate();
+            return true;
+        }
+    }
+    if (findOpen_ && event.key == eui::InputKey::Escape) {
+        findOpen_ = false;
+        findHits_.clear();
+        findCur_ = ui_kit::text_find::kFindNoHit;
+        ::core::platform::requestUiUpdate();
+        return true;
+    }
     if (event.key == eui::InputKey::Tab && !shortcut && !event.modifiers.alt) {
         if (!applyTabTable(buf, event.modifiers.shift)) {
             applyTab(buf, event.modifiers.shift);
@@ -568,6 +607,216 @@ void MarkdownModule::syncCurrentMtime() {
     }
     auto m = service_->fileMtime(currentPath_);
     lastKnownMtime_ = m.isOk() ? m.value() : -1;
+}
+
+void MarkdownModule::refreshFindHits()  {
+    if (findQuery_.empty()) {
+        findHits_.clear();
+    } else {
+        findHits_ = ui_kit::text_find::findAll(
+            editorText_, findQuery_, ui_kit::text_find::FindOptions{});
+    }
+    findCur_ = ui_kit::text_find::kFindNoHit;
+}
+
+void MarkdownModule::findSelectHit(eui::Ui& ui, size_t hitIndex)  {
+    if (hitIndex >= findHits_.size()) return;
+    using InputState = components::input_detail::InputModel::InputState;
+    auto& st = ui.state<InputState>(kEditorInputId);
+    const auto& hit = findHits_[hitIndex];
+    st.selectionStart = static_cast<int>(hit.start);
+    st.selectionEnd = static_cast<int>(hit.end);
+    st.cursor = static_cast<int>(hit.end);
+    findCur_ = hitIndex;
+    ::core::platform::requestUiUpdate();
+}
+
+void MarkdownModule::replaceFindOne(eui::Ui& ui)  {
+    if (findCur_ >= findHits_.size()) return;
+    const auto r = ui_kit::text_find::replaceOneAt(
+        editorText_, findHits_[findCur_], findReplaceText_, findQuery_,
+        ui_kit::text_find::FindOptions{});
+    onEditorTextChanged(r.text);
+    using InputState = components::input_detail::InputModel::InputState;
+    auto& st = ui.state<InputState>(kEditorInputId);
+    st.cursor = static_cast<int>(r.cursor);
+    st.selectionStart = static_cast<int>(r.selStart);
+    st.selectionEnd = static_cast<int>(r.selEnd);
+    refreshFindHits();
+    // 替换后落到下一处（按 replaceOneAt 已锁的落点）
+    for (size_t i = 0; i < findHits_.size(); ++i) {
+        if (findHits_[i].start == r.selStart) {
+            findCur_ = i;
+            break;
+        }
+    }
+    ::core::platform::requestUiUpdate();
+}
+
+void MarkdownModule::replaceFindAllNow(eui::Ui& ui)  {
+    if (findQuery_.empty()) return;
+    const auto r = ui_kit::text_find::replaceAll(
+        editorText_, findQuery_, findReplaceText_,
+        ui_kit::text_find::FindOptions{});
+    if (r.count == 0) return;
+    onEditorTextChanged(r.text);
+    using InputState = components::input_detail::InputModel::InputState;
+    auto& st = ui.state<InputState>(kEditorInputId);
+    const int size = static_cast<int>(r.text.size());
+    const int cursor = std::min(st.cursor >= 0 ? st.cursor : 0, size);
+    st.cursor = cursor;
+    st.selectionStart = cursor;
+    st.selectionEnd = cursor;
+    refreshFindHits();
+    ::core::platform::requestUiUpdate();
+}
+
+void MarkdownModule::drawFindBar(
+    eui::Ui& ui, const TextColumnGeometry& g, const core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& comp)  {
+    const float barH = findReplaceMode_ ? 72.0f : 38.0f;
+    ui.rect("md.find.bar")
+        .position(g.x, g.y)
+        .size(g.w, barH)
+        .color(t.colors.primarySoftBg)
+        .border(1.0f, t.colors.borderDefault)
+        .build();
+
+    components::InputStyle style(comp);
+    style.background = eui::Color{0.0f, 0.0f, 0.0f, 0.0f};
+    style.focused = t.colors.primarySoftBg;
+    style.border = t.colors.borderDefault;
+    style.focusBorder = t.colors.primary;
+    style.radius = 6.0f;
+    style.shadow = core::Shadow{};
+
+    const auto closeFind = [this]() {
+        findOpen_ = false;
+        findHits_.clear();
+        findCur_ = ui_kit::text_find::kFindNoHit;
+        ::core::platform::requestUiUpdate();
+    };
+
+    components::input(ui, "md.find.query")
+        .position(g.x + 8.0f, g.y + 5.0f)
+        .size(210.0f, 28.0f)
+        .value(findQuery_)
+        .placeholder("查找")
+        .fontSize(12.0f)
+        .inset(5.0f)
+        .theme(comp)
+        .style(style)
+        .onChange([this](const std::string& v) {
+            findQuery_ = v;
+            refreshFindHits();
+            ::core::platform::requestUiUpdate();
+        })
+        .onKeyEvent([this, &ui, closeFind](const eui::KeyEvent& ev) {
+            if (!ev.isDown()) return false;
+            if (ev.key == eui::InputKey::Enter) {
+                if (findHits_.empty()) return true;
+                const size_t n = findHits_.size();
+                const size_t next =
+                    ev.modifiers.shift
+                        ? (findCur_ == ui_kit::text_find::kFindNoHit
+                               ? n - 1
+                               : (findCur_ + n - 1) % n)
+                        : (findCur_ == ui_kit::text_find::kFindNoHit
+                               ? 0
+                               : (findCur_ + 1) % n);
+                findSelectHit(ui, next);
+                return true;
+            }
+            if (ev.key == eui::InputKey::Escape) {
+                closeFind();
+                return true;
+            }
+            return false;
+        })
+        .build();
+
+    char countBuf[32];
+    if (findHits_.empty()) {
+        std::snprintf(countBuf, sizeof countBuf, "0/0");
+    } else {
+        std::snprintf(countBuf, sizeof countBuf, "%zu/%zu",
+                      findCur_ < findHits_.size() ? findCur_ + 1 : 0,
+                      findHits_.size());
+    }
+    ui.text("md.find.count")
+        .position(g.x + 226.0f, g.y + 5.0f)
+        .size(56.0f, 28.0f)
+        .text(countBuf)
+        .fontSize(11.0f)
+        .lineHeight(28.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(findHits_.empty() ? t.colors.textTertiary
+                                 : t.colors.textSecondary)
+        .build();
+
+    auto barButton = [&](const char* id, const char* label, float x, float w,
+                         std::function<void()> onClick) {
+        components::button(ui, id)
+            .theme(comp, false)
+            .position(x, g.y + 7.0f)
+            .size(w, 24.0f)
+            .text(label)
+            .fontSize(11.0f)
+            .onClick(std::move(onClick))
+            .build();
+    };
+    barButton("md.find.prev", "上一处", g.x + 286.0f, 50.0f,
+              [this, &ui] {
+                  if (findHits_.empty()) return;
+                  const size_t n = findHits_.size();
+                  findSelectHit(ui, findCur_ == ui_kit::text_find::kFindNoHit
+                                        ? n - 1
+                                        : (findCur_ + n - 1) % n);
+              });
+    barButton("md.find.next", "下一处", g.x + 340.0f, 50.0f,
+              [this, &ui] {
+                  if (findHits_.empty()) return;
+                  const size_t n = findHits_.size();
+                  findSelectHit(ui, findCur_ == ui_kit::text_find::kFindNoHit
+                                        ? 0
+                                        : (findCur_ + 1) % n);
+              });
+    barButton("md.find.close", "×", g.x + g.w - 34.0f, 26.0f, [closeFind] {
+        closeFind();
+    });
+
+    if (!findReplaceMode_) return;
+    components::input(ui, "md.find.replace")
+        .position(g.x + 8.0f, g.y + 39.0f)
+        .size(210.0f, 28.0f)
+        .value(findReplaceText_)
+        .placeholder("替换为")
+        .fontSize(12.0f)
+        .inset(5.0f)
+        .theme(comp)
+        .style(style)
+        .onChange([this](const std::string& v) {
+            findReplaceText_ = v;
+        })
+        .build();
+    components::button(ui, "md.find.replaceOne")
+        .theme(comp, false)
+        .position(g.x + 226.0f, g.y + 41.0f)
+        .size(56.0f, 24.0f)
+        .text("替换")
+        .fontSize(11.0f)
+        .disabled(findCur_ >= findHits_.size())
+        .onClick([this, &ui] { replaceFindOne(ui); })
+        .build();
+    components::button(ui, "md.find.replaceAll")
+        .theme(comp, false)
+        .position(g.x + 288.0f, g.y + 41.0f)
+        .size(76.0f, 24.0f)
+        .text("全部替换")
+        .fontSize(11.0f)
+        .disabled(findHits_.empty())
+        .onClick([this, &ui] { replaceFindAllNow(ui); })
+        .build();
 }
 
 } // namespace module::markdown

@@ -5,8 +5,6 @@ add_library(devdesk_module_notepad STATIC
     notepad_file_io.cpp
     notepad_encoding.cpp
     notepad_prefs.cpp
-    # 查找/替换纯函数引擎（字节域，无 UI 依赖；need263 批 2 F-06/F-07/F-08）
-    notepad_find.cpp
     # 扩展名→语言映射单一真源 + per-line 高亮 provider（need263 批 2，走 ui_kit LangSpec 单入口）
     notepad_language.cpp
     # 未保存保护纯决策层（need263 批 4 F-05：三选映射/veto 裁决/quit guard 扫描）

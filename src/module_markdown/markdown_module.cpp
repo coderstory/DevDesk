@@ -603,6 +603,25 @@ void MarkdownModule::setMode(ViewMode m) {
 }
 
 bool MarkdownModule::onKeyEvent(const eui::KeyEvent& key)  {
+    // 查找条打开时 Esc 先关条（优先于弹窗链）。
+    if (key.isDown() && findOpen_ && key.key == eui::InputKey::Escape) {
+        findOpen_ = false;
+        findHits_.clear();
+        findCur_ = ui_kit::text_find::kFindNoHit;
+        ::core::platform::requestUiUpdate();
+        return true;
+    }
+    // Ctrl+F / Ctrl+H：打开查找/替换条（编辑器聚焦时由 handleEditorKey 先拦，
+    // 这里兜底树/预览聚焦场景）。
+    if (key.isDown() && key.modifiers.shortcut() && !key.modifiers.shift &&
+        !key.modifiers.alt &&
+        (key.key == eui::InputKey::F || key.key == eui::InputKey::H)) {
+        findOpen_ = true;
+        findReplaceMode_ = key.key == eui::InputKey::H;
+        refreshFindHits();
+        ::core::platform::requestUiUpdate();
+        return true;
+    }
     // 弹窗输入框已挂 onCancel，聚焦时 Esc 被 input 收走，不重复
     if (key.isDown() && key.key == eui::InputKey::Escape) {
         return closeTopmostPopup();

@@ -18,11 +18,13 @@
 #include "core/component_theme.h"
 #include "core/event_bus.h"
 #include "core/time.h"
+#include <core/platform/platform.h>  // requestUiUpdate（Ctrl+F/H 打开查找条）
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/empty_state.h>
 #include <ui_kit/metrics.h>
+#include <ui_kit/text_find.h>
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
 #include "markdown_service.h"
@@ -933,6 +935,22 @@ private:
     void flushEditorIfIdle() ;
 
     void saveEditor() ;
+
+    // ── 查找/替换（notepad 引擎回流：ui_kit/text_find；2026-11-27）──
+    // 只服务编辑器当前文档；findHits_ 为当前 query 的字节区间，findCur_ 为当前命中下标。
+    void drawFindBar(eui::Ui& ui, const TextColumnGeometry& g,
+                     const core::theme::Tokens& t,
+                     const components::theme::ThemeColorTokens& comp);
+    void refreshFindHits();
+    void findSelectHit(eui::Ui& ui, size_t hitIndex);
+    void replaceFindOne(eui::Ui& ui);
+    void replaceFindAllNow(eui::Ui& ui);
+    bool findOpen_ = false;
+    bool findReplaceMode_ = false;
+    std::string findQuery_;
+    std::string findReplaceText_;
+    std::vector<ui_kit::text_find::FindHit> findHits_;
+    size_t findCur_ = ui_kit::text_find::kFindNoHit;
 
     // 文件变化自动感知：索引同步在 MarkdownService 后台线程（bug402/403），
     // 本帧入口只消费「有变化」标记 + 节流做当前笔记外部修改检测。
