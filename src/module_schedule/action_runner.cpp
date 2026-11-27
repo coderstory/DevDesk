@@ -31,9 +31,20 @@ int64_t retryDelaySec(int attempt, int64_t suggestedSec) {
 // 但不停用不重试——§4.9 只允许 93000 类永久失败停用渠道；其余 = 永久失败。
 ReceiptClass classifyReceipt(const module::schedule::Receipt& receipt) {
     const std::string& s = receipt.status;
-    if (s == "ok" || s == "queued") return ReceiptClass::kSuccess;
+    // 成功：本仓渠道自报 ok/queued；OS 通知渠道直接透传 platform::notify::Status
+    // 的字符串（见 channels/os_notification.cpp 与 notification.cpp statusToString）。
+    // accepted/deduped 是「已投递」语义——此前未列入，导致首投成功即被判
+    // kPermanent → 按 §4.9 停用渠道（提醒永久失效且用户不知情）。
+    if (s == "ok" || s == "queued" || s == "accepted" || s == "deduped" ||
+        s == "not_bundled")
+        return ReceiptClass::kSuccess;
     if (s == "missing_secret") return ReceiptClass::kConfigMissing;
-    if (s.rfind("retryable:", 0) == 0 || s == "rate_limited")
+    // 可重试：本仓 retryable:* 前缀 + 限速 + OS 侧环境类失败（权限未定/后端不可用）。
+    // permission_denied 归可重试而非永久：用户去系统设置授权后即可恢复，
+    // 停用渠道会让「授权后仍收不到」变成需要手工重新启用的暗坑。
+    if (s.rfind("retryable:", 0) == 0 || s == "rate_limited" ||
+        s == "permission_denied" || s == "not_determined" ||
+        s == "backend_unavailable")
         return ReceiptClass::kRetryable;
     return ReceiptClass::kPermanent;
 }

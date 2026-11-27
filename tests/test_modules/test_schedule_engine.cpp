@@ -17,6 +17,7 @@
 #include "core/ticker.h"
 #include "module_schedule/channel_registry.h"
 #include "module_schedule/schedule_engine.h"
+#include "platform/notification.h"  // A-9：classifyReceipt 全枚举覆盖
 #include "module_schedule/schedule_module.h"
 #include "module_schedule/schedule_store.h"
 
@@ -1032,5 +1033,37 @@ REGISTER_TEST(schedule_engine_pending_advance_fail_requeue,
                      .value().fetchAll().value();
     DOCTEST_CHECK(rows2.size() == 1);  // 不重复插行
     DOCTEST_CHECK(rows2[0].getString("v").valueOr("") == "success");
+    return true;
+})
+
+// 批次 A-9：classifyReceipt 必须认识 platform::notify::Status 的每一个字符串。
+// 根因是「两组状态词各写一遍、没人保证一致」——OS 通知渠道直接透传
+// notify::statusToString()，而 classifyReceipt 原白名单只有 ok/queued，
+// 导致 accepted（投递成功）被判 kPermanent → 首投即停用渠道。
+// 本用例把 Status 全枚举逐个喂进去，任何一个是 kPermanent 就红。
+REGISTER_TEST(schedule_classify_receipt_covers_all_notify_status,
+              "投递分类: platform::notify::Status 全枚举都不判永久失败（A-9）", {
+    using module::schedule::ReceiptClass;
+    const platform::notify::Status all[] = {
+        platform::notify::Status::Accepted,
+        platform::notify::Status::Deduped,
+        platform::notify::Status::RateLimited,
+        platform::notify::Status::NotBundled,
+        platform::notify::Status::PermissionDenied,
+        platform::notify::Status::NotDetermined,
+        platform::notify::Status::BackendUnavailable,
+    };
+    for (const auto st : all) {
+        module::schedule::Receipt r;
+        r.status = platform::notify::statusToString(st);
+        const ReceiptClass cls = module::schedule::classifyReceipt(r);
+        // 一个都不许判永久失败：OS 侧失败都是环境可恢复类，停用渠道会制造暗坑
+        DOCTEST_CHECK_MESSAGE(cls != ReceiptClass::kPermanent,
+                              ("状态被判永久失败: " + r.status).c_str());
+    }
+    // 真永久失败仍应判永久（渠道自报的 93000 类）
+    module::schedule::Receipt perm;
+    perm.status = "permanent:errcode_93000";
+    DOCTEST_CHECK(module::schedule::classifyReceipt(perm) == ReceiptClass::kPermanent);
     return true;
 })
