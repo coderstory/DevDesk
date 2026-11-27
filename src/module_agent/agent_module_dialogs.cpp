@@ -2242,11 +2242,11 @@ void AgentModule::composeDeleteConfirmDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
     // need156：底区危险确认钮由壳 .confirm + dangerConfirm 承担（原 DangerThemed
-    // 按钮对退役）；高 190 低于壳下限 240 → 抬到 240（规范 §3.4）。
+    // 按钮对退役）。need531：改内容驱动高（原定高 240 对单行正文留满底盘空白）。
     ui_kit::DialogShellSpec shell;
     shell.id = "agent.dialog.delete";
     shell.width = ui_kit::DialogWidth::Compact;
-    shell.height = 240.0f;
+    shell.contentHeightProvider = ui_kit::dialogAutoHeight(60.0f);
     shell.open = deleteConfirmTaskId_.has_value();
     shell.zIndex = 1100;   // 叠在任务/详情弹窗（默认 1000）之上，同草稿子弹窗
     shell.title = "确认删除？";

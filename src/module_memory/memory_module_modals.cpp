@@ -17,7 +17,8 @@ void MemoryModule::composeEditDialog(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::DialogShellSpec shell;
     shell.id = "memory.dialog.edit";
     shell.width = ui_kit::DialogWidth::Standard;
-    shell.height = 240.0f;
+    // need531：内容驱动高（原定高 240）：提示 20 + 隙 8 + 输入 40 = 68
+    shell.contentHeightProvider = ui_kit::dialogAutoHeight(68.0f);
     shell.open = true;
     shell.title = "编辑后接受";
     shell.cancel = {"取消", [this] { editingId_.clear(); }};
@@ -62,12 +63,12 @@ void MemoryModule::composeMaskModal(eui::Ui& ui, const eui::Screen& screen,
                                     const core::theme::Tokens& t,
                                     const components::theme::ThemeColorTokens& ct) {
     if (!maskModalOpen_) return;
-    // need156：壳改走标准弹窗壳；220 低于壳最小 240 抬到下限（规范 §3.4），
-    // 确认钮走壳危险变体（原 Danger 级，语义同源）。
+    // need156：壳改走标准弹窗壳；确认钮走壳危险变体（原 Danger 级，语义同源）。
+    // need531：内容驱动高（原定高 240）——正文实占 64。
     ui_kit::DialogShellSpec shell;
     shell.id = "memory.dialog.mask";
     shell.width = ui_kit::DialogWidth::Standard;
-    shell.height = 240.0f;
+    shell.contentHeightProvider = ui_kit::dialogAutoHeight(64.0f);
     shell.open = true;
     shell.title = "确认关闭脱敏？";
     shell.dangerConfirm = true;

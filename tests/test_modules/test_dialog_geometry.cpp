@@ -147,9 +147,12 @@ REGISTER_TEST(dialog_geometry_content_height_provider,
 });
 
 // 防：最小高下限失效（确认类弹窗高度塌到内容之下）或 compact 档的另一条路径失效。
-// 不断言具体下限值（步骤 2 会 240→200），只断言「有下限且 compact 更矮」。
+// need531 后：下限统一 200，compact 字段已无作用——本用例锁两件事：
+// ①极矮请求被抬到下限（内容区高 = 下限 − 头 − 底 − 隙 > 0）；
+// ②compact=true 与 false 结果必须一致（证明它真的不再分流）。
+// 不钉具体像素值（下限会随设计迭代变），只钉自洽关系与「两档同值」。
 REGISTER_TEST(dialog_geometry_min_height_and_compact,
-              "弹窗几何：有最小高下限，compact 档不低于其自身下限且不高于标准下限", {
+              "弹窗几何：极矮请求被抬到下限，compact 开关已无分流作用", {
     // 极矮请求 → 被抬到下限
     ui_kit::DialogShellSpec tiny;
     tiny.id = "geom.min";
@@ -163,18 +166,22 @@ REGISTER_TEST(dialog_geometry_min_height_and_compact,
     eui::Ui ui1;
     const auto minCap = drawShellOnce(tiny, 1.0f, ui1);
     DOCTEST_REQUIRE(minCap.called);
+    // 内容区高 = 下限 − 头 − 底 − 隙；三块都由同一套函数给出，故可直接对比
+    const float expectH = ui_kit::dialogMinH() - ui_kit::dialogHeaderH() -
+                          ui_kit::dialogFooterH() - ui_kit::dialogContentBottomGap();
+    DOCTEST_CHECK_MESSAGE(std::fabs(minCap.area.h - expectH) < 0.5f,
+                          std::string("实测 ") + std::to_string(minCap.area.h) +
+                              " 期望 " + std::to_string(expectH));
     DOCTEST_CHECK(minCap.area.h > 0.0f);
-    // 壳高被抬到下限：内容区高 = 下限 − 头 − 底 − 隙，应为正且远大于 0
-    DOCTEST_CHECK(minCap.area.h > 50.0f);
 
-    // compact 档：请求 10 高时下限更低，内容区不应高于标准档同情形
+    // compact 已无作用：同请求下两档结果必须逐值相同
     ui_kit::DialogShellSpec compactSpec = tiny;
     compactSpec.id = "geom.compact";
     compactSpec.compact = true;
     eui::Ui ui2;
     const auto compactCap = drawShellOnce(compactSpec, 1.0f, ui2);
     DOCTEST_REQUIRE(compactCap.called);
-    DOCTEST_CHECK(compactCap.area.h <= minCap.area.h + 0.01f);
+    DOCTEST_CHECK(std::fabs(compactCap.area.h - minCap.area.h) < 0.5f);
     return true;
 });
 
@@ -243,5 +250,45 @@ REGISTER_TEST(dialog_geometry_third_action_left_anchored,
     DOCTEST_CHECK(third->frame.x < cancel->frame.x);
     // 与右锚组同 y 基线
     DOCTEST_CHECK(std::fabs(third->frame.y - confirm->frame.y) < 0.5f);
+    return true;
+});
+
+// ★ need531 验收：内容驱动的确认类弹窗不再留底盘空白。
+// 语义：请求高 = 头 + 内容 + 底 + 隙；内容区高应恰等于声明的自然内容高，
+// 而不是被抬到 240 下限后留下 30~40px 空白。
+REGISTER_TEST(dialog_geometry_auto_height_no_blank,
+              "弹窗几何：内容驱动弹窗高度贴合内容，无底盘空白", {
+    ui_kit::DialogShellSpec spec;
+    spec.id = "geom.auto";
+    spec.width = ui_kit::DialogWidth::Standard;
+    spec.open = true;
+    spec.title = "确认删除？";
+    spec.cancel = {"取消", {}};
+    spec.confirm = {"删除", {}};
+    spec.dangerConfirm = true;
+    const float natural = 60.0f;
+    spec.contentHeightProvider = ui_kit::dialogAutoHeight(natural);
+
+    eui::Ui ui;
+    const auto cap = drawShellOnce(spec, 1.0f, ui);
+    DOCTEST_REQUIRE(cap.called);
+
+    // 内容区 = 自然高（未被下限抬升挤压，也无多余留白）
+    DOCTEST_CHECK_MESSAGE(std::fabs(cap.area.h - natural) < 0.5f,
+                          std::string("内容区高 ") + std::to_string(cap.area.h));
+    // 总请求高 = 头 + 内容 + 底 + 隙。
+    // 壳高由底区细节反推（节点 geom.auto 命中的是根容器，不是面板）：
+    // 内容区底 = area.y + area.h，再 + 隙 + 底区 = 面板高。
+    const float expectTotal = ui_kit::dialogHeaderH() + natural +
+                              ui_kit::dialogFooterH() +
+                              ui_kit::dialogContentBottomGap();
+    const float actualTotal = cap.area.y + cap.area.h +
+                              ui_kit::dialogContentBottomGap() +
+                              ui_kit::dialogFooterH();
+    DOCTEST_CHECK_MESSAGE(std::fabs(actualTotal - expectTotal) < 0.5f,
+                          std::string("壳高 ") + std::to_string(actualTotal) +
+                              " 期望 " + std::to_string(expectTotal));
+    // 关键：总高应显著小于旧下限 240（证明空白确实消掉了）
+    DOCTEST_CHECK(expectTotal < 240.0f);
     return true;
 });

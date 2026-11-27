@@ -449,11 +449,12 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
     const std::string body = "将删除任务「" + d.confirm.taskTitle + "」，不可恢复。";
 
     // need156：迁标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮对）；危险主钮走
-    // dangerConfirm（原 DialogButtonStyle::DangerThemed）。高 200 < 下限 240 → 抬到 240。
+    // dangerConfirm（原 DialogButtonStyle::DangerThemed）。
+    // need531：内容驱动高（原定高 240）：正文 40 + 动作下拉行到 y+66 高 16 = 82。
     ui_kit::DialogShellSpec shell;
     shell.id = "todo.dialog.delcol";
     shell.width = ui_kit::DialogWidth::Standard;
-    shell.height = 240.0f;
+    shell.contentHeightProvider = ui_kit::dialogAutoHeight(82.0f);
     shell.open = d.popups.isOpen(Popup::Confirm);
     // 从详情发起的删除确认叠在详情之上（z 由打开顺序给出）
     shell.zIndex = d.popups.zOf(Popup::Confirm);

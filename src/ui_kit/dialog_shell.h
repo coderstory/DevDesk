@@ -62,8 +62,11 @@ struct DialogShellSpec {
     // 滚动，内容底 = area.y + area.h = h−89。
     std::function<float(float contentW)> contentHeightProvider;
     bool dangerConfirm = false;       // 危险变体：confirm 底 error（删除确认类，规范 §3.3）
-    // 紧凑档（need337 老板验收口径：松散观感=底盘空白）：高度下限 240→200，
-    // 配合 height 传内容实占高（头 69+正文+底 73）用。opt-in 零波及默认弹窗。
+    // ⚠ need531（批次 B 步骤 2）：本字段已无作用——高度下限统一降到 200，
+    // 「紧凑档」成为默认行为，不再需要 opt-in 开关。字段保留仅为不打断既有
+    // 调用点（quit_save / wallpaper_delete 仍写 true，语义等同于默认，无害；
+    // 不用 [[deprecated]] 是因为 -Werror 会把那两处变成硬编译错）。
+    // 新调用点不要再依赖它：需要更矮的弹窗请用 contentHeightProvider 由内容驱动。
     bool compact = false;
     std::function<void(bool)> onOpenChange;
 };

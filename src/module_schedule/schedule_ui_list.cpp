@@ -1413,7 +1413,8 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
         ui_kit::DialogShellSpec shell;
         shell.id = "schedule.list.deleteConfirm";
         shell.width = ui_kit::DialogWidth::Standard;  // 旧 460 同档
-        shell.height = 240.0f;  // 旧 230，低于壳最小 240 抬到下限（规范 §3.4）
+        // need531：内容驱动高（原定高 240）：正文 20 + 行距 16 + 开关行 24 = 60
+        shell.contentHeightProvider = ui_kit::dialogAutoHeight(60.0f);
         shell.zIndex = 1200;
         shell.open = deleteConfirmOpen();
         shell.title = "删除定时规则";

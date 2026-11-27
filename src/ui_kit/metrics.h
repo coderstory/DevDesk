@@ -9,6 +9,8 @@
 
 #include <core/theme.h>  // core::theme::scaled（弹窗几何字号化函数用）
 
+#include <functional>  // dialogAutoHeight 返回 std::function
+
 namespace ui_kit {
 
 // 页头行高：各模块页头一律 40（UAT5 全局顶部收紧：todo 看板顶边 / markdown
@@ -62,11 +64,24 @@ inline float dialogFooterH() { return core::theme::scaled(73.0f); }
 inline float dialogContentBottomGap() { return core::theme::scaled(16.0f); }
 
 // 弹窗最小尺寸下限（规范 §3.4）：防内容挤扁；视口极窄时框架 clamp 优先（可低于下限）。
+// need531（批次 B 步骤 2）：240 → 200。原来的 240 让确认类弹窗（内容实占
+// ≈208）留下 32px 底盘空白（老板验收「观感松散」）；降到 200 后内容驱动成为
+// 默认行为，need337 的 compact 档不再是例外档。
 inline constexpr float kDialogMinW = 420.0f;
-inline float dialogMinH() { return core::theme::scaled(240.0f); }
+inline float dialogMinH() { return core::theme::scaled(200.0f); }
 
 // 弹窗按钮：高 40、最小宽 96（文字超出自适应加宽）、间距 8、右缘内缩 24（规范 §3.3）。
 inline float dialogButtonMinW() { return core::theme::scaled(96.0f); }
 inline float dialogButtonGap() { return core::theme::scaled(8.0f); }
+
+// need531：内容驱动高度的一行写法。把「内容实占高（未缩放基准）」换算成
+// DialogShellSpec::contentHeightProvider 需要的回调——壳会按
+// 头 + provider + 底 + 隙 算请求高，确认/提示类短内容弹窗因此不再留 32px 底盘空白。
+//
+// 用法：spec.contentHeightProvider = dialogAutoHeight(60.0f);   // 60 = 正文实占
+// 也可直接给 lambda（需按内容区宽动态算时用 spec.contentHeightProvider = ...）。
+inline std::function<float(float)> dialogAutoHeight(float contentHeight) {
+    return [contentHeight](float) { return contentHeight; };
+}
 
 } // namespace ui_kit

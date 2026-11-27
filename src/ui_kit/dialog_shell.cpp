@@ -83,7 +83,7 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
               dialogFooterH() + dialogContentBottomGap()
         : spec.height;
     const float h = std::min(
-        std::max(requestedH, spec.compact ? 200.0f : dialogMinH()),
+        std::max(requestedH, dialogMinH()),
         std::max(0.0f, screen.height - 96.0f));
 
     auto builder = components::dialog(ui, spec.id);

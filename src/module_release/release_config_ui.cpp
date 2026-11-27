@@ -1001,7 +1001,8 @@ void drawDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::DialogShellSpec shell;
     shell.id = "release.dialog.delete";
     shell.width = ui_kit::DialogWidth::Standard;  // 460
-    shell.height = 240.0f;
+    // need531：内容驱动高（原定高 240）：正文 + 错误行到 y+66 高 16 = 82。
+    shell.contentHeightProvider = ui_kit::dialogAutoHeight(82.0f);
     shell.open = state.confirmDelete;
     shell.title = state.deleteIsService ? "删除服务" : "删除环境";
     shell.cancel = {"取消",
