@@ -168,10 +168,26 @@ Expected: 两次提交均非 0；工作树无残留改动。
 
 ### Task 4: 按门禁口径提交本批
 
-- [ ] **Step 1: 跑全量**
+- [x] **Step 1: 跑全量**
 
 Run: `bash scripts/build-test-run.sh --no-run`
-Expected: `Failed: 0`（允许既有 `Skipped: 13`）。
+
+实际结果（2026-11-27 23:2x，macOS arm64，本机补跑）：
+
+- 第一轮：`Total 2757 / Passed 2748 / Failed 1 / Skipped 8` —— 红在
+  `todo_ui_drag_edge_autoscroll`（B-13 用例平台不对称）。
+- 第二轮（修用例后）：测试全绿，但守卫链红在 `test_todo_service.cpp:1664` 的
+  `std::milli` 缺 `<ratio>`（B-18 实测用例引入）。
+- 第三轮（补 include 后）：`Total 2757 / Passed 2749 / Failed 0 / Skipped 8`，
+  probe 72 个 100% passed（6 个设计内跳过），守卫链 6 道自检全过，Windows 交叉编译
+  526/526，std include 1030 文件全过。证据：`evidence/20261127-batch-fullrun/full-green.log`。
+
+两处红都不在产品代码，属「Windows 跑绿、mac/平台无关门禁会红」的遗漏：
+
+| 缺口 | 根因 | 修法 |
+|---|---|---|
+| B-13 用例红 | 用例把板底写死为 `screen.height − 30`，只在 Windows 密度档（pad 24）落在 28px 边缘带内；mac pad 32 落点已越出板底 | 落点改由 `ui_kit::density::pageInsetV()` 派生 |
+| std include 红 | B-18 用例用 `std::chrono::duration<double, std::milli>` 未 include `<ratio>`，靠标准库传递包含 | 补 `#include <ratio>` |
 
 - [ ] **Step 2: 证据落盘并通过 T3 提交**
 
@@ -201,5 +217,7 @@ Evidence: evidence/20261127-devflow-install/gate-summary.json"
       未超 50ms 预算则不做增量刷新）。
 - [x] C-2 = P2-8：系统「减少动态效果」下待办卡果冻静止（`jellyFrame(..., reducedMotion)` +
       平台 override 测试缝）。
-- [ ] B-13 = P2-7：拖拽边缘自动滚动（M；本批实现）。
+- [x] B-13 = P2-7：拖拽边缘自动滚动（M；本批实现）。代码 `dragEdgeAutoScroll`
+      （`todo_module.cpp:732`，调用点 `:1322`）+ 用例 `todo_ui_drag_edge_autoscroll`；
+      2026-11-27 mac 全量补跑时修掉该用例的平台不对称落点。
 - [ ] D-1/D-2 PRD：审计复核已交付/否决，仅在用户要 PRD 时另立文档。

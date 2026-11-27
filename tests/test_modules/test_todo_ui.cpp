@@ -6269,12 +6269,15 @@ REGISTER_TEST(todo_ui_drag_edge_autoscroll,
     DOCTEST_REQUIRE(card0 != nullptr);
     DOCTEST_REQUIRE(card1 != nullptr);
 
-    // 按在首卡 → 拖到列底边缘（板底内 30px，落在边缘带内）
+    // 按在首卡 → 拖到列底边缘（板底内 12px，落在 28px 边缘带内）。
+    // 板底 = 内容区底 = 屏高 − 页内边距（按平台密度档：mac 32 / Windows 24），
+    // 故落点必须由 density 派生——写死 screen.height − 30 只在 Windows 档成立。
+    const float viewBottom = screen.height - ui_kit::density::pageInsetV();
     eui::PointerEvent pe;
     card0->onPress(pe, boundsOf(card0));
     core::dsl::DragEvent ev;
     ev.x = card0->frame.x + card0->frame.width / 2.0f;
-    ev.y = screen.height - 30.0f;  // 板底内 30px（板底 = 内容区底，见 compose 布局）
+    ev.y = viewBottom - 12.0f;
     card0->onDrag(ev);
 
     // 每帧 10px；滚过虚拟缓冲（3 张 ≈ 276px）后首卡离开渲染窗、远处卡进入。
