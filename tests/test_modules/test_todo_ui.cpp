@@ -6,6 +6,7 @@
 //   - 拖放条是覆盖层不是流式内容：悬停行下方的占位条必须压在两卡之间的底缝，卡片不得被下推。
 #include "doctest.h"
 #include <chrono>
+#include <ctime>
 #include <thread>
 #include "test_dialog_frame_helper.h"  // dialog_frame：弹窗「元素在框内」共享断言
 #include "test_support.h"
@@ -6438,5 +6439,58 @@ REGISTER_TEST(todo_ui_uncomplete_and_shortcuts,
     frame("ks6");
     DOCTEST_CHECK(ui.find("todo.dialog.newtask.panel") != nullptr);
     mod->onStop();
+    return true;
+})
+
+// C-17：冷启动自动归档提示。计数形态 = 归档列 + archived_at 在今天 + completed_at 早于今天，
+// 覆盖「模块在启动迁移清扫后很久才被开启」的漏报（旧 ±120s 窗口口径）。
+REGISTER_TEST(todo_ui_archive_auto_announce,
+              "todo_ui: 冷启动自动归档提示按今天归档形态计数（C-17）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t archiveId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "archive") archiveId = c.id;
+    }
+    DOCTEST_REQUIRE(archiveId != 0);
+    auto made = env.svc->createTask(archiveId, "昨日完成今天归档");
+    DOCTEST_REQUIRE(made.isOk());
+
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    auto& db = env.db->db();
+    const std::string id = std::to_string(made.value().id);
+    // 启动迁移清扫后的落库形态：归档时间=今天、完成时间=昨天。
+    DOCTEST_REQUIRE(db.exec("UPDATE todo_tasks SET completed_at=" +
+                            std::to_string(now - 86400) +
+                            ", archived_at=" + std::to_string(now) +
+                            " WHERE id=" + id)
+                        .isOk());
+
+    {
+        std::unique_ptr<::core::Module> mod(create_todo_module());
+        mod->onStart();
+        Frame frame(mod.get());
+        const auto* title = frame.ui.find("todo.toast.title");
+        const auto* msg = frame.ui.find("todo.toast.message");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_REQUIRE(msg != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("自动归档"));
+        DOCTEST_CHECK(msg->text.find("1 条") != std::string::npos);
+        mod->onStop();
+    }
+
+    // 反向：完成时间落在今天 → 是用户今天完成的，不算自动归档，不提示。
+    DOCTEST_REQUIRE(db.exec("UPDATE todo_tasks SET completed_at=" +
+                            std::to_string(now) + " WHERE id=" + id)
+                        .isOk());
+    {
+        std::unique_ptr<::core::Module> mod(create_todo_module());
+        mod->onStart();
+        Frame frame(mod.get());
+        DOCTEST_CHECK(frame.ui.find("todo.toast.message") == nullptr);
+        mod->onStop();
+    }
     return true;
 })
