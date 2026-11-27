@@ -238,7 +238,8 @@ public:
               ::core::event::kMdTagsChanged,
               ::core::event::kTodoCreated, ::core::event::kTodoUpdated,
               ::core::event::kTodoMoved, ::core::event::kTodoCompleted,
-              ::core::event::kTodoUncompleted, ::core::event::kTodoDeleted}) {
+              ::core::event::kTodoUncompleted, ::core::event::kTodoDeleted,
+              ::core::event::kTodoChangedByTool}) {
             githubSyncSubs_.push_back(::core::event::bus().subscribe(
                 ev,
                 [this, ev](const std::string&) { markGithubSyncDirty(ev); }));

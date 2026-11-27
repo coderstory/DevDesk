@@ -501,6 +501,9 @@ public:
     // 让退出链 onStop 的保存重试自然跳过（磁盘保留最后已保存版本）。
     bool hasUnsavedEdits() const { return editorDirty_; }
     void discardUnsavedEdits() { editorDirty_ = false; saveFailed_ = false; }
+    // 退出前最后一次同步保存（quit guard 消费）：3 次重试，成功 = true。
+    // 失败保留 editorDirty_（onStop 的兜底重试与日志仍会走）。
+    bool saveFinalForQuit();
 
 private:
     // Esc 关最上层弹窗/浮层（顺序 = z 序倒序）。返回 true = 本键已消费，无弹窗返回 false。

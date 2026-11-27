@@ -102,6 +102,14 @@ public:
                     dbImportedDirty_.store(true, std::memory_order_release);
                 }
             });
+        // 智能体工具改了待办（A-7）：工具写路径不发 6 个业务事件（防事件型任务循环），
+        // 只发专用事件；这里同样只置原子脏标记，compose 收割后台重读。
+        toolChangedSub_ = ::core::event::bus().subscribe(
+            ::core::event::kTodoChangedByTool, [this](const std::string&) {
+                if (dbImportHandlersEnabled_.load(std::memory_order_acquire)) {
+                    toolChangedDirty_.store(true, std::memory_order_release);
+                }
+            });
         // 池15 归档动画观察缝（测试驱动设施）：onStart 装 / onStop 卸（闸语义）；
         // db 未注册的早退路径也要已装配（缝是模块级设施，不依赖数据）。
         obs::setArchiveAnimProvider([this]() -> obs::ArchiveAnimSnapshot {
@@ -174,6 +182,7 @@ public:
         // 先关原子闸再退订：闸挡在途 handler，退订挡后续 emit。
         dbImportHandlersEnabled_.store(false, std::memory_order_release);
         dbImportedSub_ = {};
+        toolChangedSub_ = {};
         // 池405：后台重载线程引用 service_（service_ 不随停模块析构），停模块前先回收
         stopAsyncReload();
         if (viewDirty_) saveViewState();
@@ -1044,6 +1053,13 @@ public:
                 startAsyncReload();
             }
         }
+        if (toolChangedDirty_.exchange(false, std::memory_order_acq_rel)) {
+            if (reloadInFlight_.load(std::memory_order_acquire)) {
+                toolChangedDirty_.store(true, std::memory_order_release);
+            } else {
+                startAsyncReload();
+            }
+        }
 
         consumeNavPayload();
 
@@ -1329,6 +1345,9 @@ private:
     std::atomic<bool> dbImportedDirty_{false};
     std::atomic<bool> dbImportHandlersEnabled_{false};
     ::core::event::EventBus::Subscription dbImportedSub_;
+    // A-7：智能体工具改待办 → 置脏，compose 收割后台重读（与库导入同一条重载链）。
+    std::atomic<bool> toolChangedDirty_{false};
+    ::core::event::EventBus::Subscription toolChangedSub_;
     // 池405：db 导入后台重载线程。worker 只读 service 并写 reloadResult_，不碰 UI 成员；
     // ready(release) → compose 首步 exchange(acquire) 收割。onStop/析构 join。
     std::thread reloadThread_;

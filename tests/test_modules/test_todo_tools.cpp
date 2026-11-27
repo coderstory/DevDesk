@@ -10,6 +10,7 @@
 #include "test_support.h"
 
 #include "core/mcp_tool.h"
+#include "core/event_bus.h"
 #include "core/module_interface.h"
 #include "core/tool.h"
 #include "module_mcp/mcp_tool_mirror.h"
@@ -684,5 +685,35 @@ REGISTER_TEST(todo_tools_mcp_registration,
     env.tools->unregisterAll();
     mirror.sync();
     DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 0);
+    return true;
+})
+
+REGISTER_TEST(todo_tools_changed_by_tool_event,
+              "todo_tools: 写工具发 todo.changed_by_tool；todo.list 不发（A-7）", {
+    ToolEnv env("changed_event");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+    DOCTEST_REQUIRE(env.svc->listColumns().isOk());
+    int count = 0;
+    auto sub = ::core::event::bus().subscribe(
+        ::core::event::kTodoChangedByTool,
+        [&count](const std::string&) { ++count; });
+
+    auto made = runTool("todo.create", R"({"title":"事件任务"})");
+    DOCTEST_REQUIRE(made.isOk());
+    DOCTEST_CHECK_EQ(count, 1);
+
+    auto list = runTool("todo.list", R"({})");
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_CHECK_EQ(count, 1);  // 只读不发
+
+    auto tasks = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), 1u);
+    const std::string args =
+        "{\"id\":" + std::to_string(tasks.value()[0].id) + "}";
+    auto done = runTool("todo.complete", args);
+    DOCTEST_REQUIRE(done.isOk());
+    DOCTEST_CHECK_EQ(count, 2);
     return true;
 })

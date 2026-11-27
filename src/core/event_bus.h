@@ -32,6 +32,10 @@ inline constexpr const char* kTodoMoved = "todo.moved";
 inline constexpr const char* kTodoCompleted = "todo.completed";
 inline constexpr const char* kTodoUncompleted = "todo.uncompleted";
 inline constexpr const char* kTodoDeleted = "todo.deleted";
+// 非界面写路径（智能体工具）改了待办：只广播「数据变了」，供看板/首页/自动同步
+// 重读缓存。刻意与上面 6 个写路径事件分开——事件型智能体任务订阅的是那 6 个，
+// 本事件不得触发任务，否则「工具写 → 事件 → 起运行 → 再写」会循环。
+inline constexpr const char* kTodoChangedByTool = "todo.changed_by_tool";
 // 笔记写路径：写盘成功 / 磁盘文件删除成功 / 新建成功 / 重命名成功。
 inline constexpr const char* kMdSaved = "md.saved";
 inline constexpr const char* kMdDeleted = "md.deleted";

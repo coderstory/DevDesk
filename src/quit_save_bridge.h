@@ -16,9 +16,14 @@ namespace app::quit_save {
 
 using HasUnsavedHandler = bool (*)();
 using DiscardHandler = void (*)();
+using SaveNowHandler = bool (*)();
 
 // 传 nullptr 对 = 恢复空桩（未装配 = 视为无未保存修改，退出直通）。
 void setHandlers(HasUnsavedHandler hasUnsaved, DiscardHandler discard);
+
+// 退出前同步保存缝（markdown.saveFinalForQuit）：guard 先保存再决定放行；
+// 未装配 = 保持旧行为（只弹「有未保存修改」确认框，不尝试保存）。
+void setSaveHandler(SaveNowHandler saveNow);
 
 // ②need:300：guard 阻止分支唤起主窗的缝。托盘 Exit 在主窗隐藏/最小化态触发
 // 时，确认弹窗必须画在可见窗上——阻止即先唤起。真实现由 main.cpp 装配段注入
@@ -26,9 +31,14 @@ void setHandlers(HasUnsavedHandler hasUnsaved, DiscardHandler discard);
 using ShowMainHandler = void (*)();
 void setShowHandler(ShowMainHandler show);
 
-// app::setQuitGuard 落点（无捕获函数指针）：有未保存修改 → 开确认弹窗并阻止
-// 本次退出（false）；弹窗已开再触发（连点 Exit）继续阻止；否则放行（true）。
+// app::setQuitGuard 落点（无捕获函数指针）：无未保存 → 放行；有未保存且有保存缝 →
+// 先同步保存，成功即放行；保存失败 → 开「重试/放弃并退出」弹窗并阻止本次退出。
+// 未装配保存缝 → 保持旧「有未保存修改」确认弹窗语义。
 bool guard();
+
+// 保存失败弹窗的「重试保存」主路径（onClick / 单测直调）：成功 → 关弹窗并退出；
+// 失败 → 弹窗保持打开，返回 false。
+bool retrySave();
 
 // 「放弃修改并退出」主路径（弹窗主钮 onClick / 单测直调）：清未保存状态 →
 // 关弹窗 → app::requestExit()（guard 二次消费时 hasUnsaved 已 false → 放行）。
