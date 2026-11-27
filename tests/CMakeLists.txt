@@ -260,6 +260,9 @@ add_executable(devdesk_tests
     # need527（A-9 后半 / P0-2）：渠道管理弹窗生产写入路径 + 行级渠道物化
     #（同 kind 多行各读各的 secret_ref，防恒读 wecom.0）
     test_modules/test_schedule_channels_ui.cpp
+    # B-0 护栏（批次 B 弹窗几何）：内容区面积 / 字号缩放档 / 最小高与 compact /
+    # 按钮右锚与第三动作左锚。改壳前必须绿，改壳后必须仍绿。
+    test_modules/test_dialog_geometry.cpp
     # need453 待办到期提醒：到期投递/同截止去重/完成归档排除/节流/单轮上限下轮补投
     test_modules/test_todo_due_watcher.cpp
     # need455 每小时整点数据库备份：跨点触发/不足一小时不备/保留份数裁剪/开关/失败路径
