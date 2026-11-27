@@ -6365,3 +6365,78 @@ REGISTER_TEST(todo_ui_detail_blank_title_rejected,
     mod->onStop();
     return true;
 })
+
+REGISTER_TEST(todo_ui_uncomplete_and_shortcuts,
+              "todo_ui: 取消完成回进行中；⌘/Ctrl+D 完成/取消；⌘/Ctrl+] 移列；⌘/Ctrl+N 新建", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(cols.value().size() >= 3);
+    const int64_t todoCol = cols.value()[0].id;
+    const int64_t doingCol = cols.value()[1].id;
+    const int64_t doneCol = cols.value()[2].id;
+    auto made = env.svc->createTask(todoCol, "快捷任务");
+    DOCTEST_REQUIRE(made.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    frame("ks1");
+
+    auto taskCol = [&]() -> int64_t {
+        auto all = env.svc->listAllTasks();
+        if (all.isFail()) return 0;
+        for (const auto& t : all.value()) {
+            if (t.id == made.value().id) return t.columnId;
+        }
+        return 0;
+    };
+    auto isCompleted = [&]() -> bool {
+        auto all = env.svc->listAllTasks();
+        if (all.isFail()) return false;
+        for (const auto& t : all.value()) {
+            if (t.id == made.value().id) return t.completedAt.has_value();
+        }
+        return false;
+    };
+
+    // Ctrl+D：无选中时先选首张 → 完成 → 进已完成
+    DOCTEST_CHECK(mod->onKeyEvent(test_support::pressShortcut(eui::InputKey::D)));
+    frame("ks2");
+    DOCTEST_CHECK_EQ(taskCol(), doneCol);
+    DOCTEST_CHECK(isCompleted());
+
+    // 再 Ctrl+D：取消完成 → 回「进行中」（老板裁决）
+    DOCTEST_CHECK(mod->onKeyEvent(test_support::pressShortcut(eui::InputKey::D)));
+    frame("ks3");
+    DOCTEST_CHECK_EQ(taskCol(), doingCol);
+    DOCTEST_CHECK_FALSE(isCompleted());
+
+    // Ctrl+]：进行中 → 已完成
+    DOCTEST_CHECK(mod->onKeyEvent(
+        test_support::pressShortcut(eui::InputKey::RightBracket)));
+    frame("ks4");
+    DOCTEST_CHECK_EQ(taskCol(), doneCol);
+
+    // Ctrl+[：回进行中
+    DOCTEST_CHECK(mod->onKeyEvent(
+        test_support::pressShortcut(eui::InputKey::LeftBracket)));
+    frame("ks5");
+    DOCTEST_CHECK_EQ(taskCol(), doingCol);
+
+    // Ctrl+N：打开新建任务弹窗
+    DOCTEST_CHECK(mod->onKeyEvent(test_support::pressShortcut(eui::InputKey::N)));
+    frame("ks6");
+    DOCTEST_CHECK(ui.find("todo.dialog.newtask.panel") != nullptr);
+    mod->onStop();
+    return true;
+})

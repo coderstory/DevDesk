@@ -3,7 +3,8 @@
     "clangd-lsp@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
     "claude-hud@claude-hud": true,
-    "cs-retro@x-rs-tools": true
+    "cs-retro@x-rs-tools": true,
+    "devflow@dev-zcode-plugins": true
   },
   "hooks": {
     "PreToolUse": [

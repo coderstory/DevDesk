@@ -530,7 +530,7 @@ int main(int argc, char* argv[]) {
             probe::click(window, runtime, static_cast<double>(sx),
                          static_cast<double>(sy));
             probe::queueText(window, runtime, "归档");
-            pump(120);
+            pump(360);  // 搜索防抖 150ms + 归档展开动画：等两个窗口都过
             const float w = archWidth();
             const bool cardsVisible =
                 findEl("todo.col.3.card.0.bg") != nullptr;

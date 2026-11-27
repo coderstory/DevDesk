@@ -40,6 +40,8 @@
 #include <ui_kit/card.h>      // cardSurface：B5 白卡底色（H15 alpha 0.92）单一来源
 #include <ui_kit/columns.h>  // 双列几何单一来源（UAT3 多列分栏几何断言）
 #include <ui_kit/metrics.h>  // kHeaderH（UAT5 起设置页页头高 = 共享常量，不再双源）
+#include <ui_kit/density.h>  // 页内边距平台密度档（Windows 紧凑）
+#include <ui_kit/form_row.h>  // kFormRowLabelWidth（下拉填满列的期望值派生源）
 
 #include <chrono>
 #include <algorithm>
@@ -2684,7 +2686,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         ui.end();
         ui.layout(screen.width, screen.height);
 
-        const float contentW = pageW - 64.0f;   // pad = spacingLarge×2 = 32×2（S4.2 弹性）
+        const float contentW = pageW - ui_kit::density::pageInsetV() * 2.0f;   // 页内边距随平台密度档
         float colWant = 0.0f;
         ui_kit::columnX(contentW, 8.0f, &colWant, nullptr);  // 卡间距统一档 8（§4.3）
         const auto* pair = ui.find("settings.cards.pair.0");
@@ -4905,6 +4907,17 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         const auto* e = ui.find(id);
         return e != nullptr ? e->frame.width : -1.0f;
     };
+    // 下拉期望宽不写死：卡内双列 colW = columnX(卡宽−56, 16)，控件区 = colW − label110 − spacing。
+    // 卡宽本身随平台密度档（页内边距）变化——期望值从实际卡宽派生，100%/125% 同源。
+    const auto ddWant = [&](float cardW) -> float {
+        const float colW = (cardW - 56.0f - 16.0f) / 2.0f;
+        return colW - ui_kit::kFormRowLabelWidth -
+               ::core::theme::current().sizes.spacing;
+    };
+    const auto cardW = [&](eui::Ui& ui, const char* id) -> float {
+        const auto* e = ui.find(id);
+        return e != nullptr ? e->frame.width : -1.0f;
+    };
 
     // 宽窗（窗 1600 → 屏宽 1392）：固定帽若未退位会得 240
     {
@@ -4920,12 +4933,14 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // log 全宽卡：cw=510（H3 弹性骨架 pad 40→32，列宽漂移 620→628）
+        // log 全宽卡：下拉填满控件区（期望 = 卡内 colW − label − spacing，随卡宽派生）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 510.0f),
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"),
+                   ddWant(cardW(ui, "settings.card.log.bg"))),
             "log 下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
-                " 期望 510（H3 弹性骨架退位填满）");
+                " 期望 " + std::to_string(ddWant(cardW(ui, "settings.card.log.bg"))) +
+                "（H3 弹性骨架退位填满）");
         // 两下拉同宽口径不变（同一列公式来源）
         DOCTEST_CHECK(nearEq(ddwrapW(ui, "settings.card.log.level.ddwrap"),
                              ddwrapW(ui, "settings.card.log.ddwrap")));
@@ -4945,12 +4960,14 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // log 全宽卡：S4.2 pad 40→32 → colW=(728−72)/2=328 → cw=210（H3 漂移 +8）
+        // log 全宽卡：窄窗让位收缩，期望同样从卡宽派生（不写死 210）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 210.0f),
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"),
+                   ddWant(cardW(ui, "settings.card.log.bg"))),
             "log 窄窗下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
-                " 期望 210（窄窗让位收缩随 H3 骨架漂移）");
+                " 期望 " + std::to_string(ddWant(cardW(ui, "settings.card.log.bg"))) +
+                "（窄窗让位收缩随 H3 骨架）");
     }
 
     mod->onStop();

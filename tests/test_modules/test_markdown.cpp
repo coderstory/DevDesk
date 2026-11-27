@@ -42,6 +42,7 @@ using module::markdown::kEditorInputId;
 #include <ui_kit/card.h>
 #include <ui_kit/glass.h>
 #include <ui_kit/wtab.h>   // kWtabSmallHeight（池164 tab 带几何判据派生源）
+#include <ui_kit/density.h>  // 页内边距/页头高平台密度档（Windows 紧凑）
 #include <eui/types.h>   // 合成指针事件（块点击的 press→release 直驱）
 
 #include <algorithm>
@@ -1210,9 +1211,10 @@ REGISTER_TEST(md_tree_panel_collapse,
     DOCTEST_REQUIRE(handleBack->onClick != nullptr);
     const auto* ed = ui.find("md.editor");
     DOCTEST_REQUIRE(ed != nullptr);
-    DOCTEST_CHECK_EQ(ed->frame.x, 32.0f + 16.0f);   // pad + gap（树 0 宽占位仍留一道 gap，S4.2 pad 40→32）
-    DOCTEST_CHECK_EQ(ed->frame.width, (1600.0f - 64.0f) - 16.0f);
-    DOCTEST_CHECK_EQ(ed->frame.x + ed->frame.width, 32.0f + (1600.0f - 64.0f));
+    const float pad = ui_kit::density::pageInsetV();
+    DOCTEST_CHECK_EQ(ed->frame.x, pad + 16.0f);   // pad + gap（树 0 宽占位仍留一道 gap）
+    DOCTEST_CHECK_EQ(ed->frame.width, (1600.0f - pad * 2.0f) - 16.0f);
+    DOCTEST_CHECK_EQ(ed->frame.x + ed->frame.width, 1600.0f - pad);
 
     mod->onStop();
     return true;
@@ -1275,7 +1277,7 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     // 前提锚点：收起态编辑列左缘 = pad + gap（32+16=48，S4.2 pad 40→32）。
     // 把手在编辑列左缘对齐（x=48），24px 宽向右交叠编辑区——门把手式"拉出"视觉引导，
     // zIndex=6 叠加于编辑区上文，是方案 A 设计意图而非布局 bug。
-    DOCTEST_CHECK_EQ(ed->frame.x, 32.0f + 16.0f);
+    DOCTEST_CHECK_EQ(ed->frame.x, ui_kit::density::pageInsetV() + 16.0f);
     DOCTEST_CHECK(handleCol->frame.x == ed->frame.x);
     // 把手在场且可点（含 bg 子件，两态常驻）
     DOCTEST_CHECK(handleBg != nullptr);
@@ -1371,7 +1373,7 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_REQUIRE(ed != nullptr);
     const float edX = ed->frame.x;
     const float edW = ed->frame.width;
-    DOCTEST_CHECK_EQ(edX, 32.0f + 224.0f + 16.0f);  // pad + 树宽 + gap（S4.2 pad 40→32）
+    DOCTEST_CHECK_EQ(edX, ui_kit::density::pageInsetV() + 224.0f + 16.0f);  // pad + 树宽 + gap
     const auto* otoggle2 = ui.find("md.outline.toggle.hit");   // 前一帧已重建树，重取
     DOCTEST_REQUIRE(otoggle2 != nullptr);
     DOCTEST_REQUIRE(otoggle2->onClick != nullptr);
@@ -2502,7 +2504,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     DOCTEST_REQUIRE(preview != nullptr);
 
     // 三列 + 2 gap 铺满 contentW（1600 - 64 padding = 1536，S4.2 pad 40→32），无残余死白
-    const float pad = 32.0f;
+    const float pad = ui_kit::density::pageInsetV();
     const float contentW = screen.width - pad * 2.0f;
     const float gap = 16.0f;
     DOCTEST_CHECK_EQ(tree->frame.x, pad);
@@ -2555,7 +2557,7 @@ REGISTER_TEST(md_module_sidebar224_split_dualres,
     }
     DOCTEST_REQUIRE(split);
 
-    const float pad = 32.0f;
+    const float pad = ui_kit::density::pageInsetV();
     const float gap = 16.0f;
     const float sideW = 224.0f;  // S4.4 侧栏宽（收窄最小 200）
 
@@ -2612,7 +2614,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    const float pad = 32.0f;        // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
+    const float pad = ui_kit::density::pageInsetV();        // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
     const float sideW = 224.0f;     // 左栏树宽（S4.4：224，收窄最小 200）
     const float gap = 16.0f;
     const float contentW = screen.width - pad * 2.0f;
@@ -5230,7 +5232,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    const float pad = 32.0f;  // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
+    const float pad = ui_kit::density::pageInsetV();  // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
     const float sideW = 224.0f;  // S4.4：224（收窄最小 200）
     const float gap = 16.0f;
 

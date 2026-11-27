@@ -539,7 +539,8 @@ public:
             return;
         }
         core::event::bus().emit(core::event::kTodoUncompleted);
-        finishCompletionMove(taskId, "todo");
+        // 2026-11-27 老板裁决（B-16）：取消完成回「进行中」，不回「待办」。
+        finishCompletionMove(taskId, "doing");
     }
 
     // 状态迁移 + 列迁移合起来才算一次操作：列迁移失败不得再提示成功；目标列按 kind 定位（标题/下标在重命名重排后不可靠）
@@ -559,12 +560,69 @@ public:
             LOG_ERROR("Todo: 完成态流转的列迁移失败（kind=" + kind +
                       "）: " + mv.errorMessage());
             setStatus(toDone ? "任务已标记完成" : "已取消完成",
-                      (toDone ? "移入已完成列失败：" : "移回待办列失败：") +
+                      (toDone ? "移入已完成列失败：" : "移回进行中列失败：") +
                           mv.errorMessage());
             reloadAll();
             return;
         }
         reloadAll();
+    }
+
+    // 快捷列操作（2026-11-27 C-13 落地）：⌘/Ctrl+] / ⌘/[ 移动选中任务到相邻列（跳过归档），
+    // ⌘/Ctrl+D 完成/取消完成（取消完成回进行中），⌘/Ctrl+N 新建任务。
+    const Task* selectedTask() const {
+        if (selectedTaskId_ == 0) return nullptr;
+        return ui::findTask(tasks_, selectedTaskId_);
+    }
+
+    void moveSelectedToAdjacentColumn(bool right) {
+        if (service_ == nullptr) return;
+        const Task* t = selectedTask();
+        if (t == nullptr) return;
+        int idx = -1;
+        for (size_t i = 0; i < columns_.size(); ++i) {
+            if (columns_[i].id == t->columnId) {
+                idx = static_cast<int>(i);
+                break;
+            }
+        }
+        if (idx < 0) return;
+        int next = idx + (right ? 1 : -1);
+        while (next >= 0 && next < static_cast<int>(columns_.size()) &&
+               columns_[static_cast<size_t>(next)].kind == "archive") {
+            next += right ? 1 : -1;  // 不靠快捷键隐式归档
+        }
+        if (next < 0 || next >= static_cast<int>(columns_.size())) {
+            setStatus("已在该方向最外侧列");
+            return;
+        }
+        const int64_t target = columns_[static_cast<size_t>(next)].id;
+        auto r = service_->moveTask(t->id, target,
+                                    ui::computeAppendPosition(tasks_, target));
+        if (r.isFail()) {
+            setStatus("移动失败", r.errorMessage());
+            return;
+        }
+        core::event::bus().emit(core::event::kTodoMoved);
+        reloadAll();
+    }
+
+    void toggleSelectedComplete() {
+        if (service_ == nullptr) return;
+        const Task* t = selectedTask();
+        if (t == nullptr) return;
+        bool done = false;
+        for (const auto& c : columns_) {
+            if (c.id == t->columnId) {
+                done = (c.kind == "done");
+                break;
+            }
+        }
+        if (done) {
+            doUncompleteTask(t->id);
+        } else {
+            doCompleteTask(t->id);
+        }
     }
 
     void doDeleteTask(int64_t taskId) {
@@ -1328,6 +1386,33 @@ public:
             }
             return false;
         }
+        // C-13（2026-11-27 裁决：按规范实现）：⌘/Ctrl+N 新建任务、
+        // ⌘/Ctrl+] / ⌘/[ 移动选中任务到相邻列、⌘/Ctrl+D 完成/取消完成。
+        if (event.modifiers.shortcut() && !event.modifiers.shift &&
+            !event.modifiers.alt) {
+            if (event.key == eui::InputKey::N) {
+                openNewTaskForTodoColumn();
+                return true;
+            }
+            if (event.key == eui::InputKey::D ||
+                event.key == eui::InputKey::LeftBracket ||
+                event.key == eui::InputKey::RightBracket) {
+                if (selectedTask() == nullptr) {
+                    const int64_t first = firstSelectableTaskId();
+                    if (first == 0) return false;
+                    selectedTaskId_ = first;
+                    saveViewState();
+                    ::core::platform::requestUiUpdate();
+                }
+                if (event.key == eui::InputKey::D) {
+                    toggleSelectedComplete();
+                } else {
+                    moveSelectedToAdjacentColumn(
+                        event.key == eui::InputKey::RightBracket);
+                }
+                return true;
+            }
+        }
         if (event.key != eui::InputKey::Up && event.key != eui::InputKey::Down) {
             return false;
         }
@@ -1378,12 +1463,10 @@ private:
 
     ui::BoardActions boardActions_{
         .searchChanged = [this](const std::string& value) {
-            // C-6：输入只更新文本并起防抖窗口，不每键同步查库；清空立即提交。
-            // 首次从空到有值立即查（搜索框常整词输入，等 150ms 会让展开/命中滞后一帧；
-            // probe 的 S1 也是整词一次输入）；后续追加输入才走防抖。
+            // C-6：输入只更新文本并起防抖窗口，不每键同步查库；清空立即提交
             searchQuery_ = value;
             searchPendingAtMs_ = 0;
-            if (value.empty() || appliedSearchQuery_.empty()) {
+            if (value.empty()) {
                 refreshSearch();
                 return;
             }
