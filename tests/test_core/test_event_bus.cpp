@@ -88,3 +88,40 @@ REGISTER_TEST(event_bus_token_destructor_unsubscribes,
     DOCTEST_CHECK_EQ(got, 1);   // 只有退订前那一次
     return true;
 })
+
+// B-9 / P2-15：payload 订阅面。普通订阅者仍只收名字（既有订阅方零改动），
+// payload 订阅者额外收 payload；emit(name) 等价空 payload。
+REGISTER_TEST(event_bus_payload_delivery,
+              "event_bus: payload 订阅与普通订阅并存（B-9）", {
+    int plain = 0;
+    int payloadCount = 0;
+    std::string gotName;
+    std::string gotPayload;
+    {
+        auto t1 = ::core::event::bus().subscribe(
+            ::core::event::kTodoChangedByTool,
+            [&](const std::string& name) { ++plain; gotName = name; });
+        auto t2 = ::core::event::bus().subscribeWithPayload(
+            ::core::event::kTodoChangedByTool,
+            [&](const std::string& name, const std::string& payload) {
+                ++payloadCount;
+                gotName = name;
+                gotPayload = payload;
+            });
+        ::core::event::bus().emit(::core::event::kTodoChangedByTool,
+                                  R"({"taskId":7,"op":"update"})");
+        DOCTEST_CHECK_EQ(plain, 1);
+        DOCTEST_CHECK_EQ(payloadCount, 1);
+        DOCTEST_CHECK_EQ(gotName, std::string("todo.changed_by_tool"));
+        DOCTEST_CHECK(gotPayload.find("\"taskId\":7") != std::string::npos);
+        // 无 payload 的 emit：payload 订阅者收到空串（不是不回调）
+        ::core::event::bus().emit(::core::event::kTodoChangedByTool);
+        DOCTEST_CHECK_EQ(plain, 2);
+        DOCTEST_CHECK_EQ(payloadCount, 2);
+        DOCTEST_CHECK(gotPayload.empty());
+    }
+    ::core::event::bus().emit(::core::event::kTodoChangedByTool, "{}");
+    DOCTEST_CHECK_EQ(plain, 2);          // 两个 token 都已析构
+    DOCTEST_CHECK_EQ(payloadCount, 2);
+    return true;
+})

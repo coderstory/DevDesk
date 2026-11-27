@@ -917,10 +917,13 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     // 且 bg 独缩内容不缩（卡内固定尺寸错位露灰底）。CardBuilder 不外露 scale/transform
     // 缝 → 包一层 wrapper 承载形变，卡组件骨架/命中面/回调零改动。
     const bool cardHovered = plate.hoverCards.count(id) > 0;
-    const ui_kit::JellyPose pose = ui_kit::jellyFrame(id, cardHovered);
+    const ui_kit::JellyPose pose =
+        ui_kit::jellyFrame(id, cardHovered, v.reducedMotion);
     const core::Transition jellyTr =
-        pose.active ? core::Transition::make(0.035f, core::Ease::Linear)
-                    : core::Transition::make(0.18f, core::Ease::OutBack);
+        v.reducedMotion
+            ? core::Transition::make(0.001f, core::Ease::Linear)
+            : (pose.active ? core::Transition::make(0.035f, core::Ease::Linear)
+                           : core::Transition::make(0.18f, core::Ease::OutBack));
     ui.stack(id + ".jelly")
         .position(x, y)
         .size(width, kCardHeight)

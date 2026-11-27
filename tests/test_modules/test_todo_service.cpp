@@ -15,8 +15,10 @@
 #include "module_todo/todo_service.h"
 
 #include <algorithm>
+#include <chrono>
 #include <ctime>
 #include <filesystem>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -1614,5 +1616,56 @@ REGISTER_TEST(todo_service_create_concurrent_positions_unique,
     DOCTEST_REQUIRE(all.isOk());
     DOCTEST_CHECK_EQ(all.value().size(),
                      static_cast<size_t>(kThreads * kPerThread));
+    return true;
+})
+
+// B-18 / P1-5 / Q5：整板重读耗时先实测（220 任务，含 110 张归档）。
+// 模块侧 reloadAll 的真实工作 = 三次查询（列 / 全部任务 / 逾期），本用例按同一组
+// 调用测代理成本。断言只设 200ms 抓灾难性回归；实测毫秒经 INFO 打出（预算参考：
+// 典型操作 ≤50ms，见 AGENTS 五维预算）。未超预算前不动增量刷新（Q5 口径：先测后定）。
+REGISTER_TEST(todo_service_reload_cost_200_tasks,
+              "TodoService: 220 任务整板重读耗时实测（B-18 / Q5）", {
+    TestEnv env("reload_cost");
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(cols.value().size() >= 4);
+    const int64_t todoCol = cols.value()[0].id;
+    int64_t archiveCol = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "archive") archiveCol = c.id;
+    }
+    DOCTEST_REQUIRE(archiveCol != 0);
+
+    std::vector<int64_t> ids;
+    ids.reserve(220);
+    for (int i = 0; i < 220; ++i) {
+        auto c = env.svc->createTask(todoCol, "成本任务" + std::to_string(i));
+        DOCTEST_REQUIRE(c.isOk());
+        ids.push_back(c.value().id);
+    }
+    // 一半归档（归档只增不减是真实长库形态；archived_at 由 moveTask 写入）
+    for (int i = 0; i < 110; ++i) {
+        auto m = env.svc->moveTask(ids[static_cast<size_t>(i)], archiveCol, i);
+        DOCTEST_REQUIRE(m.isOk());
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    constexpr int kRounds = 5;
+    for (int k = 0; k < kRounds; ++k) {
+        auto a = env.svc->listColumns();
+        auto b = env.svc->listAllTasks();
+        auto c = env.svc->listOverdue();
+        DOCTEST_REQUIRE(a.isOk());
+        DOCTEST_REQUIRE(b.isOk());
+        DOCTEST_REQUIRE(c.isOk());
+    }
+    const double ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0)
+            .count() /
+        kRounds;
+    std::cout << "整板重读耗时: " << ms << " ms（220 任务 / 110 归档）\n";
+    DOCTEST_CHECK(ms < 200.0);
     return true;
 })

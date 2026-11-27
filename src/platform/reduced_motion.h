@@ -6,6 +6,8 @@
 // 消费方：首页持续动画静态化降级（need506 §2.2 设计）。
 #pragma once
 
+#include <optional>
+
 namespace platform::reduced_motion {
 
 // 系统当前是否要求减少动态效果（macOS 27「减少动态效果」开 / Windows「动画效果」关）。
@@ -15,5 +17,20 @@ namespace platform::reduced_motion {
 // window_visibility 的 fail-open 相反方向：这里是「不额外剥夺动画」，查询
 // 失败不应让动画凭空消失。
 bool systemReducedMotion();
+
+// ── 测试缝 ──────────────────────────────────────────────────────────────
+// 平台查询在单测里不可控（CI 机器的系统设置不同），override 只供测试钉住；
+// 生产路径不设置 = 走真实平台查询。
+namespace detail {
+inline std::optional<bool>& overrideSlot() {
+    static std::optional<bool> slot;
+    return slot;
+}
+}  // namespace detail
+
+inline void setReducedMotionOverride(std::optional<bool> v) {
+    detail::overrideSlot() = v;
+}
+inline void clearReducedMotionOverride() { detail::overrideSlot().reset(); }
 
 }  // namespace platform::reduced_motion

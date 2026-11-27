@@ -37,8 +37,12 @@ Result<ToolResult> toolOk(const std::string& contentJson) {
 
 // 工具写成功 → 广播「非界面改待办」。只发专用事件，不发 6 个写路径事件：
 // 事件型智能体任务订阅后者，若工具也发，会形成「工具写 → 事件 → 起运行 → 再写」。
-void notifyChangedByTool() {
-    ::core::event::bus().emit(::core::event::kTodoChangedByTool);
+// B-9 / P2-15：payload 带 taskId + op，订阅方可定位到具体任务（仍不触发任务型智能体）。
+void notifyChangedByTool(int64_t taskId, const char* op) {
+    ::core::event::bus().emit(
+        ::core::event::kTodoChangedByTool,
+        std::string("{\"taskId\":") + std::to_string(taskId) +
+            ",\"op\":\"" + op + "\",\"source\":\"tool\"}");
 }
 
 // 参数解析：空串视为 {}（LLM 的 input 可能为空对象省略）；其余必须解析成 object，失败转 isError
@@ -343,7 +347,7 @@ public:
         }
         auto one = taskToJsonText(created.value());
         if (one.isFail()) return toolError(one.errorMessage());
-        notifyChangedByTool();
+        notifyChangedByTool(created.value().id, "create");
         return toolOk(one.value());  // 返回新任务对象（LLM 需要新 id）
     }
 
@@ -414,7 +418,7 @@ public:
         }
         auto one = taskToJsonText(t);  // 回喂更新后的完整任务
         if (one.isFail()) return toolError(one.errorMessage());
-        notifyChangedByTool();
+        notifyChangedByTool(t.id, "update");
         return toolOk(one.value());
     }
 
@@ -461,7 +465,7 @@ public:
         if (auto r = svc_.moveTask(*id, *columnId, newPosition); r.isFail()) {
             return toolError("移动任务失败: " + r.errorMessage());
         }
-        notifyChangedByTool();
+        notifyChangedByTool(*id, "move");
         return toolOk(R"({"ok":true})");
     }
 
@@ -491,7 +495,7 @@ public:
         if (auto r = svc_.completeTask(*id); r.isFail()) {
             return toolError("标记完成失败: " + r.errorMessage());
         }
-        notifyChangedByTool();
+        notifyChangedByTool(*id, "complete");
         return toolOk(R"({"ok":true})");
     }
 
@@ -524,7 +528,7 @@ public:
         if (auto r = svc_.deleteTask(*id); r.isFail()) {
             return toolError("删除任务失败: " + r.errorMessage());
         }
-        notifyChangedByTool();
+        notifyChangedByTool(*id, "delete");
         return toolOk(R"({"ok":true})");
     }
 

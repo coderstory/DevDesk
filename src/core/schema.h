@@ -309,6 +309,17 @@ inline constexpr const char* kSql = R"(
         updated_at INTEGER NOT NULL
     );
 
+    -- 本机视图状态（滚动位置 / 选中项 / 上次打开路径）。在
+    -- core::sql_dump::defaultSkipTables() 里被排除 → **SQL dump 不含本表**：
+    -- 视图状态是「这台机器的使用现场」，跨机导入会互相覆盖（P2-16 / #386 交集）。
+    -- 为什么独立于 app_config：dump 按整表剔除，app_config 无法只剔前缀；
+    -- 与 github_sync_state 同款理由。value 为该模块整份状态的 JSON 文本。
+    CREATE TABLE IF NOT EXISTS ui_view_state (
+        module TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+
     -- GitHub Sync 同步基线（本机专属状态）。在 core::sql_dump::defaultSkipTables()
     -- 里被排除 → **SQL dump 不含本表**（dump 是跨设备传输面，基线不得随它走）。
     -- 本地备份是整库文件拷贝（db_backup），含本表且应当含：备份回滚要连基线一起

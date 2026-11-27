@@ -97,6 +97,8 @@ struct BoardView {
     std::vector<bool> columnExpanded;
     // 池405：db 导入后的后台重载在途 → 板出骨架（首帧不等全量重查），数据到位下一帧整板刷新
     bool loading = false;
+    // C-2 / P2-8：系统「减少动态效果」开 → 卡果冻时间线静止（模块每帧查平台一次填入）。
+    bool reducedMotion = false;
 };
 
 // 表头（标题 + 搜索框 + 逾期入口 + 新建任务；H20 起「+ 列」入口删除）

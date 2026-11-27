@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "core/app_config.h"
+#include "core/ui_view_state.h"
 #include "core/logging.h"
 #include "platform/json.h"
 
@@ -55,7 +56,8 @@ core::Result<MarkdownViewState> MarkdownViewStateStore::loadChecked() const {
             core::ErrorCode::NotFound,
             "应用数据库未就绪（core::appDatabase() 为空）");
     }
-    auto raw = core::appconfig::get(*db_, kMarkdownViewStateKey);
+    auto raw = core::ui_view_state::getOrMigrate(
+        *db_, kMarkdownViewStateModule, kMarkdownViewStateKey);
     if (raw.isFail()) {
         // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 = 真故障，报出来。
         if (raw.errorCode() == core::ErrorCode::NotFound) {
@@ -63,14 +65,14 @@ core::Result<MarkdownViewState> MarkdownViewStateStore::loadChecked() const {
         }
         return core::Result<MarkdownViewState>::fail(
             raw.errorCode(),
-            "读取 app_config[" + std::string(kMarkdownViewStateKey) +
+            "读取 ui_view_state[" + std::string(kMarkdownViewStateModule) +
                 "] 失败: " + raw.errorMessage());
     }
     auto parsed = platform::json::parse(raw.value());
     if (parsed.isFail() || !parsed.value().isObject()) {
         return core::Result<MarkdownViewState>::fail(
             core::ErrorCode::JsonParseError,
-            "app_config[" + std::string(kMarkdownViewStateKey) +
+            "ui_view_state[" + std::string(kMarkdownViewStateModule) +
                 "] 不是合法 JSON 对象: " +
                 (parsed.isFail() ? parsed.errorMessage()
                                  : std::string("顶层非对象")));
@@ -133,7 +135,7 @@ core::Result<void> MarkdownViewStateStore::save(
                                         "视图状态序列化失败: " + text.errorMessage());
     }
     // 一次 UPSERT 即一次提交——与旧的「原子写文件」等价，且自带事务原子性（不会半截）。
-    return core::appconfig::set(*db_, kMarkdownViewStateKey, text.value());
+    return core::ui_view_state::set(*db_, kMarkdownViewStateModule, text.value());
 }
 
 core::Result<void> saveEditorFontSizePref(core::data::SqliteDb* db, int px) {

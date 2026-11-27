@@ -7,6 +7,7 @@
 #include "doctest.h" // test_temp::tempPath —— 临时路径唯一化（pid + 进程内序号）
 
 #include "core/app_config.h"
+#include "core/ui_view_state.h"
 #include "core/secrets_store.h"
 #include "core/database.h"
 #include "core/llm_profile_source.h"
@@ -606,6 +607,19 @@ inline std::string readRawConfigRow(core::data::SqliteDb* db, const char* key) {
 inline bool configRowExists(core::data::SqliteDb* db, const char* key) {
     if (db == nullptr) return false;
     auto v = core::appconfig::has(*db, key);
+    return v.isOk() && v.value();
+}
+
+// 本机视图状态表（ui_view_state）版：写乱值 / 查行存在
+inline bool writeRawUiViewRow(core::data::SqliteDb* db, const char* module,
+                              const std::string& text) {
+    if (db == nullptr) return false;
+    return core::ui_view_state::set(*db, module, text).isOk();
+}
+
+inline bool uiViewRowExists(core::data::SqliteDb* db, const char* module) {
+    if (db == nullptr) return false;
+    auto v = core::ui_view_state::has(*db, module);
     return v.isOk() && v.value();
 }
 

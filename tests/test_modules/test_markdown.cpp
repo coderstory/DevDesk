@@ -1138,9 +1138,9 @@ REGISTER_TEST(md_tree_panel_collapse,
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
 
-    // 启动前把折叠态写进 app_config（模拟上次会话收起后退出）
-    DOCTEST_REQUIRE(test_support::writeRawConfigRow(
-        &env.db->db(), module::markdown::kMarkdownViewStateKey,
+    // 启动前把折叠态写进本机视图状态表（模拟上次会话收起后退出）
+    DOCTEST_REQUIRE(test_support::writeRawUiViewRow(
+        &env.db->db(), module::markdown::kMarkdownViewStateModule,
         "{\"mode\": 0, \"collapsedDirs\": [], \"treePanelCollapsed\": true}"));
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
@@ -4571,8 +4571,8 @@ REGISTER_TEST(md_view_state_mode_live,
 
     // 既有数据（同格式 JSON）→ mode 0-2 语义完全不变
     for (int m = 0; m <= 2; ++m) {
-        test_support::writeRawConfigRow(
-            &db, module::markdown::kMarkdownViewStateKey,
+        test_support::writeRawUiViewRow(
+            &db, module::markdown::kMarkdownViewStateModule,
             "{\"lastPath\": \"old.md\", \"mode\": " + std::to_string(m) +
                 ", \"collapsedDirs\": []}");
         const MarkdownViewState loaded = MarkdownViewStateStore(&db).load();
@@ -4842,13 +4842,12 @@ REGISTER_TEST(md_module_live_input_roundtrip,
     {
         DOCTEST_REQUIRE(writeTextFile(env.dir / "rt.md", text));  // 复位文档
         // 路径 A 退出时处于实时态 → 视图状态会把 mode=3 带到下一次启动。
-        // 本段要在【编辑态】做对照编辑，故清掉视图状态：状态存 app_config 表的
-        // markdown_view_state 行，删文件已经不生效，必须删那一行（否则本段会以
+        // 本段要在【编辑态】做对照编辑，故清掉视图状态：状态存本机 ui_view_state 表的
+        // markdown 行，删文件已经不生效，必须删那一行（否则本段会以
         // 实时态启动，后面的编辑态断言全找不到控件）。
-        // 必须删那一行（否则本段会以实时态启动，后面的编辑态断言全找不到控件）。
-        DOCTEST_REQUIRE(core::appconfig::erase(
+        DOCTEST_REQUIRE(core::ui_view_state::erase(
                             *::core::appDatabase(),
-                            module::markdown::kMarkdownViewStateKey)
+                            module::markdown::kMarkdownViewStateModule)
                             .isOk());
         std::unique_ptr<::core::Module> mod(create_markdown_module());
         mod->onStart();
@@ -5181,10 +5180,10 @@ REGISTER_TEST(md_module_live_state_reset_on_restore,
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", tallNoteDoc("R", 60)));
     // 预置视图状态：mode=3（实时）+ 上次笔记，onStart 尾部恢复
     {
-        // 视图状态存 app_config 表的一行（键 kMarkdownViewStateKey，整份一行），
+        // 视图状态存 ui_view_state 表的一行（模块名 kMarkdownViewStateModule，整份一行），
         // 这里直接写那一行。MdHeadlessEnv 已把它注册为进程级 appDatabase。
-        DOCTEST_REQUIRE(test_support::writeRawConfigRow(
-            ::core::appDatabase(), module::markdown::kMarkdownViewStateKey,
+        DOCTEST_REQUIRE(test_support::writeRawUiViewRow(
+            ::core::appDatabase(), module::markdown::kMarkdownViewStateModule,
             "{\"lastPath\": \"a.md\", \"mode\": 3, \"collapsedDirs\": []}"));
     }
 

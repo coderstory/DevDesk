@@ -12,6 +12,7 @@
 #include "core/theme.h"
 #include "core/time.h"   // C-17：自动归档计数用本地零点
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环续帧）
+#include "platform/reduced_motion.h"  // C-2：系统减动效 → 卡果冻静止
 #include "core/component_theme.h"
 #include "core/event_bus.h"
 #include <ui_kit/metrics.h>
@@ -725,6 +726,42 @@ public:
         viewDirty_ = false;
     }
 
+    // B-13 / P2-7：拖到列视口上下边缘时自动滚动该列（长列里拖得到看不见的位置）。
+// 指针坐标 = 窗口原始像素，换算与命中同源（windowToCompose）；每帧 10px、
+// 边缘带 28px；到顶/到底由 clampColumnScrolls 收口，滚不动时不再请求帧。
+void dragEdgeAutoScroll(const core::theme::Tokens& t, float boardTop,
+                            float bodyH) {
+        if (!drag_.active || !drag_.hasPointer) return;
+        if (drag_.hoverColIndex < 0 ||
+            static_cast<size_t>(drag_.hoverColIndex) >= columns_.size()) {
+            return;
+        }
+        const float viewportH = std::max(0.0f, bodyH - ui::kColumnHeaderHeight);
+        if (viewportH <= 0.0f) return;
+        const float pointerY = ::core::windowToCompose(
+            static_cast<float>(drag_.pointerY), 0.0f, ::app::contentScale());
+        const float viewTop = boardTop + ui::kColumnHeaderHeight;
+        const float viewBottom = boardTop + bodyH;
+        constexpr float kEdge = 28.0f;
+        constexpr float kStep = 10.0f;
+        float dy = 0.0f;
+        if (pointerY < viewTop + kEdge && pointerY >= boardTop) {
+            dy = -kStep;
+        } else if (pointerY > viewBottom - kEdge && pointerY <= viewBottom) {
+            dy = kStep;
+        }
+        if (dy == 0.0f) return;
+        const int64_t colId =
+            columns_[static_cast<size_t>(drag_.hoverColIndex)].id;
+        float& off = columnScrolls_[colId];
+        const float before = off;
+        off = std::max(0.0f, off + dy);
+        clampColumnScrolls(viewportH);
+        if (std::fabs(off - before) > 0.001f) {
+            ::core::platform::requestUiUpdate();  // 事件驱动主循环：边缘停留要持续出帧
+        }
+    }
+
     // 指针落点 → 目标列索引（列外/板外 → -1）。换算见 ui::dragDropTarget；命中输入统一走 makeDragHitInput
     ui::DragHitInput makeDragHitInput() const {
         ui::DragHitInput in;
@@ -1279,6 +1316,11 @@ public:
         const float headerH = ui_kit::density::headerH();
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
 
+        // B-13 / P2-7：拖到列视口上下边缘时自动滚动该列（长列里也能拖到看不见的位置）。
+        // 放在钳制之后、绘制之前：本帧滚动值直接参与列内容布局。
+        // boardTop = 内容区底 − 板高（compose 的 body 底贴底布局；与 press 锚点反推值同源）
+        dragEdgeAutoScroll(t, contentH - bodyH, bodyH);
+
         // 装配看板前按列钳制滚动偏移：过滤/重载后卡数变少时旧偏移会越过内容底，
         // 虚拟窗口 first 越界 → 整列空白。回写使 scrollView 与实际内容一致
         clampColumnScrolls(bodyH - ui::kColumnHeaderHeight);
@@ -1318,6 +1360,8 @@ public:
         boardView.archiveT = archSt.t;
         boardView.archiveShowAll = archiveShowAll_;
         boardView.loading = reloadInFlight_.load(std::memory_order_acquire);
+        // C-2 / P2-8：减动效每帧查一次（平台调用只走主线程；不按卡逐次查）
+        boardView.reducedMotion = ::platform::reduced_motion::systemReducedMotion();
         // need#169：全列折叠进度/目标态按列序装配（归档位同源填充；board 归档路径仍读 archiveT）
         boardView.columnCollapseT.assign(columns_.size(), 1.0f);
         boardView.columnExpanded.assign(columns_.size(), true);
@@ -1452,6 +1496,10 @@ private:
         float pressColumnX = 0.0f;
         bool hasPressColumnX = false;
         int hoverColIndex = -1;    // 拖动中指针所在列（-1 = 列外，松手取消）
+        // B-13：指针最近位置（指针空间原始像素）——边缘自动滚动的换算输入
+        double pointerX = 0.0;
+        double pointerY = 0.0;
+        bool hasPointer = false;
         // 目标列行（-1 = 不预览；仅搜索态不置位）。驱动占位条 + 落库插入位
         int hoverRow = -1;
         // 按下点起的指针累计位移（DragEvent::totalX/Y）：只喂副本锚点，不参与命中换算；复位 DragState{} 即归零
@@ -1532,6 +1580,9 @@ private:
             // 只快照原始位移，换算在 compose（与命中同源）
             drag_.totalX = totalX;
             drag_.totalY = totalY;
+            drag_.pointerX = x;
+            drag_.pointerY = y;
+            drag_.hasPointer = true;
             const int target = hitDropColumn(x, y);
             drag_.hoverColIndex = target;
             // 跨列与同列都置位（同列 = 上下重排）；搜索态不置位（渲染行 ≠ 全量行号，跨列回落追加、同列回落取消）

@@ -25,6 +25,8 @@ const std::vector<std::string>& defaultSkipTables() {
         // 应用密钥（need305）：分平台保护形态的运行时密钥（memory.llm /
         // devdesk.schedule），密钥不进同步面（决策#11）。
         "app_secrets",
+        // 本机视图状态（滚动/选中/上次路径）：跨机导入会互相覆盖，整表不进 dump。
+        "ui_view_state",
         // 同步基线（sha/hash/首次方向/未同步提示）是本机专属状态：随 dump 跨设备
         // 转移会让新设备拿别人写的基线比对 → 误判未变跳过下载 → 进而删远端笔记。
         "github_sync_state",

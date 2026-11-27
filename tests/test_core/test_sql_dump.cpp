@@ -77,18 +77,20 @@ bool queryCount(core::data::SqliteDb& db, const char* table, int64_t* out) {
 
 } // namespace
 
-REGISTER_TEST(sql_dump_skip_defaults, "SqlDump: defaultSkipTables 固定为 call_logs + run_settings + github_sync_state + project_cards + app_secrets", {
+REGISTER_TEST(sql_dump_skip_defaults, "SqlDump: defaultSkipTables 固定为 call_logs + run_settings + app_secrets + ui_view_state + github_sync_state + project_cards", {
     const auto& tables = core::sql_dump::defaultSkipTables();
-    DOCTEST_CHECK_EQ(tables.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(tables.size(), static_cast<size_t>(6));
     DOCTEST_CHECK_EQ(tables[0], std::string("claude_call_logs"));
     DOCTEST_CHECK_EQ(tables[1], std::string("claude_run_settings"));
     // 应用密钥（need305）：分平台保护形态的运行时密钥，密钥不进同步面（决策#11）
     DOCTEST_CHECK_EQ(tables[2], std::string("app_secrets"));
+    // 本机视图状态（P2-16）：滚动/选中是使用现场，跨机导入会互相覆盖
+    DOCTEST_CHECK_EQ(tables[3], std::string("ui_view_state"));
     // 同步基线（本机专属）必须整表排除：随 dump 跨设备 = 新设备拿别人写的
     // 比对基线 → 误判未变跳过下载 → 进而删远端笔记
-    DOCTEST_CHECK_EQ(tables[3], std::string("github_sync_state"));
+    DOCTEST_CHECK_EQ(tables[4], std::string("github_sync_state"));
     // 项目卡（需-11）：test_db_url 可能含连接串凭据，不随 dump 上云
-    DOCTEST_CHECK_EQ(tables[4], std::string("project_cards"));
+    DOCTEST_CHECK_EQ(tables[5], std::string("project_cards"));
     return true;
 })
 

@@ -11,6 +11,7 @@
 namespace platform::reduced_motion {
 
 bool systemReducedMotion() {
+    if (detail::overrideSlot().has_value()) return *detail::overrideSlot();
     // objc_getClass 返回 objc_class*，C++ 下不隐式转 id → 显式 reinterpret_cast。
     // objc_msgSend 是变参声明，C++ 严格原型下直接调编译不过（clangd 报无匹配
     // 重载）→ 取地址后按目标签名强转（社区标准手法）。

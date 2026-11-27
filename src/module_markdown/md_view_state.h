@@ -13,6 +13,8 @@ namespace module::markdown {
 
 // 默认 app_config 键名
 inline constexpr const char* kMarkdownViewStateKey = "markdown_view_state";
+// 本机表里的模块名（测试拼写与实现同源；键名仅用于一次性迁移）
+inline constexpr const char* kMarkdownViewStateModule = "markdown";
 
 // 用户重启后恢复的五项：选中笔记 / 四态视图 / 收起的目录 / 目录树选中目录 /
 // 面板折叠态（UAT2 F批）。

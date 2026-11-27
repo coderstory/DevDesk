@@ -36,6 +36,9 @@ inline constexpr const char* kTodoDeleted = "todo.deleted";
 // 重读缓存。刻意与上面 6 个写路径事件分开——事件型智能体任务订阅的是那 6 个，
 // 本事件不得触发任务，否则「工具写 → 事件 → 起运行 → 再写」会循环。
 inline constexpr const char* kTodoChangedByTool = "todo.changed_by_tool";
+// ↑ 本事件带 payload（B-9 / P2-15）：`{"taskId":N,"op":"create|update|move|complete|delete","source":"tool"}`。
+// 事件型智能体任务订阅的是上面 6 个界面写路径事件；本事件刻意不触发它们（防互循环），
+// payload 只供看板/首页/自动同步等重读方定位到具体哪条任务。
 // 笔记写路径：写盘成功 / 磁盘文件删除成功 / 新建成功 / 重命名成功。
 inline constexpr const char* kMdSaved = "md.saved";
 inline constexpr const char* kMdDeleted = "md.deleted";
@@ -57,6 +60,9 @@ inline constexpr const char* kDbImported = "db.imported";
 class EventBus {
 public:
     using Handler = std::function<void(const std::string& name)>;
+    // 带 payload 的订阅面（B-9）：同名事件照常送达；普通订阅者仍只收名字。
+    using PayloadHandler =
+        std::function<void(const std::string& name, const std::string& payload)>;
 
     // RAII 退订 token：析构释放控制块，bus 侧 weak_ptr 随之失效（下一轮 emit 惰性清掉）。
     // 不可复制（退订责任唯一），可移动。默认构造的空 token 不订阅任何事件。
@@ -82,16 +88,32 @@ public:
         auto alive = std::make_shared<int>(0);
         {
             std::lock_guard<std::mutex> lock(mu_);
-            entries_[name].push_back(Entry{alive, std::move(handler)});
+            entries_[name].push_back(Entry{alive, std::move(handler), PayloadHandler{}});
         }
         return Subscription(std::move(alive));
     }
 
-    // 同步发布：拷出存活 handler（锁内），锁外逐个调用。无订阅者直接返回。
-    // 派发序 = 订阅序（entries_[name] 的 vector 保序，锁内 push_back 追加）——是保证，不是巧合；
-    // 同名多订阅方按「先订先跑」，收尾类订阅方靠它稳定排在业务 handler 之后。
-    void emit(const std::string& name) {
+    // 带 payload 的订阅（B-9）：事件名与普通订阅共用同一张表；emit(name, payload)
+    // 时普通 handler 收名字、payload handler 额外收 payload。派发序 = 订阅序。
+    [[nodiscard]] Subscription subscribeWithPayload(const std::string& name,
+                                                    PayloadHandler handler) {
+        auto alive = std::make_shared<int>(0);
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            entries_[name].push_back(Entry{alive, Handler{}, std::move(handler)});
+        }
+        return Subscription(std::move(alive));
+    }
+
+    // 同步发布（无 payload）：等价 emit(name, "")，普通订阅者照旧只收名字。
+    void emit(const std::string& name) { emit(name, std::string()); }
+
+    // 同步发布（带 payload）：拷出存活 handler（锁内），锁外逐个调用。
+    // 普通 handler 先按订阅序、payload handler 再按订阅序（两组互不穿插），
+    // 保证既有订阅方的相对顺序不变。
+    void emit(const std::string& name, const std::string& payload) {
         std::vector<Handler> live;
+        std::vector<PayloadHandler> livePayload;
         {
             std::lock_guard<std::mutex> lock(mu_);
             auto it = entries_.find(name);
@@ -101,7 +123,8 @@ public:
             kept.reserve(entries.size());
             for (auto& e : entries) {
                 if (!e.alive.expired()) {
-                    live.push_back(e.handler);
+                    if (e.handler) live.push_back(e.handler);
+                    if (e.payloadHandler) livePayload.push_back(e.payloadHandler);
                     kept.push_back(std::move(e));
                 }
             }
@@ -116,12 +139,21 @@ public:
                 LOG_ERROR("EventBus: 事件 '" + name + "' 的订阅回调抛出异常，已吞并不外溢");
             }
         }
+        for (auto& h : livePayload) {
+            try {
+                h(name, payload);
+            } catch (...) {
+                LOG_ERROR("EventBus: 事件 '" + name +
+                          "' 的 payload 订阅回调抛出异常，已吞并不外溢");
+            }
+        }
     }
 
 private:
     struct Entry {
         std::weak_ptr<int> alive;   // token 控制块；expired = 已退订
         Handler handler;
+        PayloadHandler payloadHandler;
     };
 
     mutable std::mutex mu_;

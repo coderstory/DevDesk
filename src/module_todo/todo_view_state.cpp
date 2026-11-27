@@ -1,4 +1,4 @@
-// todo 视图状态的 app_config 表存取（接口见 todo_view_state.h）。
+// todo 视图状态的本机表存取（接口见 todo_view_state.h）。
 // 整份一行存储：单写者、每次整读整写，拆行的多写者收益不存在而成本是多次 UPSERT
 #include "module_todo/todo_view_state.h"
 
@@ -7,8 +7,8 @@
 #include <cstdint>
 #include <utility>
 
-#include "core/app_config.h"
 #include "core/logging.h"
+#include "core/ui_view_state.h"
 #include "platform/json.h"
 
 namespace module::todo {
@@ -51,22 +51,23 @@ core::Result<TodoViewState> TodoViewStateStore::loadChecked() const {
             core::ErrorCode::NotFound,
             "应用数据库未就绪（core::appDatabase() 为空）");
     }
-    auto raw = core::appconfig::get(*db_, kTodoViewStateKey);
+    auto raw = core::ui_view_state::getOrMigrate(
+        *db_, kTodoViewStateModule, kTodoViewStateKey);
     if (raw.isFail()) {
-        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 = 真故障，须报出而非与「没配过」混同
+        // 行不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 = 真故障，须报出而非与「没配过」混同
         if (raw.errorCode() == core::ErrorCode::NotFound) {
             return core::Result<TodoViewState>::ok(st);
         }
         return core::Result<TodoViewState>::fail(
             raw.errorCode(),
-            "读取 app_config[" + std::string(kTodoViewStateKey) + "] 失败: " +
-                raw.errorMessage());
+            "读取 ui_view_state[" + std::string(kTodoViewStateModule) +
+                "] 失败: " + raw.errorMessage());
     }
     auto parsed = platform::json::parse(raw.value());
     if (parsed.isFail() || !parsed.value().isObject()) {
         return core::Result<TodoViewState>::fail(
             core::ErrorCode::JsonParseError,
-            "app_config[" + std::string(kTodoViewStateKey) +
+            "ui_view_state[" + std::string(kTodoViewStateModule) +
                 "] 不是合法 JSON 对象: " +
                 (parsed.isFail() ? parsed.errorMessage() : std::string("顶层非对象")));
     }
@@ -128,7 +129,7 @@ core::Result<void> TodoViewStateStore::save(const TodoViewState& stRaw) const {
                                         "视图状态序列化失败: " + text.errorMessage());
     }
     // 一次 UPSERT 即一次提交，天然原子（要么这行是新值，要么还是旧值，不会出现半截）
-    return core::appconfig::set(*db_, kTodoViewStateKey, text.value());
+    return core::ui_view_state::set(*db_, kTodoViewStateModule, text.value());
 }
 
 size_t TodoViewStateStore::pruneScrolls(std::map<int64_t, float>& scrolls,

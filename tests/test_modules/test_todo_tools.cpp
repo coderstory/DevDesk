@@ -837,10 +837,18 @@ REGISTER_TEST(todo_tools_changed_by_tool_event,
     auto sub = ::core::event::bus().subscribe(
         ::core::event::kTodoChangedByTool,
         [&count](const std::string&) { ++count; });
+    // B-9：payload 订阅面拿到 taskId + op
+    std::string lastPayload;
+    auto subPayload = ::core::event::bus().subscribeWithPayload(
+        ::core::event::kTodoChangedByTool,
+        [&lastPayload](const std::string&, const std::string& p) {
+            lastPayload = p;
+        });
 
     auto made = runTool("todo.create", R"({"title":"事件任务"})");
     DOCTEST_REQUIRE(made.isOk());
     DOCTEST_CHECK_EQ(count, 1);
+    DOCTEST_CHECK(lastPayload.find("\"op\":\"create\"") != std::string::npos);
 
     auto list = runTool("todo.list", R"({})");
     DOCTEST_REQUIRE(list.isOk());
@@ -854,6 +862,11 @@ REGISTER_TEST(todo_tools_changed_by_tool_event,
     auto done = runTool("todo.complete", args);
     DOCTEST_REQUIRE(done.isOk());
     DOCTEST_CHECK_EQ(count, 2);
+    DOCTEST_CHECK(lastPayload.find("\"op\":\"complete\"") != std::string::npos);
+    DOCTEST_CHECK(lastPayload.find(
+                      "\"taskId\":" + std::to_string(tasks.value()[0].id)) !=
+                  std::string::npos);
+    DOCTEST_CHECK(lastPayload.find("\"source\":\"tool\"") != std::string::npos);
     return true;
 })
 

@@ -10,6 +10,7 @@ add_library(devdesk_core STATIC
     database.cpp
     db_backup.cpp                       # 启动备份/损坏检测/还原（core 层，UI 决策在 main.cpp）
     app_config.cpp
+    ui_view_state.cpp
     window_layout.cpp
     window_geometry.cpp                   # 窗体记忆几何账本（UAT6：每帧记账、退出快照落盘）
     atomic_write.cpp

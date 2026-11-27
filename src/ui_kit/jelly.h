@@ -173,8 +173,15 @@ inline JellyPose jellyPose(float elapsedMs) {
 //（常态 12；调用方 .radius() 直接写入，常态卡=kJelly 默认档正好无缝）。
 // pressed 优先级由调用方自理：pressed 值分支盖过本返回值时，时间线仍在同一状态表
 // 后台推进（与 visualStateFrom 通道现状一致）。
-inline JellyPose jellyFrame(const std::string& id, bool hovered) {
+inline JellyPose jellyFrame(const std::string& id, bool hovered,
+                            bool reducedMotion = false) {
     detail::JellyAnimState& st = detail::jellyAnimTable()[id];
+    if (reducedMotion) {
+        // C-2 / P2-8：系统减动效 → 时间线不启动，恒常态（构图保留、运动归零）。
+        st.animating = false;
+        st.wasHovered = hovered;
+        return {1.0f, 1.0f, JellyOptions::kRestRadius, false};
+    }
     if (hovered && !st.wasHovered) {
         st.t0 = jellyNow();
         st.animating = true;

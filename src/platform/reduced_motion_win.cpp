@@ -13,6 +13,7 @@
 namespace platform::reduced_motion {
 
 bool systemReducedMotion() {
+    if (detail::overrideSlot().has_value()) return *detail::overrideSlot();
     BOOL enabled = TRUE;
     if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0,
                                static_cast<void*>(&enabled), 0)) {

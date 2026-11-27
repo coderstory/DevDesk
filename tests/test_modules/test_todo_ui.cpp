@@ -18,6 +18,7 @@
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
 #include "core/theme.h"
+#include "platform/reduced_motion.h"  // C-2：减动效 override 缝
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
 #include "ui_kit/card.h"      // cardSurface / kCardGlassAlpha
@@ -2634,12 +2635,12 @@ REGISTER_TEST(todo_ui_success_ops_silent_no_toast,
 
     // ③ 错误通道保留：B-1 起有任务时第一次方向键先选中首张卡（不弹引导）；
     // 已在顶部再按上移 → 边界提示照常弹出
-    // UAT6：视图状态跨模块实例持久化（selectedTaskId 存 app_config），
+    // UAT6：视图状态跨模块实例持久化（selectedTaskId 存本机 ui_view_state 表），
     // 需要先清掉前一个模块的选中记录，否则 mod2 的 restoreViewState 会恢复选中
     {
         if (auto* db = ::core::appDatabase(); db != nullptr) {
             // 有意忽略：预清理失败=残留旧视图态，restore 差异会被下方断言抓住（need295）
-            (void)::core::appconfig::erase(*db, "todo_view_state");
+            (void)::core::ui_view_state::erase(*db, "todo");
         }
         std::unique_ptr<::core::Module> mod2(create_todo_module());
         mod2->onStart();
@@ -6106,6 +6107,8 @@ REGISTER_TEST(todo_card_jelly_whole_stack_layer,
               "todo 卡果冻：transform/zIndex 在整卡 wrapper、bg 只管 radius（need338 迁 need334 范式）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
+    // 时间线用例必须在「系统未要求减动效」下跑（override 钉住，避免 CI 机器设置影响）
+    ::platform::reduced_motion::setReducedMotionOverride(false);
     auto c1 = env.svc->createColumn("果冻列");
     DOCTEST_REQUIRE(c1.isOk());
     auto t1 = env.svc->createTask(c1.value().id, "果冻任务");
@@ -6183,6 +6186,106 @@ REGISTER_TEST(todo_card_jelly_whole_stack_layer,
         DOCTEST_CHECK(wrap->zIndex == 0);
         DOCTEST_CHECK(nearOne(wrap->transform.scale.x));
     }
+    ::platform::reduced_motion::clearReducedMotionOverride();
+    return true;
+})
+
+// C-2 / P2-8：系统「减少动态效果」开 → 待办卡果冻静止（构图保留、运动归零）。
+// 首页已接该设置，此前待办与 jelly 组件零引用。
+REGISTER_TEST(todo_card_jelly_reduced_motion_static,
+              "todo 卡果冻：系统减动效时保持静止（C-2）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto c1 = env.svc->createColumn("减动效列");
+    DOCTEST_REQUIRE(c1.isOk());
+    auto t1 = env.svc->createTask(c1.value().id, "减动效任务");
+    DOCTEST_REQUIRE(t1.isOk());
+    ::platform::reduced_motion::setReducedMotionOverride(true);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    const std::string root = "todo.col.4.card.0";
+    const auto nearOne = [](float v) { return v > 0.995f && v < 1.005f; };
+    const auto& theme = core::theme::current();
+
+    // hover 进入：普通路径此时应起时间线（z=20 / 缩放偏离 1）；减动效路径必须纹丝不动。
+    {
+        Frame frame(mod.get());
+        auto* bg = frame.ui.find(root + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_REQUIRE(bg->onHoverChanged != nullptr);
+        bg->onHoverChanged(true);
+        frame.refresh();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    {
+        Frame frame(mod.get());
+        auto* wrap = frame.ui.find(root + ".jelly");
+        auto* bg = frame.ui.find(root + ".bg");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(wrap->zIndex == 0);
+        DOCTEST_CHECK(nearOne(wrap->transform.scale.x));
+        DOCTEST_CHECK(nearOne(wrap->transform.scale.y));
+        DOCTEST_CHECK(bg->radius > theme.sizes.radius - 0.5f);
+        DOCTEST_CHECK(bg->radius < theme.sizes.radius + 0.5f);
+    }
+    mod->onStop();
+    ::platform::reduced_motion::clearReducedMotionOverride();
+    return true;
+})
+
+// B-13 / P2-7：拖到列视口底部边缘 → 该列逐帧自动滚动（长列里能拖到看不见的位置）。
+REGISTER_TEST(todo_ui_drag_edge_autoscroll,
+              "todo_ui: 拖到列底边缘逐帧自动滚动（B-13）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("长列");
+    DOCTEST_REQUIRE(col.isOk());
+    for (int i = 0; i < 20; ++i) {
+        auto t = env.svc->createTask(col.value().id, "长列任务" + std::to_string(i));
+        DOCTEST_REQUIRE(t.isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    const auto compose = [&]() {
+        ui.begin("edge_scroll");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    const auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+    compose();
+
+    const auto* card0 = ui.find("todo.col.4.card.0.bg");
+    const auto* card1 = ui.find("todo.col.4.card.1.bg");
+    DOCTEST_REQUIRE(card0 != nullptr);
+    DOCTEST_REQUIRE(card1 != nullptr);
+
+    // 按在首卡 → 拖到列底边缘（板底内 30px，落在边缘带内）
+    eui::PointerEvent pe;
+    card0->onPress(pe, boundsOf(card0));
+    core::dsl::DragEvent ev;
+    ev.x = card0->frame.x + card0->frame.width / 2.0f;
+    ev.y = screen.height - 30.0f;  // 板底内 30px（板底 = 内容区底，见 compose 布局）
+    card0->onDrag(ev);
+
+    // 每帧 10px；滚过虚拟缓冲（3 张 ≈ 276px）后首卡离开渲染窗、远处卡进入。
+    bool card0Gone = false;
+    for (int k = 0; k < 80 && !card0Gone; ++k) {
+        compose();
+        card0Gone = ui.find("todo.col.4.card.0.bg") == nullptr;
+    }
+    DOCTEST_CHECK(card0Gone);                                   // 滚动确实发生（首卡被滚出窗口）
+    DOCTEST_CHECK(ui.find("todo.col.4.card.15.bg") != nullptr);  // 远处卡进入可视窗
+    mod->onStop();
     return true;
 })
 

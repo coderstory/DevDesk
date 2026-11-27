@@ -2,8 +2,10 @@
 // 视图状态持久化：markdown / todo 两个 view state store 的存读往返、缺失/损坏回退
 // 默认、净化钳制（等价「重启恢复」的持久层验证）。
 // 跨文件前提：
-//   - 两份状态各存成 app_config 表的一行（键见 kMarkdownViewStateKey / kTodoViewStateKey），
-//     经显式传入的 SqliteDb 连接读写；库未就绪（nullptr）时 save/loadChecked 如实失败。
+//   - 两份状态各存成 **本机专属** ui_view_state 表的一行（模块名见
+//     kMarkdownViewStateModule / kTodoViewStateModule；表被 sql_dump 整表剔除，
+//     不随 GitHub Sync 跨机），经显式传入的 SqliteDb 连接读写；库未就绪（nullptr）时
+//     save/loadChecked 如实失败。
 //   - core::atomicWriteFile 的用例与配置落点无关，仍走临时文件。
 #include "doctest.h"
 
@@ -23,8 +25,8 @@
 namespace {
 
 // 往 app_config 行里塞一段非 JSON 文本
-void writeGarbageRow(core::data::SqliteDb& db, const char* key) {
-    test_support::writeRawConfigRow(&db, key, "{ this is ]not json[");
+void writeGarbageRow(core::data::SqliteDb& db, const char* module) {
+    test_support::writeRawUiViewRow(&db, module, "{ this is ]not json[");
 }
 
 std::filesystem::path tempFile(const std::string& name) {
@@ -61,7 +63,7 @@ REGISTER_TEST(markdown_view_state_roundtrip, "markdown: 视图状态存读往返
     DOCTEST_CHECK_EQ(loaded.collapsedDirs[1], std::string("草稿"));
     // 选中目录跨会话恢复：丢了它 = 重启后新建笔记又散回根目录
     DOCTEST_CHECK_EQ(loaded.selectedDir, std::string("工作/周会"));
-    DOCTEST_CHECK(test_support::configRowExists(&db, kMarkdownViewStateKey));
+    DOCTEST_CHECK(test_support::uiViewRowExists(&db, kMarkdownViewStateModule));
     return true;
 });
 
@@ -78,7 +80,7 @@ REGISTER_TEST(markdown_view_state_fallback, "markdown: 视图状态缺失/损坏
     DOCTEST_CHECK(fresh.collapsedDirs.empty());
     DOCTEST_CHECK(fresh.selectedDir.empty());   // "" = 根目录（合法默认，不是"无选中"）
     // 损坏内容：load() 回落默认值不崩不抛；loadChecked() 如实报错（两者口径不同）
-    writeGarbageRow(db, kMarkdownViewStateKey);
+    writeGarbageRow(db, kMarkdownViewStateModule);
     const MarkdownViewState broken = store.load();
     DOCTEST_CHECK(broken.lastPath.empty());
     DOCTEST_CHECK_EQ(broken.mode, 0);
@@ -87,8 +89,8 @@ REGISTER_TEST(markdown_view_state_fallback, "markdown: 视图状态缺失/损坏
     DOCTEST_CHECK_EQ(static_cast<int>(brokenChecked.errorCode()),
                      static_cast<int>(core::ErrorCode::JsonParseError));
     // 合法 json 但字段乱型：逐字段容错
-    test_support::writeRawConfigRow(
-        &db, kMarkdownViewStateKey,
+    test_support::writeRawUiViewRow(
+        &db, kMarkdownViewStateModule,
         R"({"lastPath": 123, "mode": "x", "collapsedDirs": [1, "ok", null]})");
     const MarkdownViewState weird = store.load();
     DOCTEST_CHECK(weird.lastPath.empty());
@@ -167,7 +169,7 @@ REGISTER_TEST(todo_view_state_roundtrip, "todo: 视图状态存读往返含整�
     DOCTEST_CHECK_EQ(loaded.columnScrolls.at(11), 512.0f);
     DOCTEST_CHECK_EQ(loaded.columnScrolls.at(10), 150.25f);
     DOCTEST_CHECK_EQ(loaded.selectedTaskId, static_cast<int64_t>(42));
-    DOCTEST_CHECK(test_support::configRowExists(&db, kTodoViewStateKey));
+    DOCTEST_CHECK(test_support::uiViewRowExists(&db, kTodoViewStateModule));
     return true;
 });
 
@@ -180,13 +182,13 @@ REGISTER_TEST(todo_view_state_fallback, "todo: 视图状态缺失/损坏回退�
     const TodoViewState fresh = store.load();
     DOCTEST_CHECK(fresh.columnScrolls.empty());
     DOCTEST_CHECK_EQ(fresh.selectedTaskId, static_cast<int64_t>(0));
-    writeGarbageRow(db, kTodoViewStateKey);
+    writeGarbageRow(db, kTodoViewStateModule);
     const TodoViewState broken = store.load();
     DOCTEST_CHECK(broken.columnScrolls.empty());
     DOCTEST_CHECK(store.loadChecked().isFail());
     // 乱键/乱型逐条容错：仅保留合法列 id + 数字偏移
-    test_support::writeRawConfigRow(
-        &db, kTodoViewStateKey,
+    test_support::writeRawUiViewRow(
+        &db, kTodoViewStateModule,
         R"({"columnScrolls": {"abc": 1.0, "5": "x", "8": 20.5, "0": 9.0}, "selectedTaskId": true})");
     const TodoViewState weird = store.load();
     DOCTEST_CHECK_EQ(weird.columnScrolls.size(), static_cast<size_t>(1));
