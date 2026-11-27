@@ -189,5 +189,17 @@ Evidence: evidence/20261127-devflow-install/gate-summary.json"
 
 ### Task 5: 继续剩余待办（本批之后逐条）
 
-- [ ] 按顺序处理：C-17（补单测）→ C-3/C-9（对账）→ B-9（事件带 id）→ B-13（拖拽边缘自动滚动）→ B-18（整板重读实测）→ B-11（视图状态本机化）→ C-2（减少动态）→ D-1/D-2（PRD）。
-- [ ] 每条单独一个 `--filter` 定向验证 + 一个 `feat:`/`fix:` 提交，不并行。
+- [x] C-17 补单测（`todo_ui_archive_auto_announce`，2026-11-27）
+- [x] C-3/C-9 对账：按 `docs/research/2026-11-26-todo-module-research.md` P3-1 修正用户指南
+      （4 张出厂模板、关闭模块仍跑后台迁移/同步、归档列内不支持手动排序）；D-1/D-2 经审计复核
+      为「已交付 / 已否决」，无需开发。
+- [x] B-9 = P2-15：`EventBus` 增 `subscribeWithPayload` / `emit(name,payload)`；工具写事件带
+      `{"taskId","op","source":"tool"}`（不触发事件型智能体任务，防互循环）。
+- [x] B-11 = P2-16：视图状态迁到本机专属 `ui_view_state` 表，并加入 `defaultSkipTables`
+      （GitHub Sync 整库 dump 不再跨机搬运；旧 app_config 行一次性迁移并删除）。
+- [x] B-18 = P1-5/Q5：`todo_service_reload_cost_200_tasks` 实测 220 任务整板重读（先测后定，
+      未超 50ms 预算则不做增量刷新）。
+- [x] C-2 = P2-8：系统「减少动态效果」下待办卡果冻静止（`jellyFrame(..., reducedMotion)` +
+      平台 override 测试缝）。
+- [ ] B-13 = P2-7：拖拽边缘自动滚动（M；本批实现）。
+- [ ] D-1/D-2 PRD：审计复核已交付/否决，仅在用户要 PRD 时另立文档。

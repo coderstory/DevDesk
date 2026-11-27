@@ -10,6 +10,7 @@
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>
 #include "test_support.h"
+#include <ui_kit/density.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -159,7 +160,9 @@ int main(int argc, char* argv[]) {
     }
     composeFrame();
     composeFrame();
-    const float panelMaxH = moduleScreenH - 120.0f;  // screenH - y(88) - 下距 32（与实现同式）
+    // 上限与实现同式：screenH − 2×页内边距 − 页头高 − block 间距（need534 密度分档）。
+    const float panelMaxH = moduleScreenH - ui_kit::density::pageInsetV() * 2.0f -
+                            ui_kit::density::headerH() - 16.0f;
     FR panel{};
     if (!frameOf("md.outline.panel", panel)) {
         std::cerr << "  大纲面板未出现\n";

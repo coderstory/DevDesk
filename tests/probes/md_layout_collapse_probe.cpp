@@ -10,6 +10,7 @@
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>
 #include "test_support.h"
+#include <ui_kit/density.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -185,7 +186,9 @@ int main(int argc, char* argv[]) {
         // 列底(窗高-32) - 30 = 窗高-62（800 窗→738、1000 窗→938）。原写死 738
         // 只对 800 窗成立，ctest 缺省 1200x1000 会误报 bug149（2026-11-07 改
         // 随窗高推导，bug210 波及面验证时发现）。
-        const float expectY = 124.0f;
+        // 代码预期几何：输入框顶 y = 84 + 页头高（mac 40→124；Windows 紧凑档 36→120，
+        // need534 密度分档）。原写死 124 只在 mac 档成立。
+        const float expectY = 84.0f + ui_kit::density::headerH();
         const float expectBottom = static_cast<float>(args.windowH) - 62.0f;
         if (std::fabs(input.y - expectY) > 2.0f) {
             std::cerr << "bug149 嫌疑: 编辑区 y=" << input.y << " 预期≈"

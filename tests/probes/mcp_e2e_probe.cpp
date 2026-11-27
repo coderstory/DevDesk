@@ -278,7 +278,6 @@ int main() {
     // F-01：39 真工具 name（对外名 = mcpToolName(源名)）/description/inputSchema 逐字段 diff
     int diffCount = 0;
     int destructiveCount = 0;
-    bool checkedNonDestructive = false;
     bool checkedBuiltinNoAnnotations = false;
     for (const auto& tool : realTools) {
         const std::string toolName = tool->name();
@@ -310,7 +309,7 @@ int main() {
             ++diffCount;
         }
 
-        // F-05：真破坏性工具 annotations 抽查 + 非破坏镜像无 annotations 键
+        // F-05：真破坏性工具 annotations 抽查 + 非破坏镜像 readOnlyHint=true（C-15 契约）
         if (tool->isDestructive()) {
             ++destructiveCount;
             const auto annotations = entry.asObject().get("annotations");
@@ -325,11 +324,18 @@ int main() {
                           << ": 缺 destructiveHint=true/readOnlyHint=false\n";
                 ++diffCount;
             }
-        } else if (!checkedNonDestructive) {
-            checkedNonDestructive = true;
-            if (entry.asObject().has("annotations")) {
+        } else {
+            // C-15：非破坏工具补 readOnlyHint=true（客户端据此默认放行只读调用）；
+            // 不得带 destructiveHint。
+            const auto annotations = entry.asObject().get("annotations");
+            const bool hintOk =
+                annotations.isObject() &&
+                annotations.asObject().get("readOnlyHint").isBool() &&
+                annotations.asObject().get("readOnlyHint").asBool() &&
+                !annotations.asObject().has("destructiveHint");
+            if (!hintOk) {
                 std::cout << "[probe]   annotations " << toolName
-                          << ": 非破坏工具不应带 annotations\n";
+                          << ": 非破坏工具须 readOnlyHint=true 且无 destructiveHint\n";
                 ++diffCount;
             }
         }
