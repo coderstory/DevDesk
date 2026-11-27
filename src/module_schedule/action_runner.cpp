@@ -1,11 +1,16 @@
 // 动作执行与渠道投递编排实现（S4）。分层：本文件不依赖 platform/EUI-NEO，
 // 只经 S3 ScheduleStore 落账、经 S5 ChannelRegistry 投递。
+// 例外（need527）：wecom 行级物化需要 parseWecomConfig + makeWecomChannel + HTTP
+// 发送，故本文件经 channels/wecom.h 引入 platform::http——这是渠道实现自身的
+// 依赖，不是业务层新增耦合。
 #include "module_schedule/action_runner.h"
 
 #include "core/logging.h"
 #include "core/time.h"
+#include "module_schedule/channels/wecom.h"
 #include "module_schedule/schedule_store.h"
 
+#include <memory>
 #include <sstream>
 #include <utility>
 
@@ -118,17 +123,36 @@ ActionRunner::ActionRunner(ScheduleStore& store, ChannelRegistry& channels,
                            InternalTaskRegistry& tasks)
     : store_(store), channels_(channels), tasks_(tasks) {}
 
-void ActionRunner::resetForTest() { httpInFlight_.clear(); }
+void ActionRunner::resetForTest() {
+    httpInFlight_.clear();
+    rowChannels_.clear();
+}
+
+void ActionRunner::setWecomSenderForTest(WecomHttpSender sender) {
+    wecomSenderForTest_ = std::move(sender);
+    // 已物化的实例必须丢弃：换 sender 后旧实例仍指向旧发送器
+    rowChannels_.clear();
+}
 
 // S5 对齐点②：真实注册表键 = 渠道 kind 字符串（"toast" 等），入口是
 // deliver(vector<string>, Delivery) → Result<DispatchReport>（无按 int64 id 的
 // deliver）。引擎按 schedule_channel 配置行 id（int64）分发：先经 store 取该行
 // kind，再投递并取该渠道回执。配置行缺失/未注册渠道/已停用 = 配置错误 → fail，
 // 由 dispatchOnce 判永久失败不重试。
+//
+// 行级物化（need527）：wecom 是**按行配置**的渠道——每行有自己的 config_json
+// 与 secret_ref，而注册表按 kind 只有一个单例，且内置单例是用 WecomConfig{}
+// 默认构造的（channelDbId=0 → 恒读 app_secrets 的 wecom.0）。用户新建的渠道行
+// 因此永远读不到自己那条密钥，投递恒回 missing_secret。修法 = wecom 行在投递
+// 时按行构造渠道实例（不走注册表单例），其余 kind（fullscreen/toast/os/silent
+// 无 per-row 配置）仍走注册表。实例按行 id 缓存，配置行 updated_at 变化才重建
+// ——令牌桶限频状态必须跨投递保留，每次新建会让 18 条/分钟限额失效。
 namespace {
 core::Result<module::schedule::Receipt> deliverViaRegistry(
     ScheduleStore& store, ChannelRegistry& channels, int64_t channelId,
-    const module::schedule::Delivery& delivery) {
+    const module::schedule::Delivery& delivery,
+    std::map<int64_t, RowChannel>& rowChannels,
+    const WecomHttpSender& wecomSender) {
     auto got = store.getChannel(channelId);
     if (got.isFail()) {
         return core::propagate<module::schedule::Receipt>(got);
@@ -145,7 +169,23 @@ core::Result<module::schedule::Receipt> deliverViaRegistry(
             core::ErrorCode::NotFound,
             "渠道已停用：id=" + std::to_string(channelId));
     }
-    const std::string kind = got.value()->kind;
+    const ChannelRecord& row = *got.value();
+    const std::string kind = row.kind;
+
+    // 行级物化：只有带 per-row 配置的渠道需要（当前仅 wecom）。
+    if (kind == kChannelWecom) {
+        RowChannel& slot = rowChannels[channelId];
+        if (!slot.channel || slot.updatedAt != row.updatedAt) {
+            auto cfg = parseWecomConfig(row.configJson, row.id, row.secretRef);
+            if (cfg.isFail()) {
+                return core::propagate<module::schedule::Receipt>(cfg);
+            }
+            slot.channel = makeWecomChannel(cfg.value(), wecomSender);
+            slot.updatedAt = row.updatedAt;
+        }
+        return slot.channel->deliver(delivery);
+    }
+
     auto report = channels.deliver(std::vector<std::string>{kind}, delivery);
     if (report.isFail()) {
         return core::propagate<module::schedule::Receipt>(report);
@@ -220,7 +260,8 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
     }
     rec = inserted.value();
 
-    auto delivered = deliverViaRegistry(store_, channels_, channelId, delivery);
+    auto delivered = deliverViaRegistry(store_, channels_, channelId, delivery,
+                                        rowChannels_, wecomSenderForTest_);
     if (delivered.isFail()) {
         // 渠道配置缺失/未注册 = 配置错误，判永久失败不重试。
         rec.status = "dropped";

@@ -25,10 +25,12 @@
 
 #include "core/result.h"
 #include "module_schedule/channel_registry.h"  // S5：Delivery / Receipt / Channel / ChannelRegistry
+#include "module_schedule/channels/wecom.h"    // need527：WecomHttpSender（行级物化测试缝）
 
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -36,6 +38,15 @@
 namespace module::schedule {
 
 class ScheduleStore;
+
+// need527：按行物化的渠道实例（schedule_channel 行 → 渠道对象）。
+// 只有带 per-row 配置的 kind（当前 wecom）进本表：内置单例渠道按 kind 分发，
+// 但 wecom 每行有自己的 config_json/secret_ref，共用单例会恒读默认 account。
+// updatedAt 记构造时的行 updated_at，行被改过才重建。
+struct RowChannel {
+    std::unique_ptr<Channel> channel;
+    int64_t updatedAt = 0;
+};
 
 // ---- Receipt 分类（消费侧唯一入口） ----
 enum class ReceiptClass {
@@ -148,6 +159,9 @@ public:
     core::Result<RetryOutcome> dispatchOnce(int64_t channelId, const Delivery& delivery,
                                             int runId, int attempt, int64_t plannedAt,
                                             int64_t nowUnix);
+    // 测试缝（need527）：行级物化的 wecom 实例用它发送 HTTP；空 = 生产
+    // platform::http::send。供「同 kind 两行各读各的密钥」用例拦住真实网络。
+    void setWecomSenderForTest(WecomHttpSender sender);
     void resetForTest();
 
 private:
@@ -155,6 +169,11 @@ private:
     ChannelRegistry& channels_;
     InternalTaskRegistry& tasks_;
     std::map<int64_t, int> httpInFlight_;  // 渠道在飞计数（HTTP 每渠道 ≤2，§4.7）
+    // need527：按行物化的渠道实例缓存（schedule_channel.id → 实例）。
+    // 只装带 per-row 配置的 kind（当前 wecom）；updated_at 变化才重建，
+    // 令牌桶限频状态因此跨投递保留。
+    std::map<int64_t, RowChannel> rowChannels_;
+    WecomHttpSender wecomSenderForTest_;  // 见 setWecomSenderForTest
 };
 
 // Receipt → 分类。S5 对齐点：唯一读 Receipt 字段的函数（按 status 稳定串分类）。

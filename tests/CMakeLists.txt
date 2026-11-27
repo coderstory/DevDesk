@@ -257,6 +257,9 @@ add_executable(devdesk_tests
     test_modules/test_schedule_engine.cpp
     # 波 S7a 列表页/模块装配：装配排序/开关落库/归档折叠/系统段空注册表/注册表项完整
     test_modules/test_schedule_ui_list.cpp
+    # need527（A-9 后半 / P0-2）：渠道管理弹窗生产写入路径 + 行级渠道物化
+    #（同 kind 多行各读各的 secret_ref，防恒读 wecom.0）
+    test_modules/test_schedule_channels_ui.cpp
     # need453 待办到期提醒：到期投递/同截止去重/完成归档排除/节流/单轮上限下轮补投
     test_modules/test_todo_due_watcher.cpp
     # need455 每小时整点数据库备份：跨点触发/不足一小时不备/保留份数裁剪/开关/失败路径

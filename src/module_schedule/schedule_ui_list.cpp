@@ -3,9 +3,12 @@
 #include "module_schedule/schedule_ui_history.h"
 
 #include "core/component_theme.h"
+#include "core/database.h"
 #include "core/logging.h"
+#include "core/secrets_store.h"
 #include "core/theme.h"
 #include "core/time.h"
+#include "module_schedule/channels/wecom.h"
 #include "module_schedule/schedule_engine.h"
 #include "platform/json.h"
 #include "ui_kit/button.h"
@@ -517,6 +520,21 @@ ScheduleListUi::ScheduleListUi(ScheduleStore& store,
         editState_.open = false;
         editState_.saveError.clear();
     };
+    // 通知渠道管理（need527）：schedule_channel 的唯一生产写入入口。
+    // 密钥一律经 secrets_store 写 app_secrets（account = wecom.<rowId>），
+    // 本层只判存在性，不取值、不渲染明文。
+    channelHost_.reload = [this] { return reloadChannels(); };
+    channelHost_.create = [this](const std::string& kind, const std::string& name,
+                                 const std::string& key) -> std::string {
+        return channelCreateForTest(kind, name, key);
+    };
+    channelHost_.setEnabled = [this](int64_t id, bool enabled) -> std::string {
+        return channelSetEnabledForTest(id, enabled);
+    };
+    channelHost_.setKey = [this](int64_t id, const std::string& key) -> std::string {
+        return channelSetKeyForTest(id, key);
+    };
+    channelHost_.close = [this] { channelState_.open = false; };
 }
 
 void ScheduleListUi::reload(int64_t nowSec) {
@@ -577,8 +595,107 @@ void ScheduleListUi::setTab(int tab) {
     tabFadePending_ = true;
 }
 
-void ScheduleListUi::refreshEditHost() {
-    editHost_.channels.clear();
+// ---- 通知渠道管理（need527）----
+// 这些是 schedule_channel 的唯一生产写入路径。此前全仓只有测试/探针调
+// createChannel，UI 只能勾选已有行 → 用户建不出渠道 → 提醒恒无投递（P0）。
+std::string ScheduleListUi::reloadChannels() {
+    channelState_.rows.clear();
+    const auto chans = store_.listChannels();
+    if (chans.isFail()) {
+        return "渠道列表加载失败：" + chans.errorMessage();
+    }
+    for (const auto& c : chans.value()) {
+        ui::ChannelRowVm vm;
+        vm.id = c.id;
+        vm.kind = c.kind;
+        vm.name = c.name;
+        vm.enabled = c.enabled;
+        for (const auto& opt : ui::channelKindOptions()) {
+            if (opt.key == c.kind) {
+                vm.needsKey = opt.needsKey;
+                break;
+            }
+        }
+        if (vm.needsKey) {
+            // 只判存在性：account 口径与 wecom.cpp 的 wecomSecretAccount 一致
+            const std::string account = c.secretRef.empty()
+                ? "wecom." + std::to_string(c.id)
+                : c.secretRef;
+            if (auto* db = ::core::appDatabase()) {
+                const auto got = core::secrets_store::get(*db, kWecomSecretService, account);
+                vm.hasKey = got.isOk() && !got.value().empty();
+            }
+        }
+        channelState_.rows.push_back(std::move(vm));
+    }
+    // 编辑弹窗的渠道候选与列表同源，一起刷新
+    refreshEditHost();
+    return {};
+}
+
+void ScheduleListUi::openChannels() {
+    channelState_.open = true;
+    channelState_.creating = false;
+    channelState_.keyEditingId = 0;
+    channelState_.error.clear();
+    const std::string err = reloadChannels();
+    if (!err.empty()) channelState_.error = err;
+}
+
+std::string ScheduleListUi::channelCreateForTest(const std::string& kind,
+                                                 const std::string& name,
+                                                 const std::string& key) {
+    ChannelRecord rec;
+    rec.kind = kind;
+    rec.name = name;
+    rec.enabled = true;
+    const auto created = store_.createChannel(rec);
+    if (created.isFail()) return "创建渠道失败：" + created.errorMessage();
+    // 密钥：只对需要密钥的 kind 写；account = wecom.<新行 id>（与投递侧派生一致）
+    if (!key.empty()) {
+        const auto set = writeChannelKey(created.value().id, key);
+        if (set.isFail()) {
+            // 渠道行已建但密钥没写上：删掉行，保持「要么全成要么不成」
+            const auto del = store_.deleteChannel(created.value().id);
+            (void)del;
+            return "写入渠道密钥失败：" + set.errorMessage();
+        }
+    }
+    reloadChannels();
+    return {};
+}
+
+std::string ScheduleListUi::channelSetEnabledForTest(int64_t id, bool enabled) {
+    const auto got = store_.getChannel(id);
+    if (got.isFail()) return "渠道读取失败：" + got.errorMessage();
+    if (!got.value().has_value()) return "渠道不存在：id=" + std::to_string(id);
+    ChannelRecord rec = *got.value();
+    rec.enabled = enabled;
+    const auto r = store_.updateChannel(rec);
+    if (r.isFail()) return "渠道更新失败：" + r.errorMessage();
+    reloadChannels();
+    return {};
+}
+
+std::string ScheduleListUi::channelSetKeyForTest(int64_t id, const std::string& key) {
+    if (key.empty()) return "密钥不能为空";
+    const auto set = writeChannelKey(id, key);
+    if (set.isFail()) return "写入渠道密钥失败：" + set.errorMessage();
+    reloadChannels();
+    return {};
+}
+
+core::Result<void> ScheduleListUi::writeChannelKey(int64_t id, const std::string& key) {
+    auto* db = ::core::appDatabase();
+    if (!db) {
+        return core::Result<void>::fail(core::ErrorCode::Internal,
+                                        "数据库未注册，无法保存渠道密钥");
+    }
+    const std::string account = "wecom." + std::to_string(id);
+    return core::secrets_store::set(*db, kWecomSecretService, account, key);
+}
+
+void ScheduleListUi::refreshEditHost() {    editHost_.channels.clear();
     const auto chans = store_.listChannels();
     if (chans.isOk()) {
         for (const auto& c : chans.value()) {
@@ -1128,8 +1245,8 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
             // 页头（池139：全站 kHeaderH=40、标题顶格自页 pad 20 起算，无写死顶距）
             ui.text("schedule.list.title")
                 .position(pad, headerY)
-                .size(std::max(0.0f, contentW - newBtnW - historyW -
-                                        core::theme::scaled(32.0f)), headerH)
+                .size(std::max(0.0f, contentW - newBtnW - historyW * 2.0f -
+                                        core::theme::scaled(48.0f)), headerH)
                 .text("定时")
                 .fontSize(t.sizes.fontSizeTitle)
                 .lineHeight(headerH)
@@ -1138,11 +1255,19 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                 .build();
             // 运行历史（走查 T3/P2：裸绿字无底无 hover → 升 Outline 档 =
             // ui_kit Secondary 灰底钮，40 高与「新建」同排归一）
+            const float historyX =
+                pageW - pad - newBtnW - core::theme::scaled(16.0f) - historyW;
             ui_kit::button(ui, "schedule.list.history", "运行历史",
-                           ui_kit::ButtonLevel::Secondary,
-                           pageW - pad - newBtnW - core::theme::scaled(16.0f) - historyW,
+                           ui_kit::ButtonLevel::Secondary, historyX,
                            headerY, historyW, ui_kit::kButtonHeight, t,
                            {[this] { openHistory(); }});
+            // 通知渠道（need527）：schedule_channel 的唯一生产写入入口。
+            // 无渠道 = 提醒永远发不出去，故入口必须在页头常驻可达。
+            ui_kit::button(ui, "schedule.list.channels", "渠道",
+                           ui_kit::ButtonLevel::Secondary,
+                           historyX - core::theme::scaled(8.0f) - historyW,
+                           headerY, historyW, ui_kit::kButtonHeight, t,
+                           {[this] { openChannels(); }});
             // 新建（池137：全页唯一新建入口；空态纯文字提示后恒 Primary）
             ui_kit::button(ui, "schedule.list.new", "新建",
                            ui_kit::ButtonLevel::Primary, pageW - pad - newBtnW,
@@ -1331,6 +1456,9 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
         core::time::localTime(static_cast<std::time_t>(ctx.nowUnix), &ctx.localNow);
         ui::drawEditDialog(ui, screen, t, editState_, editHost_, ctx);
     }
+
+    // 通知渠道管理弹窗（need527）
+    ui::drawChannelManager(ui, screen, t, channelState_, channelHost_);
 }
 
 } // namespace module::schedule

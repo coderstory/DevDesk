@@ -567,9 +567,12 @@ REGISTER_TEST(schedule_delivery_permanent_failure_disables_channel,
     auto db = openMigrated("perm");
     module::schedule::ScheduleStore store(db.db());
 
-    // 真实注册表键 = kind 字符串（S5 对齐点）：TestChannels 建 kind="wecom" 配置行
-    // 并注册同 id 假渠道，规则 channel_ids 用配置行 id 经引擎桥接命中。
-    TestChannels channels(store, "wecom");
+    // 真实注册表键 = kind 字符串（S5 对齐点）：TestChannels 建 kind="fake_remind"
+    // 配置行并注册同 id 假渠道，规则 channel_ids 用配置行 id 经引擎桥接命中。
+    // 注（need527）：本条曾用 kind="wecom"，但 wecom 现已按行物化（每行自带
+    // config/secret，不走注册表单例），用 wecom 会绕过 FakeChannel。本用例测的
+    // 是 Receipt 分类与停用语义，与具体 kind 无关 → 改用中性 kind。
+    TestChannels channels(store, "fake_remind");
     channels.fake->script = {makeReceipt("permanent:errcode_93000")};
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
@@ -789,7 +792,7 @@ REGISTER_TEST(schedule_delivery_missing_secret_no_disable,
               "投递编排: missing_secret 只落 dropped, 不停用渠道不重试, 后续触发仍投递", {
     auto db = openMigrated("missingsecret");
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(store, "wecom");
+    TestChannels channels(store, "fake_remind");
     channels.fake->script = {makeReceipt("missing_secret")};
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 

@@ -12,6 +12,7 @@
 #include "module_schedule/action_runner.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
+#include "module_schedule/schedule_ui_channels.h"
 #include "module_schedule/schedule_ui_edit.h"
 #include "module_schedule/schedule_ui_history.h"
 
@@ -136,6 +137,21 @@ public:
     // 规则」永远弹不出确认窗 = UI 上删不掉。
     bool deleteConfirmOpen() const { return pendingDeleteId_ != 0; }
 
+    // ---- 通知渠道管理（need527）----
+    // 打开渠道管理弹窗：重读 schedule_channel 行 + 每行密钥存在性（只读是否
+    // 已配置，不取值）。
+    void openChannels();
+    bool channelsOpen() const { return channelState_.open; }
+    const ui::ChannelManagerState& channelStateForTest() const {
+        return channelState_;
+    }
+    // 测试缝：直呼宿主动作（headless 用例不走绘制层）
+    std::string channelCreateForTest(const std::string& kind,
+                                     const std::string& name,
+                                     const std::string& key);
+    std::string channelSetEnabledForTest(int64_t id, bool enabled);
+    std::string channelSetKeyForTest(int64_t id, const std::string& key);
+
     // 测试缝：回默认态（归档折叠 + 清错误文案 + 收抽屉；生产不调用）
     void resetForTest();
     // 测试缝：直呼 editHost_.saveRule（保存落库点，headless 用例不走绘制层）
@@ -151,6 +167,10 @@ private:
     // 弹窗宿主装配：渠道选项（ChannelRegistry 注册键 + DB 行）与 taskKeys 在
     // 每次打开弹窗时刷新（注册只在启动装配段变化，刷新成本可忽略）。
     void refreshEditHost();
+    // 渠道管理内部：重读 schedule_channel 行 + 密钥存在性（返回错误串，空 = 成功）
+    std::string reloadChannels();
+    // 密钥写入 app_secrets（account = wecom.<行 id>；凭据纪律见 wecom.h）
+    core::Result<void> writeChannelKey(int64_t id, const std::string& key);
 
     ScheduleStore& store_;
     ScheduleProviderRegistry& providers_;
@@ -163,6 +183,9 @@ private:
     ui::HistoryDrawerHost historyHost_;    // 抽屉数据 + close 回调（构造时接好）
     ui::EditDialogState editState_;        // 编辑弹窗（关闭态也常驻构建）
     ui::EditDialogHost editHost_;          // 渠道/任务候选 + saveRule/close（构造时接好）
+    // 通知渠道管理弹窗（need527）：schedule_channel 的唯一生产写入入口
+    ui::ChannelManagerState channelState_;
+    ui::ChannelManagerHost channelHost_;
     int64_t pendingDeleteId_ = 0;          // 非 0 = 删除确认弹窗开着（开合唯一判据）
     std::string pendingDeleteName_;        // 确认弹窗正文用规则名（need300：不再兼开合标志）
     // ①need:300：删除钮当帧只收编辑弹窗，次帧 compose 头消费开确认——同帧

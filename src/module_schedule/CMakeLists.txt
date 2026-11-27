@@ -4,6 +4,8 @@ add_library(devdesk_module_schedule STATIC
     # 波 S7b：编辑弹窗 + 运行历史抽屉（纯逻辑 + 渲染；弹窗由宿主波经 EditDialogHost/HistoryDrawerHost 挂载）
     schedule_ui_edit.cpp
     schedule_ui_history.cpp
+    # need527：通知渠道管理弹窗（schedule_channel 的唯一生产写入入口）
+    schedule_ui_channels.cpp
     schedule_engine.cpp
     action_runner.cpp
     channels/wecom.cpp
