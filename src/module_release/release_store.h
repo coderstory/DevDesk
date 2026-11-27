@@ -58,6 +58,13 @@ public:
     // 任一环境失败 → 整体回滚，不产生任何残留行（旧的两步走会残留 Draft 死单）。
     // 入参 envs[i].taskId 一律被忽略并绑定本次新建任务；envs 与 servicesPerEnv
     // 必须等长，否则事务前直接 ValidationError。
+    // 按基础配置的 EnvDef 给已建任务补一个环境（批次 A-8）：内部按建单同款
+    // 口径做快照（EnvDef → TaskEnv + 逐服务 TaskService，branch 预填默认分支），
+    // 保证「加环境」与「建单选环境」产出的数据结构完全一致。
+    // taskId 为十进制文本（与详情页 state.taskId 同形）。envId 不存在 → NotFound。
+    core::Result<std::int64_t> addEnvFromDef(std::int64_t envId,
+                                             const std::string& taskId);
+
     core::Result<std::int64_t> createTaskWithEnvs(
         const Task& task,
         const std::vector<TaskEnv>& envs,

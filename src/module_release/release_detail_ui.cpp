@@ -380,6 +380,13 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
         .build();
 
     drawConfirmDialogs(ui, screen, state, store, nowMinute, t, themeTokens);
+    // 「加环境」选层（批次 A-8）：候选 = 基础配置里有、本任务尚未加入的环境
+    if (state.addEnvOpen) {
+        drawAddEnvDialog(ui, screen, state, store, t, themeTokens);
+    }
+    if (state.replanOpen) {
+        drawReplanDialog(ui, screen, state, store, t, themeTokens);
+    }
     if (state.editorOpen) {
         drawConfigEditor(ui, screen, state, store, t, themeTokens);
     }

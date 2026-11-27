@@ -232,6 +232,10 @@ void drawNotice(eui::Ui& ui, float width, const ReleaseDetailUiState& state, con
 void drawValidationDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseDetailUiState& state, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens);
 void drawConfigEditor(eui::Ui& ui, const eui::Screen& screen, ReleaseDetailUiState& state, ReleaseStore& store, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens);
 void drawConfirmDialogs(eui::Ui& ui, const eui::Screen& screen, ReleaseDetailUiState& state, ReleaseStore& store, int nowMinute, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens);
+// 批次 A-8「加环境」选层：列基础配置里尚未加入本任务的环境
+void drawAddEnvDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseDetailUiState& state, ReleaseStore& store, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens);
+// 批次 A-8 前半的姊妹项：计划上线日改期（复用建单同款 datePicker）
+void drawReplanDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseDetailUiState& state, ReleaseStore& store, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens);
 void applyContentRevocations(ReleaseStore& store, ReleaseDetailUiState& state, const std::vector<TaskService>& previousServices, const std::vector<TaskConfig>& previousConfigs);
 void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state);
 void drawErrorPage(eui::Ui& ui, const eui::Screen& screen, const ReleaseDetailUiState& state, const Tokens& t);

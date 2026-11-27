@@ -123,6 +123,19 @@ struct ReleaseDetailUiState {
     std::int64_t removeEnvId = 0;
     std::string removeName;          // 确认文案中的服务名 / 环境名
 
+    // 「加环境」选层（批次 A-8）：任务建好后此前只能移除环境、不能再加，
+    // 漏选一个环境只能作废重建、已勾进度全丢。addEnvOpen 时弹出可选环境列表
+    //（基础配置里尚未加入本任务的那些）；选中即按建单同款快照逻辑写入并重读。
+    bool addEnvOpen = false;
+    // 「改期」层（批次 A-8 后半）：计划上线日此前只能在建单时定，改期 = 作废重建。
+    // 打开时以当前 planDate 为锚点初始化滚轮草稿。
+    bool replanOpen = false;
+    int replanYear = 0;
+    int replanMonth = 1;
+    int replanDay = 1;
+    std::vector<std::int64_t> addEnvCandidates;   // 打开时算好的候选 EnvDef id
+    std::vector<std::string> addEnvNames;         // 与上表一一对应的显示名
+
     // 配置编辑层（页内自绘全屏，不依赖模块注入）：editorOpen 时盖住整页。
     // editorText 是编辑缓冲（只写库不直改 state.configs，保存后置 dirty 重读，
     // 内容变化的自动撤回由 loadDetail → applyContentRevocations 对账完成）。

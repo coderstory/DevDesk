@@ -875,6 +875,51 @@ core::Result<std::vector<TaskEnv>> ReleaseStore::listTaskEnvs(std::int64_t taskI
     return core::Result<std::vector<TaskEnv>>::ok(std::move(out));
 }
 
+core::Result<std::int64_t> ReleaseStore::addEnvFromDef(std::int64_t envId,
+                                                       const std::string& taskId) {
+    const std::int64_t tid = std::strtoll(taskId.c_str(), nullptr, 10);
+    if (tid <= 0) {
+        return core::Result<std::int64_t>::fail(ErrorCode::ValidationError,
+                                                "任务 id 非法: " + taskId);
+    }
+    auto envs = listEnvs();
+    if (envs.isFail()) return core::propagate<std::int64_t>(envs);
+    const EnvDef* def = nullptr;
+    for (const auto& e : envs.value()) {
+        if (e.id == envId) { def = &e; break; }
+    }
+    if (def == nullptr) {
+        return core::Result<std::int64_t>::fail(ErrorCode::NotFound,
+                                                "环境不存在");
+    }
+    auto defs = listServices();
+    if (defs.isFail()) return core::propagate<std::int64_t>(defs);
+
+    // 与建单同口径：TaskEnv 取名字与时间窗；服务按 def->serviceIds 逐个快照，
+    // branch 预填 defaultBranch（执行页可改）。基础配置里被并发删掉的服务跳过。
+    TaskEnv snapshot;
+    snapshot.taskId = tid;
+    snapshot.envName = def->name;
+    snapshot.startMinute = def->startMinute;
+    snapshot.endMinute = def->endMinute;
+
+    std::vector<TaskService> services;
+    for (const std::int64_t sid : def->serviceIds) {
+        const ServiceDef* svc = nullptr;
+        for (const auto& d : defs.value()) {
+            if (d.id == sid) { svc = &d; break; }
+        }
+        if (svc == nullptr) continue;
+        TaskService s;
+        s.serviceName = svc->name;
+        s.kind = svc->kind;
+        s.defaultBranch = svc->defaultBranch;
+        s.branch = svc->defaultBranch;
+        services.push_back(s);
+    }
+    return addTaskEnv(snapshot, services);
+}
+
 core::Result<std::int64_t> ReleaseStore::addTaskEnv(
     const TaskEnv& env, const std::vector<TaskService>& services) {
     if (env.startMinute < 0 || env.startMinute > 1439) {

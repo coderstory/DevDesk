@@ -11,6 +11,7 @@
 #include <core/component_theme.h>
 #include <core/render/text.h>
 
+#include <components/datepicker.h>  // 批次 A-8 改期：复用建单同款滚轮
 #include <components/dialog.h>
 #include <components/input.h>
 #include <components/progress.h>
@@ -566,6 +567,40 @@ void drawEnvSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
         .size(width, sectionH)
         .content([&] {
             drawSectionTitle(ui, "release.detail.env.title", 0.0f, 0.0f, "环境与服务", t);
+            // 批次 A-8：有环境时也能再加（此前只有空态「去基础配置」出口，
+            // 一旦建单漏选就只能作废重建）。编辑态才给入口，只读态不显示。
+            if (!state.envs.empty() && !readOnly) {
+                ui_kit::ButtonOptions addOpts;
+                addOpts.onClick = [&state, &store] {
+                    // 打开前算候选：基础配置里有、本任务尚未加入的环境。
+                    // 加入与否按环境名判定（TaskEnv 只快照名字，不含 EnvDef id——
+                    // 这是「快照与基础配置解耦」的直接后果，改配置不影响已建任务）。
+                    state.addEnvCandidates.clear();
+                    state.addEnvNames.clear();
+                    auto defs = store.listEnvs();
+                    if (defs.isOk()) {
+                        for (const auto& d : defs.value()) {
+                            bool already = false;
+                            for (const auto& e : state.envs) {
+                                if (!e.removed && e.envName == d.name) {
+                                    already = true;
+                                    break;
+                                }
+                            }
+                            if (!already) {
+                                state.addEnvCandidates.push_back(d.id);
+                                state.addEnvNames.push_back(d.name);
+                            }
+                        }
+                    }
+                    state.addEnvOpen = true;
+                };
+                addOpts.hasTextColorOverride = true;
+                addOpts.textColorOverride = t.colors.primaryText;
+                ui_kit::button(ui, "release.detail.env.add", "+ 添加环境", 
+                               ui_kit::ButtonLevel::Text, width - 96.0f, 0.0f,
+                               96.0f, kSectionTitleH, t, addOpts);
+            }
             if (state.envs.empty()) {
                 ui.text("release.detail.env.empty")
                     .position(0.0f, kSectionTitleH + kSectionGap)
@@ -1028,6 +1063,27 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
             .color(t.colors.textSecondary)
             .build();
         x += weekW;
+    }
+    // 批次 A-8：计划上线日此前只能在建单时定，改期 = 作废重建。编辑态给「改期」
+    // 文字钮，点开以当前 planDate 为锚点初始化滚轮。
+    if (!(status == TaskStatus::Voided || status == TaskStatus::Done) &&
+        state.task.id != 0) {
+        ui_kit::ButtonOptions replanOpts;
+        replanOpts.onClick = [&state] {
+            int y = 0, m = 0, d = 0;
+            if (std::sscanf(state.task.planDate.c_str(), "%d-%d-%d", &y, &m, &d) != 3) {
+                y = 2026; m = 1; d = 1;
+            }
+            state.replanYear = y;
+            state.replanMonth = m;
+            state.replanDay = d;
+            state.replanOpen = true;
+        };
+        replanOpts.hasTextColorOverride = true;
+        replanOpts.textColorOverride = t.colors.primaryText;
+        ui_kit::button(ui, "release.detail.replan", "改期", ui_kit::ButtonLevel::Text, x,
+                       (headerH - kChipH) * 0.5f, 56.0f, kChipH, t, replanOpts);
+        x += 56.0f + 8.0f;
     }
     const char* modeKey = "edit";
     if (status == TaskStatus::Voided) modeKey = "voided";
@@ -1879,6 +1935,126 @@ void drawConfigEditor(eui::Ui& ui, const eui::Screen& screen,
     });
     dialog.build();
 }
+
+// 「加环境」选层（批次 A-8）：列出基础配置里尚未加入本任务的环境，点一行即
+// 按建单同款快照逻辑（EnvDef → TaskEnv + 服务快照）写入并重读详情。
+// 为什么复用建单逻辑而不是新写：任务快照与基础配置解耦（改/删基础配置不回灌
+// 已建任务），所以加环境也必须做一次快照，口径必须与建单完全一致。
+// 「改期」滚轮层（批次 A-8 后半）：复用 components::datePicker（与建单同组件），
+// 确认即写库并置 dirty 重读。改期不触碰任何进度字段（任务只是换天，勾选保留）。
+void drawReplanDialog(eui::Ui& ui, const eui::Screen& screen,
+                      ReleaseDetailUiState& state, ReleaseStore& store, const Tokens& t,
+                      const components::theme::ThemeColorTokens& themeTokens) {
+    (void)t;
+    components::datePicker(ui, "release.detail.replan.picker")
+        .open(state.replanOpen)
+        .screen(screen.width, screen.height)
+        .size(380.0f, 260.0f)
+        .date(state.replanYear, state.replanMonth, state.replanDay)
+        .theme(themeTokens)
+        .zIndex(1200)
+        .onChange([&state, &store](int year, int month, int day) {
+            state.replanYear = year;
+            state.replanMonth = month;
+            state.replanDay = day;
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
+            // updateTask 是全字段 UPDATE：改 planDate 后整条回写，其余字段原值
+            //（进度、公告、票号都不动——改期只换天，不动任何执行状态）
+            ReleaseDetailUiState next = state;
+            next.task.planDate = buf;
+            auto r = store.updateTask(next.task);
+            if (r.isOk()) {
+                state.task.planDate = buf;
+                state.notice = std::string("已改期到 ") + buf;
+                state.noticeIsError = false;
+                state.dirty = true;
+            } else {
+                state.notice = "改期失败：" + r.errorMessage();
+                state.noticeIsError = true;
+            }
+            state.replanOpen = false;
+        });
+}
+
+void drawAddEnvDialog(eui::Ui& ui, const eui::Screen& screen,
+                      ReleaseDetailUiState& state, ReleaseStore& store, const Tokens& t,
+                      const components::theme::ThemeColorTokens& themeTokens) {
+    const std::string id = "release.detail.addenv";
+    const float rowH = 40.0f;
+    const std::size_t n = state.addEnvCandidates.size();
+    const float listH = std::max(rowH, rowH * static_cast<float>(n));
+    ui_kit::DialogShellSpec spec;
+    spec.id = id;
+    spec.width = ui_kit::DialogWidth::Standard;
+    spec.height = 200.0f + listH;
+    spec.open = state.addEnvOpen;
+    spec.title = "添加环境";
+    spec.cancel = ui_kit::DialogShellButton{"关闭",
+                                           [&state] { state.addEnvOpen = false; }, true};
+    spec.onOpenChange = [&state](bool open) { state.addEnvOpen = open; };
+    ui_kit::drawDialogShell(ui, screen, spec, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        if (n == 0) {
+            ui.text(id + ".empty")
+                .position(area.x, area.y)
+                .size(area.w, core::theme::scaled(40.0f))
+                .text("基础配置里的环境都已加入本任务")
+                .fontSize(t.sizes.fontSizeBody)
+                .lineHeight(core::theme::scaled(40.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            return;
+        }
+        float y = area.y;
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::string rowId = id + ".row." + std::to_string(i);
+            const std::int64_t envId = state.addEnvCandidates[i];
+            ui.stack(rowId)
+                .position(area.x, y)
+                .size(area.w, rowH)
+                .content([&] {
+                    ui.rect(rowId + ".bg")
+                        .size(area.w, rowH)
+                        .color(t.colors.surfaceElevated)
+                        .radius(t.sizes.radius)
+                        .build();
+                    // 命中层：整行可点（透明 rect + onClick，与 step 行同款）
+                    ui.rect(rowId + ".hit")
+                        .position(0.0f, 0.0f)
+                        .size(area.w, rowH)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .onClick([&store, &state, envId] {
+                            auto result = store.addEnvFromDef(envId, state.taskId);
+                            if (result.isOk()) {
+                                state.addEnvOpen = false;
+                                state.notice = "已添加环境";
+                                state.noticeIsError = false;
+                                state.dirty = true;  // 重读详情（新环境 + 服务快照）
+                            } else {
+                                state.notice = "添加失败：" + result.errorMessage();
+                                state.noticeIsError = true;
+                            }
+                        })
+                        .build();
+                    ui.text(rowId + ".name")
+                        .position(12.0f, 0.0f)
+                        .size(area.w - 24.0f, rowH)
+                        .text(state.addEnvNames[i])
+                        .fontSize(t.sizes.fontSizeBody)
+                        .lineHeight(rowH)
+                        .color(t.colors.textPrimary)
+                        .build();
+                })
+                .build();
+            y += rowH + 4.0f;
+        }
+    });
+}
+
+void drawAddEnvDialog(eui::Ui& ui, const eui::Screen& screen,
+                      ReleaseDetailUiState& state, ReleaseStore& store, const Tokens& t,
+                      const components::theme::ThemeColorTokens& themeTokens);
 
 void drawConfirmDialogs(eui::Ui& ui, const eui::Screen& screen,
                         ReleaseDetailUiState& state, ReleaseStore& store, int nowMinute,

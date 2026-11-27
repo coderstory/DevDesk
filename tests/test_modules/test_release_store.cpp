@@ -940,3 +940,58 @@ REGISTER_TEST(release_schedule_source_derives_non_terminal_tasks,
     DOCTEST_CHECK(fallbackSeen);
     return true;
 })
+
+// 批次 A-8：任务建好后必须还能再加环境（此前只能移除，漏选只能作废重建）。
+// addEnvFromDef 按建单同口径做快照：EnvDef → TaskEnv + 逐服务 TaskService，
+// branch 预填 defaultBranch。
+REGISTER_TEST(release_store_add_env_from_def,
+              "release_store: 已建任务按基础配置补环境（含服务快照，A-8）", {
+    test_support::TestDb tdb("release_store", "addenv");
+    rel::ReleaseStore store(tdb.handle());
+
+    // 基础配置：两个服务 + 一个环境
+    rel::ServiceDef api;
+    api.name = "api-svc";
+    api.kind = rel::ServiceKind::Backend;
+    api.defaultBranch = "master";
+    auto apiId = store.upsertService(api);
+    DOCTEST_REQUIRE(apiId.isOk());
+
+    rel::EnvDef env;
+    env.name = "UAT";
+    env.serviceIds = {apiId.value()};
+    env.startMinute = 600;
+    env.endMinute = 660;
+    auto envId = store.upsertEnv(env);
+    DOCTEST_REQUIRE(envId.isOk());
+
+    // 建一个空任务（没选任何环境）
+    rel::Task task;
+    task.planDate = "2026-12-01";
+    auto taskId = store.createTask(task);
+    DOCTEST_REQUIRE(taskId.isOk());
+    DOCTEST_CHECK(store.listTaskEnvs(taskId.value()).value().empty());
+
+    // 补环境
+    auto added = store.addEnvFromDef(envId.value(), std::to_string(taskId.value()));
+    DOCTEST_REQUIRE(added.isOk());
+    DOCTEST_CHECK(added.value() > 0);
+
+    // 快照落库：名字/时间窗/服务清单都对
+    auto envs = store.listTaskEnvs(taskId.value());
+    DOCTEST_REQUIRE(envs.isOk());
+    DOCTEST_REQUIRE_EQ(envs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(envs.value()[0].envName, std::string("UAT"));
+    DOCTEST_CHECK_EQ(envs.value()[0].startMinute, 600);
+    DOCTEST_CHECK_EQ(envs.value()[0].endMinute, 660);
+
+    auto services = store.listTaskServicesByTask(taskId.value());
+    DOCTEST_REQUIRE(services.isOk());
+    DOCTEST_REQUIRE_EQ(services.value().size(), 1u);
+    DOCTEST_CHECK_EQ(services.value()[0].serviceName, std::string("api-svc"));
+    DOCTEST_CHECK_EQ(services.value()[0].branch, std::string("master"));
+
+    // 不存在的 envId → NotFound
+    DOCTEST_CHECK(store.addEnvFromDef(9999, std::to_string(taskId.value())).isFail());
+    return true;
+})
