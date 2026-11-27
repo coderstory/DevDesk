@@ -6,6 +6,15 @@
     "cs-retro@x-rs-tools": true,
     "devflow@dev-zcode-plugins": true
   },
+  "permissions": {
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(claude plugin:*)"
+    ],
+    "deny": [
+      "Edit(docs/pool/pool.db)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
