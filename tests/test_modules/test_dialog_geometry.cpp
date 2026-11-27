@@ -84,10 +84,10 @@ REGISTER_TEST(dialog_geometry_content_area_inset,
     DOCTEST_CHECK_EQ(cap.area.x, ui_kit::kDialogInsetX);
     DOCTEST_CHECK_EQ(cap.area.w, 460.0f - ui_kit::kDialogBodyInsetX);
     // 垂直：内容区顶 = 头区高
-    DOCTEST_CHECK_EQ(cap.area.y, ui_kit::kDialogHeaderH);
+    DOCTEST_CHECK_EQ(cap.area.y, ui_kit::dialogHeaderH());
     // 三段几何自洽：area.y + area.h + footerH + gap == h
-    DOCTEST_CHECK_EQ(cap.area.y + cap.area.h + ui_kit::kDialogFooterH +
-                         ui_kit::kDialogContentBottomGap,
+    DOCTEST_CHECK_EQ(cap.area.y + cap.area.h + ui_kit::dialogFooterH() +
+                         ui_kit::dialogContentBottomGap(),
                      520.0f);
     return true;
 });
@@ -206,12 +206,12 @@ REGISTER_TEST(dialog_geometry_buttons_right_anchored,
     // 主钮在副钮右侧；两者间距恰为 8
     DOCTEST_CHECK(xb.x < cb.x);
     DOCTEST_CHECK_MESSAGE(
-        std::fabs((cb.x - (xb.x + xb.width)) - ui_kit::kDialogButtonGap) < 0.5f,
+        std::fabs((cb.x - (xb.x + xb.width)) - ui_kit::dialogButtonGap()) < 0.5f,
         std::string("按钮间距实测 = ") +
             std::to_string(cb.x - (xb.x + xb.width)));
     // 最小宽 96（"取消"/"确定"两字文本宽 + 48 < 96，取下限）
-    DOCTEST_CHECK(cb.width >= ui_kit::kDialogButtonMinW - 0.01f);
-    DOCTEST_CHECK(xb.width >= ui_kit::kDialogButtonMinW - 0.01f);
+    DOCTEST_CHECK(cb.width >= ui_kit::dialogButtonMinW() - 0.01f);
+    DOCTEST_CHECK(xb.width >= ui_kit::dialogButtonMinW() - 0.01f);
     return true;
 });
 

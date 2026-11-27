@@ -32,11 +32,14 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
         options.width > 0.0f ? options.width : (dialogWidth - options.inset);
 
     auto builder = ui.text(id);
+    // need530（批次 B 步骤 1）：height / lineHeight 也必须进字号缩放通道。
+    // 此前只缩 fontSize —— 130% 档字号涨而行盒不涨，文字被裁（硬契约同
+    // scaledText：options.height / lineHeight 必须传**未缩放基准值**）。
     builder.position(options.x, options.y)
-        .size(width, options.height)
+        .size(width, core::theme::scaled(options.height))
         .text(text)
         .fontSize(core::theme::scaled(fontSize))
-        .lineHeight(options.lineHeight);
+        .lineHeight(core::theme::scaled(options.lineHeight));
     if (options.bold) {
         builder.fontWeight(600);  // 弹窗标题档 600（need322 字重豁免名单：700→600 随迁）
     }
@@ -62,13 +65,14 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
 namespace {
 
 // 按钮对公共几何：取消在左、确定在右，各 (w − 2×内缩 − gap)/2，行底距弹窗底 60。
-// kDialogButtonGap 单一来源已上移 ui_kit/metrics.h（与 dialog_shell 共用），此处不再重复
-constexpr float kDialogButtonRowOffsetY = 60.0f;
-constexpr float kDialogButtonHeight = 40.0f;
+// dialogButtonGap() 单一来源已上移 ui_kit/metrics.h（与 dialog_shell 共用），此处不再重复
+// need530：行偏移与按钮高也进字号缩放通道（130% 档按钮不得压到底缘外）。
+inline float dialogButtonRowOffsetY() { return core::theme::scaled(60.0f); }
+inline float dialogButtonHeight() { return core::theme::scaled(40.0f); }
 
 // (w-68)/2 —— 68 = 28×2 + 12，还原构成，不留裸 68。
 float buttonWidth(float dialogWidth) {
-    return (dialogWidth - kDialogInsetX * 2.0f - kDialogButtonGap) * 0.5f;
+    return (dialogWidth - kDialogInsetX * 2.0f - dialogButtonGap()) * 0.5f;
 }
 
 // 单按钮：几何 + 文案字号 + 样式组合，最后统一 onClick。
@@ -77,7 +81,7 @@ void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, flo
                        const components::theme::ThemeColorTokens& themeTokens) {
     auto button = components::button(ui, id);
     button.position(x, y)
-        .size(width, kDialogButtonHeight)
+        .size(width, dialogButtonHeight())
         .text(spec.label)
         .fontSize(core::theme::scaled(spec.fontSize));
     switch (spec.style) {
@@ -143,9 +147,9 @@ void drawDialogButtons(eui::Ui& ui, const std::string& id, float dialogWidth,
                        const DialogButtonSpec& confirm, const core::theme::Tokens& t,
                        const components::theme::ThemeColorTokens& themeTokens) {
     const float w = buttonWidth(dialogWidth);
-    const float y = dialogHeight - kDialogButtonRowOffsetY;
+    const float y = dialogHeight - dialogButtonRowOffsetY();
     buildDialogButton(ui, id + ".cancel", kDialogInsetX, y, w, cancel, t, themeTokens);
-    buildDialogButton(ui, id + ".confirm", kDialogInsetX + w + kDialogButtonGap, y,
+    buildDialogButton(ui, id + ".confirm", kDialogInsetX + w + dialogButtonGap(), y,
                       w, confirm, t, themeTokens);
 }
 

@@ -39,7 +39,7 @@ struct DialogShellButton {
 struct DialogShellSpec {
     std::string id;
     DialogWidth width = DialogWidth::Standard;
-    float height = 0.0f;  // 请求高；低于 kDialogMinH 抬到下限（框架再做视口 clamp）
+    float height = 0.0f;  // 请求高；低于 dialogMinH() 抬到下限（框架再做视口 clamp）
     bool open = false;
     int zIndex = kDialogZIndexUnset;  // kDialogZIndexUnset = 不调 .zIndex()（默认 1000）
     std::string title;                // 头区标题（20/700，色见 titleColor）
@@ -57,7 +57,7 @@ struct DialogShellSpec {
     // 与 dangerConfirm 主钮同款视觉；默认 false = 副钮样式。
     bool dangerThird = false;
     // need337：内容自然高供给（可选）：给定内容区宽（w−48）返回自然内容高。
-    // 提供时请求高 = 69 + provider + 89（spec.height 不参与），仍过 kDialogMinH
+    // 提供时请求高 = 头 + provider + 底+隙（spec.height 不参与），仍过 dialogMinH()
     // 下限与视口 clamp；内容被压缩（area.h < 自然高）时由调用方 content 内自包
     // 滚动，内容底 = area.y + area.h = h−89。
     std::function<float(float contentW)> contentHeightProvider;

@@ -402,7 +402,7 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
     // 底区 cancel（旧右上 × 一并去除，关抽屉统一走底区钮）；副标题（统计条）
     // 与分隔线画在内容区顶部，列表自 content 顶 +18+10+12 起。
     const float subtitleH = 18.0f;
-    const float listTop = ui_kit::kDialogHeaderH + subtitleH + 10.0f + 12.0f;  // 109
+    const float listTop = ui_kit::dialogHeaderH() + subtitleH + 10.0f + 12.0f;  // 109
 
     // 列表内容高（卡片两档高度 + 间距）→ 抽屉高度随内容自适应：
     // 固定高度时 3 条记录下方空一大片，看着像没做完。
@@ -415,7 +415,7 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
     }
     // 壳内容区底 = h−89（底区细线上隙 16）；列表底再留 12 缝
     const float neededH = listTop + std::max(listContentH, 120.0f) + 12.0f +
-                          ui_kit::kDialogFooterH + ui_kit::kDialogContentBottomGap;
+                          ui_kit::dialogFooterH() + ui_kit::dialogContentBottomGap();
     const float h = std::clamp(std::max(neededH, kDrawerMinH), kDrawerMinH, kDrawerMaxH);
 
     // 统计条：总数 + 成功 / 失败 / 错过

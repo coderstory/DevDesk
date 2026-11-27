@@ -22,7 +22,7 @@ constexpr float kShellButtonPadX = 24.0f;
 float shellButtonWidth(const std::string& label, const core::theme::Tokens& t) {
     const float textW = core::TextPrimitive::measureTextWidth(
         label, "", core::theme::scaled(kShellButtonFontSize), 400);
-    return std::max(kDialogButtonMinW, textW + kShellButtonPadX * 2.0f);
+    return std::max(dialogButtonMinW(), textW + kShellButtonPadX * 2.0f);
 }
 
 // 单按钮：几何 + 14px 字 + 规范 §4.3 四态（主/副/危险/禁用），色全走 token。
@@ -79,11 +79,11 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
     // + 89；无 provider 维持请求高语义（spec.height）。两者同过下限抬升 + 视口
     // clamp（下行不变）。
     const float requestedH = spec.contentHeightProvider
-        ? kDialogHeaderH + spec.contentHeightProvider(w - kDialogBodyInsetX) +
-              kDialogFooterH + kDialogContentBottomGap
+        ? dialogHeaderH() + spec.contentHeightProvider(w - kDialogBodyInsetX) +
+              dialogFooterH() + dialogContentBottomGap()
         : spec.height;
     const float h = std::min(
-        std::max(requestedH, spec.compact ? 200.0f : kDialogMinH),
+        std::max(requestedH, spec.compact ? 200.0f : dialogMinH()),
         std::max(0.0f, screen.height - 96.0f));
 
     auto builder = components::dialog(ui, spec.id);
@@ -101,8 +101,8 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
             DialogTitleOptions titleOpts;
             if (spec.titleIcon != 0) {
                 ui.text(spec.id + ".title.icon")
-                    .position(kDialogInsetX, 20.0f)
-                    .size(18.0f, core::theme::scaled(28.0f))
+                    .position(kDialogInsetX, core::theme::scaled(20.0f))
+                    .size(core::theme::scaled(18.0f), core::theme::scaled(28.0f))
                     .icon(spec.titleIcon)
                     .fontSize(core::theme::scaled(kDialogTitleFontSize))
                     .lineHeight(core::theme::scaled(28.0f))
@@ -114,24 +114,24 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
             drawDialogTitle(ui, spec.id + ".title", w, spec.title, kDialogTitleFontSize,
                             spec.titleColor.value_or(t.colors.textPrimary), titleOpts);
             ui.rect(spec.id + ".title.line")
-                .position(0.0f, 52.0f)
+                .position(0.0f, core::theme::scaled(52.0f))
                 .size(w, 1.0f)
                 .color(t.colors.borderDefault)
                 .build();
             // 底区（固定 73）：细线 1px y=h-73 全宽（borderMuted，比分隔线轻一档）。
             ui.rect(spec.id + ".footer.line")
-                .position(0.0f, h - kDialogFooterH)
+                .position(0.0f, h - dialogFooterH())
                 .size(w, 1.0f)
                 .color(t.colors.borderMuted)
                 .build();
             // 按钮行右锚：右端 x=w-24、y=h-56、gap 8；副按钮在左、主按钮最右。
-            const float rowY = h - kDialogFooterH + 17.0f;  // = h-56（线 1 + 隙 16）
+            const float rowY = h - dialogFooterH() + core::theme::scaled(17.0f);  // 线 1 + 隙 16
             float xRight = w - kDialogInsetX;
             if (!spec.confirm.label.empty()) {
                 const float bw = shellButtonWidth(spec.confirm.label, t);
                 buildShellButton(ui, spec.id + ".confirm", xRight - bw, rowY, bw,
                                  spec.confirm, spec.dangerConfirm, true, t);
-                xRight -= bw + kDialogButtonGap;
+                xRight -= bw + dialogButtonGap();
             }
             if (!spec.cancel.label.empty()) {
                 const float bw = shellButtonWidth(spec.cancel.label, t);
@@ -148,8 +148,8 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
             // 内容区（唯一内滚区）：y=69 至细线上隙 16（底 = h−89 → 高 = h−158，
             // 规范 §3.2/§3.4）。此前漏减呼吸隙，内容区底顶到细线。
             if (content) {
-                content({kDialogInsetX, kDialogHeaderH, w - kDialogBodyInsetX,
-                         h - kDialogHeaderH - kDialogFooterH - kDialogContentBottomGap});
+                content({kDialogInsetX, dialogHeaderH(), w - kDialogBodyInsetX,
+                         h - dialogHeaderH() - dialogFooterH() - dialogContentBottomGap()});
             }
         })
         .build();

@@ -517,7 +517,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
     ui_kit::DialogShellSpec confirmShell;
     confirmShell.id = "release.newtask.confirm";
     confirmShell.width = ui_kit::DialogWidth::Standard;
-    confirmShell.height = ui_kit::kDialogMinH;  // 240（规范 §3.4 下限，原 220）
+    confirmShell.height = ui_kit::dialogMinH();  // 240（规范 §3.4 下限，原 220）
     confirmShell.open = state.irregularConfirmOpen;
     confirmShell.zIndex = 1300;
     confirmShell.title = "非常规发布日";

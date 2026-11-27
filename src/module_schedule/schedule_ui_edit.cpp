@@ -542,10 +542,10 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
     //（contentBottom=0）回退 640 档；spec.height 此时仅作无 provider 语义的
     // 兜底字段。
     shell.contentHeightProvider = [&st, h](float) {
-        const float cap = h - (ui_kit::kDialogHeaderH + ui_kit::kDialogFooterH +
-                               ui_kit::kDialogContentBottomGap);
+        const float cap = h - (ui_kit::dialogHeaderH() + ui_kit::dialogFooterH() +
+                               ui_kit::dialogContentBottomGap());
         return st.contentBottom > 0.0f
-            ? std::min(st.contentBottom - ui_kit::kDialogHeaderH, cap)
+            ? std::min(st.contentBottom - ui_kit::dialogHeaderH(), cap)
             : cap;
     };
     shell.onOpenChange = [&st](bool v) { st.open = v; };

@@ -1,9 +1,13 @@
 // src/ui_kit/metrics.h
 // presentation 能力层：跨模块设计数值具名常量单一来源（kHeaderH / DialogWidth /
 // kDialogInsetX / kDialogBodyInsetX / kNavItemH）。本层被 module_* 与 app 层链接，
-// core / platform 不得反向依赖。纯常量（零 include、零 EUI-NEO 依赖）；
+// core / platform 不得反向依赖。绝大多数是纯常量（零 EUI-NEO 依赖）；仅弹窗三段
+// 几何是字号缩放函数（need530，需 core/theme.h 的 scaled()——core 是 ui_kit 的
+// 已允许下行依赖，不新增耦合方向）。
 // 已 token 化的量（spacing* / radius* / fontSize*）不在本头重复声明。
 #pragma once
+
+#include <core/theme.h>  // core::theme::scaled（弹窗几何字号化函数用）
 
 namespace ui_kit {
 
@@ -46,18 +50,23 @@ inline constexpr float kDialogBodyInsetX = 48.0f;
 // 标准弹窗壳三段几何（2026-11-07 弹窗规范 need156，docs/design/
 // 2026-11-07-dialog-standard-design.md §3）：头区固定 69（16+28+8+1+16）、
 // 底区固定 73（1+16+40+16）、内容区 = 高 - 158（唯一内滚区）。
-inline constexpr float kDialogHeaderH = 69.0f;
-inline constexpr float kDialogFooterH = 73.0f;
+//
+// need530（批次 B 步骤 1）：constexpr 常量 → 字号缩放函数。130% 档下原来
+// 头/底区恒 69/73（字面量不进 fontScale 通道），而壳内标题字号已 scaled(20)，
+// 字号涨而盒不涨 → 标题被裁、按钮行溢出。函数化后三段几何随档位同比放大。
+// 调用方签名不变（仍返回 float），下游零改动。
+inline float dialogHeaderH() { return core::theme::scaled(69.0f); }
+inline float dialogFooterH() { return core::theme::scaled(73.0f); }
 // 内容区底至底区细线的呼吸隙 16（规范 §3.2「内容区底 = h−89」）。
 // 69 + 73 + 16 = 158 → 内容区高 = h − 158。
-inline constexpr float kDialogContentBottomGap = 16.0f;
+inline float dialogContentBottomGap() { return core::theme::scaled(16.0f); }
 
 // 弹窗最小尺寸下限（规范 §3.4）：防内容挤扁；视口极窄时框架 clamp 优先（可低于下限）。
 inline constexpr float kDialogMinW = 420.0f;
-inline constexpr float kDialogMinH = 240.0f;
+inline float dialogMinH() { return core::theme::scaled(240.0f); }
 
 // 弹窗按钮：高 40、最小宽 96（文字超出自适应加宽）、间距 8、右缘内缩 24（规范 §3.3）。
-inline constexpr float kDialogButtonMinW = 96.0f;
-inline constexpr float kDialogButtonGap = 8.0f;
+inline float dialogButtonMinW() { return core::theme::scaled(96.0f); }
+inline float dialogButtonGap() { return core::theme::scaled(8.0f); }
 
 } // namespace ui_kit
